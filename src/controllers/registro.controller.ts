@@ -14,7 +14,7 @@ export const crearSolicitud = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
     const { invitacionId, nombre, apellidos, email, telefono, estudiantes } = req.body;
 
-    const solicitud = await registroService.crearSolicitud({
+    const resultado = await registroService.crearSolicitud({
       invitacionId,
       nombre,
       apellidos,
@@ -23,12 +23,22 @@ export const crearSolicitud = catchAsync(
       estudiantes,
     });
 
-    res.status(201).json({
+    // Preparar respuesta con advertencias si las hay
+    const response: any = {
       success: true,
-      data: solicitud,
+      data: resultado.solicitud,
       message:
         'Solicitud de registro creada exitosamente. Un administrador revisará su solicitud en breve.',
-    });
+    };
+
+    // Añadir advertencias a la respuesta si existen
+    if (resultado.advertencias && resultado.advertencias.length > 0) {
+      response.advertencias = resultado.advertencias;
+      response.message +=
+        ' Nota: Se han realizado algunos ajustes automáticos en los emails de los estudiantes.';
+    }
+
+    res.status(201).json(response);
   },
 );
 

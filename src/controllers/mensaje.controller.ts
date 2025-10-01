@@ -15,6 +15,7 @@ import { TipoNotificacion } from '../interfaces/INotificacion';
 import { TipoUsuario } from '../interfaces/IUsuario'; // Agregamos la importación
 import fs from 'fs';
 import path from 'path';
+import pushNotificationService from '../services/pushNotification.service';
 
 export const ROLES_CON_BORRADORES = ['ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO', 'DOCENTE'];
 
@@ -50,6 +51,13 @@ export class MensajeController {
         throw new ApiError(401, 'No autorizado');
       }
 
+      // Array para capturar logs de debug
+      const debugLogs: string[] = [];
+      const logDebug = (message: string) => {
+        console.log(message);
+        debugLogs.push(message);
+      };
+
       // Validar IDs
       if (!mongoose.isValidObjectId(req.user._id)) {
         throw new ApiError(400, 'ID de usuario inválido');
@@ -59,197 +67,412 @@ export class MensajeController {
         throw new ApiError(400, 'ID de escuela inválido');
       }
 
-      // Extraer el parámetro 'q' de req.query y manejarlo de forma segura
       const queryParam = req.query.q as string;
       const searchQuery = queryParam ? queryParam.trim() : '';
 
-      console.log(
-        `[DEBUG] Controlador - Buscando destinatarios para usuario: ${req.user._id}, escuela: ${req.user.escuelaId}, tipo: ${req.user.tipo}, query: '${searchQuery}'`,
+      logDebug(
+        `[DEBUG] Controlador - Buscando destinatarios para usuario: ${req.user._id} (${req.user.nombre} ${req.user.apellidos}), escuela: ${req.user.escuelaId}, tipo: ${req.user.tipo}, query: '${searchQuery}'`,
       );
 
-      // Aplicar lógica basada en el rol del usuario
       let destinatarios: any[] = [];
       const tipoUsuario = req.user.tipo;
 
       // 1. ADMIN, RECTOR, COORDINADOR, ADMINISTRATIVO: pueden ver a todos los usuarios
       if (['ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'].includes(tipoUsuario)) {
-        console.log('[DEBUG] Usuario administrativo - Mostrando todos los usuarios');
+        logDebug('[DEBUG] Usuario administrativo - Mostrando todos los usuarios');
 
-        // Construir filtro de búsqueda
-        const filter: any = {
-          escuelaId: new mongoose.Types.ObjectId(req.user.escuelaId),
-          _id: { $ne: new mongoose.Types.ObjectId(req.user._id) }, // Excluir al usuario actual
-          estado: 'ACTIVO',
-        };
+        try {
+          const filter: any = {
+            escuelaId: new mongoose.Types.ObjectId(req.user.escuelaId),
+            _id: { $ne: new mongoose.Types.ObjectId(req.user._id) },
+            estado: 'ACTIVO',
+          };
 
-        // Aplicar búsqueda si hay query
-        if (searchQuery) {
-          const searchRegex = new RegExp(searchQuery, 'i');
-          filter.$or = [
-            { nombre: searchRegex },
-            { apellidos: searchRegex },
-            { email: searchRegex },
-          ];
+          if (searchQuery) {
+            const searchRegex = new RegExp(searchQuery, 'i');
+            filter.$or = [
+              { nombre: searchRegex },
+              { apellidos: searchRegex },
+              { email: searchRegex },
+            ];
+          }
+
+          // Contar total de usuarios disponibles para información
+          const totalUsuarios = await Usuario.countDocuments({
+            escuelaId: new mongoose.Types.ObjectId(req.user.escuelaId),
+            _id: { $ne: new mongoose.Types.ObjectId(req.user._id) },
+            estado: 'ACTIVO',
+          });
+
+          logDebug(`[DEBUG] Total usuarios disponibles en la escuela: ${totalUsuarios}`);
+
+          // Estrategia inteligente de límites
+          let limite = 500; // Límite por defecto
+
+          if (totalUsuarios > 1000 && !searchQuery) {
+            limite = 250; // Menos usuarios sin búsqueda en escuelas grandes
+            logDebug(
+              `[DEBUG] Escuela grande (${totalUsuarios} usuarios), aplicando límite de ${limite} sin búsqueda`,
+            );
+          } else if (searchQuery) {
+            limite = 100; // Límite para búsquedas específicas
+            logDebug(`[DEBUG] Búsqueda activa, aplicando límite de ${limite}`);
+          }
+
+          destinatarios = await Usuario.find(filter)
+            .select('_id nombre apellidos email tipo')
+            .limit(limite)
+            .sort({ nombre: 1, apellidos: 1 });
+
+          logDebug(
+            `[DEBUG] Usuarios encontrados: ${destinatarios.length} de ${totalUsuarios} totales`,
+          );
+        } catch (error) {
+          logDebug(`[DEBUG ERROR] Error en consulta: ${error}`);
+          destinatarios = [];
         }
-
-        // Obtener todos los usuarios (excluyendo al usuario actual)
-        destinatarios = await Usuario.find(filter)
-          .select('_id nombre apellidos email tipo')
-          .limit(50)
-          .sort({ nombre: 1, apellidos: 1 });
       }
 
-      // 2. DOCENTES: pueden ver a estudiantes de sus cursos, sus acudientes, personal administrativo y otros docentes
+      // 2. DOCENTES: lógica mejorada con validación de IDs
       else if (tipoUsuario === 'DOCENTE') {
-        console.log('[DEBUG] Usuario docente - Obteniendo destinatarios específicos');
+        logDebug(
+          `[DEBUG] Usuario docente - Obteniendo destinatarios para: ${req.user.nombre} ${req.user.apellidos}`,
+        );
 
-        // Conjunto para almacenar IDs únicos
-        const idsDestinatarios = new Set<string>();
+        try {
+          // Sets para recolectar IDs válidos
+          const estudiantesIds = new Set<string>();
+          const acudientesIds = new Set<string>();
+          const personalIds = new Set<string>();
 
-        // 2.1 Obtener cursos donde es director de grupo
-        const cursosDirigidos = await mongoose
-          .model('Curso')
-          .find({
-            director_grupo: new mongoose.Types.ObjectId(req.user._id),
-            escuelaId: new mongoose.Types.ObjectId(req.user.escuelaId),
-          })
-          .select('_id estudiantes');
+          // 2.1 Obtener cursos donde es director de grupo
+          logDebug('[DEBUG] 2.1 - Buscando cursos donde es director de grupo...');
 
-        // 2.2 Extraer estudiantes directamente de los cursos
-        for (const curso of cursosDirigidos) {
-          if (Array.isArray(curso.estudiantes)) {
-            curso.estudiantes.forEach((estudianteId: any) => {
-              if (estudianteId) {
-                idsDestinatarios.add(estudianteId.toString());
+          try {
+            const cursosDirigidos = await mongoose
+              .model('Curso')
+              .find({
+                director_grupo: new mongoose.Types.ObjectId(req.user._id),
+                escuelaId: new mongoose.Types.ObjectId(req.user.escuelaId),
+                estado: 'ACTIVO',
+              })
+              .select('_id estudiantes nombre');
+
+            logDebug(`[DEBUG] 2.1 - Cursos dirigidos encontrados: ${cursosDirigidos.length}`);
+
+            for (const curso of cursosDirigidos) {
+              logDebug(
+                `[DEBUG] 2.1 - Procesando curso dirigido: ${curso.nombre} con ${
+                  curso.estudiantes?.length || 0
+                } estudiantes`,
+              );
+              if (Array.isArray(curso.estudiantes)) {
+                curso.estudiantes.forEach((estudianteId: any) => {
+                  if (estudianteId && mongoose.isValidObjectId(estudianteId)) {
+                    estudiantesIds.add(estudianteId.toString());
+                    logDebug(
+                      `[DEBUG] 2.1 - Agregado estudiante de curso dirigido: ${estudianteId}`,
+                    );
+                  }
+                });
+              }
+            }
+          } catch (error) {
+            logDebug(`[DEBUG ERROR] Error obteniendo cursos dirigidos: ${error}`);
+          }
+
+          // 2.2 Obtener asignaturas que dicta
+          logDebug('[DEBUG] 2.2 - Buscando asignaturas que dicta...');
+
+          try {
+            const asignaturas = await mongoose
+              .model('Asignatura')
+              .find({
+                docenteId: new mongoose.Types.ObjectId(req.user._id),
+                escuelaId: new mongoose.Types.ObjectId(req.user.escuelaId),
+                estado: 'ACTIVO',
+              })
+              .select('_id cursoId nombre');
+
+            logDebug(`[DEBUG] 2.2 - Asignaturas encontradas: ${asignaturas.length}`);
+
+            const cursosAsignaturas = new Set<string>();
+            asignaturas.forEach((asig, index) => {
+              if (asig.cursoId && mongoose.isValidObjectId(asig.cursoId)) {
+                cursosAsignaturas.add(asig.cursoId.toString());
+                logDebug(
+                  `[DEBUG] 2.2.${index + 1} - Asignatura: "${asig.nombre}" en curso: ${
+                    asig.cursoId
+                  }`,
+                );
+              } else {
+                logDebug(
+                  `[DEBUG] 2.2.${index + 1} - Asignatura: "${asig.nombre}" SIN CURSO VÁLIDO`,
+                );
               }
             });
+
+            logDebug(`[DEBUG] 2.2 - Cursos únicos de asignaturas: ${cursosAsignaturas.size}`);
+
+            // 2.3 Obtener estudiantes de los cursos donde dicta asignaturas
+            if (cursosAsignaturas.size > 0) {
+              logDebug('[DEBUG] 2.3 - Obteniendo estudiantes de cursos de asignaturas...');
+
+              const cursosConEstudiantes = await mongoose
+                .model('Curso')
+                .find({
+                  _id: {
+                    $in: Array.from(cursosAsignaturas).map((id) => new mongoose.Types.ObjectId(id)),
+                  },
+                  estado: 'ACTIVO',
+                })
+                .select('_id estudiantes nombre');
+
+              logDebug(
+                `[DEBUG] 2.3 - Cursos con estudiantes encontrados: ${cursosConEstudiantes.length}`,
+              );
+
+              for (const curso of cursosConEstudiantes) {
+                logDebug(
+                  `[DEBUG] 2.3 - Procesando curso de asignatura: ${curso.nombre} con ${
+                    curso.estudiantes?.length || 0
+                  } estudiantes`,
+                );
+
+                if (Array.isArray(curso.estudiantes)) {
+                  curso.estudiantes.forEach((estudianteId: any) => {
+                    if (estudianteId && mongoose.isValidObjectId(estudianteId)) {
+                      estudiantesIds.add(estudianteId.toString());
+                      logDebug(`[DEBUG] 2.3 - Agregado estudiante: ${estudianteId}`);
+                    } else {
+                      logDebug(`[DEBUG] 2.3 - ID de estudiante inválido: ${estudianteId}`);
+                    }
+                  });
+                }
+              }
+            } else {
+              logDebug('[DEBUG] 2.3 - NO HAY CURSOS DE ASIGNATURAS PARA PROCESAR');
+            }
+          } catch (error) {
+            logDebug(`[DEBUG ERROR] Error obteniendo asignaturas: ${error}`);
           }
-        }
 
-        // 2.3 Obtener asignaturas que dicta
-        const asignaturas = await mongoose
-          .model('Asignatura')
-          .find({
-            docenteId: new mongoose.Types.ObjectId(req.user._id),
-            escuelaId: new mongoose.Types.ObjectId(req.user.escuelaId),
-          })
-          .select('_id cursoId');
+          logDebug(`[DEBUG] 2.4 - Total estudiantes únicos encontrados: ${estudiantesIds.size}`);
 
-        const cursosAsignaturas = new Set<string>();
-        asignaturas.forEach((asig) => {
-          if (asig.cursoId) {
-            cursosAsignaturas.add(asig.cursoId.toString());
-          }
-        });
+          // 2.4 VALIDAR Y FILTRAR ESTUDIANTES EXISTENTES
+          if (estudiantesIds.size > 0) {
+            logDebug('[DEBUG] 2.4 - Validando estudiantes existentes...');
 
-        // 2.4 Obtener estudiantes de los cursos donde dicta asignaturas
-        if (cursosAsignaturas.size > 0) {
-          const cursosConEstudiantes = await mongoose
-            .model('Curso')
-            .find({
-              _id: {
-                $in: Array.from(cursosAsignaturas).map((id) => new mongoose.Types.ObjectId(id)),
-              },
-            })
-            .select('estudiantes');
+            try {
+              // Consulta para verificar qué estudiantes realmente existen
+              const estudiantesValidos = await Usuario.find({
+                _id: {
+                  $in: Array.from(estudiantesIds).map((id) => new mongoose.Types.ObjectId(id)),
+                },
+                tipo: 'ESTUDIANTE',
+                estado: 'ACTIVO',
+                escuelaId: new mongoose.Types.ObjectId(req.user.escuelaId),
+              }).select('_id nombre apellidos');
 
-          for (const curso of cursosConEstudiantes) {
-            if (Array.isArray(curso.estudiantes)) {
-              curso.estudiantes.forEach((estudianteId: any) => {
-                if (estudianteId) {
-                  idsDestinatarios.add(estudianteId.toString());
+              logDebug(
+                `[DEBUG] 2.4 - Estudiantes válidos encontrados: ${estudiantesValidos.length}`,
+              );
+
+              // Actualizar el set solo con estudiantes válidos
+              estudiantesIds.clear();
+              estudiantesValidos.forEach((estudiante) => {
+                if (estudiante._id) {
+                  const estudianteId = estudiante._id.toString();
+                  estudiantesIds.add(estudianteId);
+                  logDebug(
+                    `[DEBUG] 2.4 - Estudiante válido: ${estudianteId} (${estudiante.nombre} ${estudiante.apellidos})`,
+                  );
                 }
               });
+
+              // 2.5 Obtener acudientes de estudiantes válidos
+              if (estudiantesIds.size > 0) {
+                logDebug('[DEBUG] 2.5 - Buscando acudientes de estudiantes válidos...');
+
+                const estudiantesIdsArray = Array.from(estudiantesIds);
+                const acudientesInfo = await Usuario.find({
+                  'info_academica.estudiantes_asociados': {
+                    $in: estudiantesIdsArray.map((id) => new mongoose.Types.ObjectId(id)),
+                  },
+                  tipo: 'ACUDIENTE',
+                  estado: 'ACTIVO',
+                  escuelaId: new mongoose.Types.ObjectId(req.user.escuelaId),
+                }).select('_id nombre apellidos');
+
+                logDebug(`[DEBUG] 2.5 - Acudientes encontrados: ${acudientesInfo.length}`);
+
+                acudientesInfo.forEach((acudiente) => {
+                  if (acudiente._id) {
+                    const acudienteId = acudiente._id.toString();
+                    acudientesIds.add(acudienteId);
+                    logDebug(
+                      `[DEBUG] 2.5 - Agregado acudiente: ${acudienteId} (${acudiente.nombre} ${acudiente.apellidos})`,
+                    );
+                  }
+                });
+              } else {
+                logDebug('[DEBUG] 2.5 - NO HAY ESTUDIANTES VÁLIDOS, NO SE BUSCAN ACUDIENTES');
+              }
+            } catch (error) {
+              logDebug(`[DEBUG ERROR] Error validando estudiantes: ${error}`);
             }
+          } else {
+            logDebug('[DEBUG] 2.4 - NO HAY ESTUDIANTES PARA VALIDAR');
           }
-        }
 
-        // 2.5 Obtener acudientes de esos estudiantes
-        const estudiantesIds = Array.from(idsDestinatarios);
-        if (estudiantesIds.length > 0) {
-          const acudientesInfo = (await Usuario.find({
-            'info_academica.estudiantes_asociados': {
-              $in: estudiantesIds.map((id) => new mongoose.Types.ObjectId(id)),
-            },
-            tipo: 'ACUDIENTE',
-            estado: 'ACTIVO',
-            escuelaId: new mongoose.Types.ObjectId(req.user.escuelaId),
-          }).select('_id')) as Array<{ _id: mongoose.Types.ObjectId }>;
+          // 2.6 Obtener personal administrativo y otros docentes
+          logDebug('[DEBUG] 2.6 - Obteniendo personal administrativo y docentes...');
 
-          acudientesInfo.forEach((acudiente) => {
-            idsDestinatarios.add(acudiente._id.toString());
-          });
-        }
+          try {
+            const personalYDocentes = await Usuario.find({
+              tipo: { $in: ['ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO', 'DOCENTE'] },
+              _id: { $ne: new mongoose.Types.ObjectId(req.user._id) },
+              estado: 'ACTIVO',
+              escuelaId: new mongoose.Types.ObjectId(req.user.escuelaId),
+            }).select('_id nombre apellidos tipo');
 
-        // 2.6 Obtener personal administrativo y otros docentes
-        const personalYDocentes = await Usuario.find({
-          tipo: { $in: ['ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO', 'DOCENTE'] },
-          _id: { $ne: new mongoose.Types.ObjectId(req.user._id) }, // Excluir al docente actual
-          estado: 'ACTIVO',
-          escuelaId: new mongoose.Types.ObjectId(req.user.escuelaId),
-        }).select('_id');
+            logDebug(`[DEBUG] 2.6 - Personal y docentes encontrados: ${personalYDocentes.length}`);
 
-        personalYDocentes.forEach((p) => {
-          if ('_id' in p && p._id) {
-            idsDestinatarios.add(p._id.toString());
+            personalYDocentes.forEach((p) => {
+              if (p._id) {
+                const personalId = p._id.toString();
+                personalIds.add(personalId);
+                logDebug(
+                  `[DEBUG] 2.6 - Agregado ${p.tipo}: ${personalId} (${p.nombre} ${p.apellidos})`,
+                );
+              }
+            });
+          } catch (error) {
+            logDebug(`[DEBUG ERROR] Error obteniendo personal: ${error}`);
           }
-        });
 
-        // 2.7 Aplicar filtro de búsqueda
-        interface QueryFilter {
-          $and?: Array<any>;
-          $or?: Array<{ [key: string]: RegExp }>;
-          [key: string]: any;
+          // 2.7 COMBINAR TODOS LOS IDS VÁLIDOS
+          const todosLosIds = new Set<string>();
+
+          // Agregar estudiantes válidos
+          estudiantesIds.forEach((id) => todosLosIds.add(id));
+
+          // Agregar acudientes válidos
+          acudientesIds.forEach((id) => todosLosIds.add(id));
+
+          // Agregar personal válido
+          personalIds.forEach((id) => todosLosIds.add(id));
+
+          logDebug(`[DEBUG] 2.7 - Total IDs únicos recolectados: ${todosLosIds.size}`);
+          logDebug(
+            `[DEBUG] 2.7 - Distribución: Estudiantes=${estudiantesIds.size}, Acudientes=${acudientesIds.size}, Personal=${personalIds.size}`,
+          );
+
+          // 2.8 Consulta final con filtro de búsqueda
+          if (todosLosIds.size > 0) {
+            logDebug('[DEBUG] 2.8 - Ejecutando consulta final...');
+
+            try {
+              // Crear el filtro base
+              const filter: any = {
+                _id: {
+                  $in: Array.from(todosLosIds).map((id) => new mongoose.Types.ObjectId(id)),
+                },
+                escuelaId: new mongoose.Types.ObjectId(req.user.escuelaId),
+                estado: 'ACTIVO',
+              };
+
+              // Aplicar filtro de búsqueda si existe
+              if (searchQuery) {
+                const searchRegex = new RegExp(searchQuery, 'i');
+                filter.$or = [
+                  { nombre: searchRegex },
+                  { apellidos: searchRegex },
+                  { email: searchRegex },
+                ];
+                logDebug(`[DEBUG] 2.8 - Aplicando filtro de búsqueda: "${searchQuery}"`);
+              }
+
+              // CONSULTA FINAL - SIN LÍMITE PARA VER TODOS LOS RESULTADOS
+              destinatarios = await Usuario.find(filter)
+                .select('_id nombre apellidos email tipo')
+                .sort({ tipo: 1, nombre: 1 });
+
+              logDebug(
+                `[DEBUG] 2.8 - Destinatarios finales después del filtrado: ${destinatarios.length}`,
+              );
+
+              // Debug final por tipo
+              const tiposCount = destinatarios.reduce((acc: any, dest: any) => {
+                acc[dest.tipo] = (acc[dest.tipo] || 0) + 1;
+                return acc;
+              }, {});
+              logDebug(`[DEBUG] 2.8 - Distribución por tipo: ${JSON.stringify(tiposCount)}`);
+
+              // Aplicar límite final después de debug
+              if (destinatarios.length > 150) {
+                destinatarios = destinatarios.slice(0, 150);
+                logDebug(`[DEBUG] 2.8 - Aplicado límite final: ${destinatarios.length} resultados`);
+              }
+
+              // Mostrar algunos ejemplos de cada tipo
+              Object.keys(tiposCount).forEach((tipo) => {
+                const ejemplosTipo = destinatarios.filter((d) => d.tipo === tipo).slice(0, 2);
+                ejemplosTipo.forEach((dest, index) => {
+                  logDebug(
+                    `[DEBUG] 2.8 - Ejemplo ${tipo} ${index + 1}: ${dest.nombre} ${dest.apellidos}`,
+                  );
+                });
+              });
+            } catch (error) {
+              logDebug(`[DEBUG ERROR] Error en consulta final: ${error}`);
+              destinatarios = [];
+            }
+          } else {
+            logDebug('[DEBUG] 2.8 - NO HAY IDS VÁLIDOS PARA CONSULTAR');
+            destinatarios = [];
+          }
+        } catch (error) {
+          logDebug(`[DEBUG ERROR] Error general en lógica de docente: ${error}`);
+          destinatarios = [];
         }
-        const filter: QueryFilter = {
-          _id: { $in: Array.from(idsDestinatarios).map((id) => new mongoose.Types.ObjectId(id)) },
-          escuelaId: new mongoose.Types.ObjectId(req.user.escuelaId),
-          estado: 'ACTIVO',
-        };
-
-        if (searchQuery) {
-          const searchRegex = new RegExp(searchQuery, 'i');
-          filter.$and = [
-            filter,
-            {
-              $or: [{ nombre: searchRegex }, { apellidos: searchRegex }, { email: searchRegex }],
-            },
-          ];
-        }
-
-        // 2.8 Obtener destinatarios filtrados
-        destinatarios = await Usuario.find(filter)
-          .select('_id nombre apellidos email tipo')
-          .limit(50)
-          .sort({ tipo: 1, nombre: 1 });
       }
 
-      // 3. ACUDIENTES: redirigir al método especializado
-      else if (tipoUsuario === 'ACUDIENTE') {
-        console.log('[DEBUG] Usuario acudiente - Redirigiendo al endpoint específico');
+      // 3. ACUDIENTES Y ESTUDIANTES: redirigir al método especializado
+      else if (tipoUsuario === 'ACUDIENTE' || tipoUsuario === 'ESTUDIANTE') {
+        logDebug(`[DEBUG] Usuario ${tipoUsuario} - usando lógica de acudiente`);
         return this.getDestinatariosParaAcudiente(req, res, next);
       }
 
-      // 4. ESTUDIANTES: no pueden enviar mensajes
-      else if (tipoUsuario === 'ESTUDIANTE') {
-        throw new ApiError(403, 'Los estudiantes no tienen permisos para enviar mensajes');
-      }
-
-      // Si llegamos aquí con un tipo de usuario no reconocido, enviar una lista vacía
+      // 5. Tipo de usuario no reconocido
       else {
-        console.log(`[DEBUG] Tipo de usuario no reconocido: ${tipoUsuario}`);
+        logDebug(`[DEBUG] Tipo de usuario no reconocido: ${tipoUsuario}`);
         destinatarios = [];
       }
 
-      console.log(`[DEBUG] Controlador - Destinatarios encontrados: ${destinatarios.length}`);
+      logDebug(`[DEBUG] RESULTADO FINAL - Destinatarios encontrados: ${destinatarios.length}`);
 
       return res.json({
         success: true,
         data: destinatarios,
+        debug: debugLogs,
       });
-    } catch (error) {
-      console.error('Error al obtener destinatarios:', error);
-      return next(error);
+    } catch (error: any) {
+      console.error('[DEBUG ERROR] Error general al obtener destinatarios:', error);
+
+      const errorMessage =
+        error instanceof ApiError
+          ? error.message
+          : 'Error interno del servidor al obtener destinatarios';
+
+      const statusCode = error instanceof ApiError ? error.statusCode : 500;
+
+      return res.status(statusCode).json({
+        success: false,
+        message: errorMessage,
+        data: [],
+        debug: [`[DEBUG ERROR] Error general: ${error.message || error}`],
+      });
     }
   }
 
@@ -829,12 +1052,232 @@ export class MensajeController {
         throw new ApiError(401, 'No autorizado');
       }
 
-      // Verificar que el usuario es un acudiente
-      if (req.user.tipo !== 'ACUDIENTE') {
-        throw new ApiError(403, 'Solo los acudientes pueden acceder a esta funcionalidad');
+      // Verificar que el usuario es un acudiente o estudiante
+      if (req.user.tipo !== 'ACUDIENTE' && req.user.tipo !== 'ESTUDIANTE') {
+        throw new ApiError(403, 'Solo los acudientes y estudiantes pueden acceder a esta funcionalidad');
       }
 
-      console.log(`[DEBUG] Obteniendo destinatarios para acudiente ID: ${req.user._id}`);
+      console.log(`[DEBUG] Obteniendo destinatarios para ${req.user.tipo} ID: ${req.user._id}`);
+
+      // Si es un estudiante, usar lógica compleja similar a acudiente
+      if (req.user.tipo === 'ESTUDIANTE') {
+        console.log(`[DEBUG] Usuario estudiante - obteniendo destinatarios con información contextual`);
+        
+        try {
+          // Para estudiantes: usar lógica similar a acudientes pero para SUS propios cursos
+          
+          // 1. Buscar cursos donde está el estudiante
+          const cursosEstudiante = await mongoose
+            .model('Curso')
+            .find({
+              estudiantes: new mongoose.Types.ObjectId(req.user._id),
+              escuelaId: new mongoose.Types.ObjectId(req.user.escuelaId),
+              estado: { $ne: 'INACTIVO' },
+            })
+            .select('_id nombre grado seccion director_grupo grupo jornada nivel estudiantes');
+
+          console.log(`[DEBUG] Cursos del estudiante encontrados: ${cursosEstudiante.length}`);
+
+          if (cursosEstudiante.length === 0) {
+            // Si no hay cursos, solo mostrar personal administrativo
+            const personalEscuela = await Usuario.find({
+              escuelaId: req.user.escuelaId,
+              tipo: { $in: ['ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'] },
+              estado: 'ACTIVO',
+            }).select('_id nombre apellidos email tipo');
+
+            const destinatariosFinales = personalEscuela.map((persona) => ({
+              _id: persona._id,
+              nombre: persona.nombre,
+              apellidos: persona.apellidos,
+              email: persona.email,
+              tipo: persona.tipo,
+            }));
+
+            return res.json({
+              success: true,
+              data: destinatariosFinales,
+              count: destinatariosFinales.length,
+              message: 'No se encontraron cursos. Mostrando solo personal administrativo.',
+            });
+          }
+
+          const cursosIds = cursosEstudiante.map(c => c._id);
+          const docentesIds = new Set<string>();
+          const directorGrupoInfo = new Map<string, string>();
+
+          // 2. Agregar directores de grupo
+          cursosEstudiante.forEach((curso) => {
+            if (curso.director_grupo) {
+              docentesIds.add(curso.director_grupo.toString());
+              let nombreCurso = curso.nombre || '';
+              if (curso.grado && curso.seccion) {
+                nombreCurso = `${curso.grado}${curso.seccion}`;
+              }
+              directorGrupoInfo.set(curso.director_grupo.toString(), nombreCurso);
+            }
+          });
+
+          // 3. Buscar asignaturas SOLO de los cursos del estudiante
+          const asignaturas = await mongoose
+            .model('Asignatura')
+            .find({
+              cursoId: { $in: cursosIds },
+              estado: 'ACTIVO',
+            })
+            .select('_id nombre docenteId cursoId');
+
+          console.log(`[DEBUG] Asignaturas encontradas: ${asignaturas.length}`);
+
+          // 4. Mapear información de asignaturas y SOLO agregar docentes de estas asignaturas
+          const asignaturasMap = new Map<string, { nombre: string; docenteId: string | null }>();
+          const asignaturasPorCurso = new Map<string, string[]>();
+
+          asignaturas.forEach((asignatura) => {
+            if (asignatura._id) {
+              asignaturasMap.set(asignatura._id.toString(), {
+                nombre: asignatura.nombre || '',
+                docenteId: asignatura.docenteId ? asignatura.docenteId.toString() : null,
+              });
+
+              // SOLO agregar docentes que realmente dictan asignaturas en los cursos del estudiante
+              if (asignatura.docenteId) {
+                docentesIds.add(asignatura.docenteId.toString());
+              }
+
+              if (asignatura.cursoId) {
+                const cursoId = asignatura.cursoId.toString();
+                if (!asignaturasPorCurso.has(cursoId)) {
+                  asignaturasPorCurso.set(cursoId, []);
+                }
+                const asignaturasDelCurso = asignaturasPorCurso.get(cursoId);
+                if (asignaturasDelCurso) {
+                  asignaturasDelCurso.push(asignatura._id.toString());
+                }
+              }
+            }
+          });
+
+          // 5. Obtener personal administrativo
+          const personalAdministrativo = await Usuario.find({
+            escuelaId: req.user.escuelaId,
+            tipo: { $in: ['ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'] },
+            estado: 'ACTIVO',
+          }).select('_id nombre apellidos email tipo');
+
+          // 6. Obtener información SOLO de los docentes relacionados
+          const docentes = await Usuario.find({
+            _id: { $in: Array.from(docentesIds).map((id) => new mongoose.Types.ObjectId(id)) },
+            tipo: 'DOCENTE',
+            estado: 'ACTIVO',
+          }).select('_id nombre apellidos email tipo');
+
+          console.log(`[DEBUG] Docentes encontrados: ${docentes.length}`);
+
+          // 7. Mapear asignaturas y cursos por docente
+          const docenteAsignaturas = new Map<string, Set<string>>();
+          const docenteCursos = new Map<string, Set<string>>();
+
+          asignaturas.forEach((asignatura) => {
+            if (asignatura.docenteId && asignatura.cursoId) {
+              const docenteId = asignatura.docenteId.toString();
+              const cursoId = asignatura.cursoId.toString();
+
+              const curso = cursosEstudiante.find((c) => c._id.toString() === cursoId);
+
+              if (curso) {
+                if (!docenteAsignaturas.has(docenteId)) {
+                  docenteAsignaturas.set(docenteId, new Set<string>());
+                }
+                const asignaturasSet = docenteAsignaturas.get(docenteId);
+                if (asignaturasSet && asignatura.nombre) {
+                  asignaturasSet.add(asignatura.nombre);
+                }
+
+                if (!docenteCursos.has(docenteId)) {
+                  docenteCursos.set(docenteId, new Set<string>());
+                }
+                const cursosSet = docenteCursos.get(docenteId);
+                if (cursosSet) {
+                  let nombreCurso = curso.nombre || '';
+                  if (curso.grado && curso.seccion) {
+                    nombreCurso = `${curso.grado}${curso.seccion}`;
+                  }
+                  cursosSet.add(nombreCurso);
+                }
+              }
+            }
+          });
+
+          // 8. Construir lista final con información contextual
+          const destinatariosFinales: any[] = [];
+
+          // Añadir docentes con información contextual
+          docentes.forEach((docente) => {
+            if (docente._id && req.user) {
+              const docenteId = docente._id.toString();
+
+              const asignaturasSet = docenteAsignaturas.get(docenteId);
+              const cursosSet = docenteCursos.get(docenteId);
+
+              const asignaturas = asignaturasSet && asignaturasSet.size > 0 ? Array.from(asignaturasSet).join(', ') : '';
+              let cursosStr = cursosSet && cursosSet.size > 0 ? Array.from(cursosSet).join(', ') : '';
+
+              const cursoDirector = directorGrupoInfo.get(docenteId);
+              if (cursoDirector) {
+                if (cursosStr) {
+                  cursosStr += ` (Director de ${cursoDirector})`;
+                } else {
+                  cursosStr = `Director de ${cursoDirector}`;
+                }
+              }
+
+              // Información contextual para estudiante
+              const nombreEstudiante = `${req.user.nombre} ${req.user.apellidos}`;
+              const infoContextual = `Docente de ${nombreEstudiante}`;
+
+              destinatariosFinales.push({
+                _id: docente._id,
+                nombre: docente.nombre || '',
+                apellidos: docente.apellidos || '',
+                email: docente.email || '',
+                tipo: docente.tipo || '',
+                asignatura: asignaturas,
+                curso: cursosStr,
+                infoContextual: infoContextual,
+              });
+            }
+          });
+
+          // Añadir personal administrativo
+          personalAdministrativo.forEach((admin) => {
+            if (admin._id) {
+              destinatariosFinales.push({
+                _id: admin._id,
+                nombre: admin.nombre || '',
+                apellidos: admin.apellidos || '',
+                email: admin.email || '',
+                tipo: admin.tipo || '',
+              });
+            }
+          });
+
+          console.log(`[DEBUG] Total destinatarios para estudiante: ${destinatariosFinales.length}`);
+
+          return res.json({
+            success: true,
+            data: destinatariosFinales,
+            count: destinatariosFinales.length,
+          });
+        } catch (error) {
+          console.error('Error obteniendo destinatarios para estudiante:', error);
+          return res.json({
+            success: true,
+            data: [],
+            message: 'Error obteniendo destinatarios',
+          });
+        }
+      }
 
       // Definir interfaces para tipos
       interface ICurso {
@@ -1165,7 +1608,7 @@ export class MensajeController {
 
           for (const curso of cursosDirector) {
             if (Array.isArray(curso.estudiantes)) {
-              const estudiantesEnCurso = estudiantes.filter((est) =>
+              const estudiantesEnCurso = estudiantes.filter((est: IEstudiante) =>
                 curso.estudiantes?.some(
                   (id: mongoose.Types.ObjectId) => id.toString() === est._id.toString(),
                 ),
@@ -1193,7 +1636,7 @@ export class MensajeController {
 
           for (const curso of cursosAsignaturas) {
             if (Array.isArray(curso.estudiantes)) {
-              const estudiantesEnCurso = estudiantes.filter((est) =>
+              const estudiantesEnCurso = estudiantes.filter((est: IEstudiante) =>
                 curso.estudiantes?.some(
                   (id: mongoose.Types.ObjectId) => id.toString() === est._id.toString(),
                 ),
@@ -1426,9 +1869,6 @@ export class MensajeController {
       }
 
       // Verificar si el usuario es estudiante
-      if (req.user.tipo === 'ESTUDIANTE') {
-        throw new ApiError(403, 'Los estudiantes no pueden enviar mensajes');
-      }
 
       // Obtener datos del mensaje
       const {
@@ -1573,6 +2013,77 @@ export class MensajeController {
 
       // Usar el servicio para crear el mensaje
       const nuevoMensaje = await mensajeService.crearMensaje(datosMensaje, req.user);
+
+      // 🔥 NUEVA FUNCIONALIDAD: ENVIAR NOTIFICACIONES PUSH AUTOMÁTICAMENTE
+      if (estado !== EstadoMensaje.BORRADOR) {
+        try {
+          console.log('📱 Enviando notificaciones push automáticas...');
+          
+          const senderName = `${req.user.nombre} ${req.user.apellidos}`;
+          const isUrgent = prioridad === PrioridadMensaje.ALTA || 
+                          asunto.toLowerCase().includes('urgente') ||
+                          asunto.toLowerCase().includes('emergencia');
+          
+          // Obtener destinatarios finales (incluyendo destinatarios de cursos)
+          let allRecipients = [...destinatariosArray];
+          
+          if (cursoIdsArray && cursoIdsArray.length > 0) {
+            // Si hay cursos, obtener estudiantes y acudientes
+            for (const cursoId of cursoIdsArray) {
+              const curso = await mongoose.model('Curso').findById(cursoId).populate('estudiantes');
+              if (curso && curso.estudiantes) {
+                const estudiantesIds = curso.estudiantes.map((est: any) => est._id.toString());
+                allRecipients.push(...estudiantesIds);
+                
+                // Obtener acudientes de los estudiantes
+                const acudientes = await Usuario.find({
+                  'info_academica.estudiantes_asociados': { $in: estudiantesIds },
+                  tipo: 'ACUDIENTE',
+                }).select('_id');
+                
+                allRecipients.push(...acudientes.map((a: any) => a._id.toString()));
+              }
+            }
+          }
+          
+          // Eliminar duplicados
+          allRecipients = [...new Set(allRecipients)];
+          
+          // Enviar notificaciones
+          let pushEnviadas = 0;
+          for (const recipientId of allRecipients) {
+            try {
+              let resultado;
+              if (isUrgent) {
+                resultado = await pushNotificationService.notificarMensajeUrgente(
+                  recipientId,
+                  senderName,
+                  asunto,
+                  nuevoMensaje._id.toString()
+                );
+              } else {
+                resultado = await pushNotificationService.notificarNuevoMensaje(
+                  recipientId,
+                  senderName,
+                  asunto,
+                  nuevoMensaje._id.toString(),
+                  prioridad as any
+                );
+              }
+              
+              if (resultado) pushEnviadas++;
+            } catch (error) {
+              console.error(`❌ Error enviando push a ${recipientId}:`, error);
+            }
+          }
+          
+          console.log(`✅ Notificaciones push enviadas: ${pushEnviadas}/${allRecipients.length}`);
+        } catch (error) {
+          console.error('❌ Error enviando notificaciones push:', error);
+          // No lanzar error para no afectar la creación del mensaje
+        }
+      }
+
 
       // Enviar copias a acudientes si hay estudiantes en los destinatarios
       // Esto solo es necesario si no se han incluido cursos, ya que el servicio
@@ -2432,9 +2943,6 @@ export class MensajeController {
       }
 
       // Verificar si el usuario es estudiante
-      if (req.user.tipo === 'ESTUDIANTE') {
-        throw new ApiError(403, 'Los estudiantes no pueden enviar mensajes');
-      }
 
       const { mensajeId } = req.params;
       const { asunto, contenido, destinatariosCc } = req.body;
@@ -2547,6 +3055,25 @@ export class MensajeController {
 
       // Usar el servicio para crear la respuesta
       const respuesta = await mensajeService.crearMensaje(datosRespuesta, req.user);
+      
+      // 🔥 ENVIAR NOTIFICACIÓN PUSH PARA RESPUESTA
+      try {
+        const senderName = `${req.user.nombre} ${req.user.apellidos}`;
+        
+        for (const recipientId of destinatarios) {
+          await pushNotificationService.notificarNuevoMensaje(
+            recipientId,
+            senderName,
+            datosRespuesta.asunto,
+            respuesta._id.toString(),
+            'NORMAL'
+          );
+        }
+        
+        console.log('✅ Notificaciones push enviadas para respuesta');
+      } catch (error) {
+        console.error('❌ Error enviando push para respuesta:', error);
+      }
 
       // Verificar si hay estudiantes en los destinatarios para enviar copias a acudientes
       const estudiantesInfo = await Usuario.find({

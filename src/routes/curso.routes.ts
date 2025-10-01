@@ -8,6 +8,7 @@ import {
   agregarEstudiantesValidation,
   removerEstudiantesValidation,
 } from '../validations/curso.validation';
+import { cacheMiddleware } from '../cache/simpleCache';
 
 const router = express.Router();
 
@@ -52,6 +53,7 @@ router.get(
 router.get(
   '/',
   authorize('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'),
+  cacheMiddleware('cursos'),
   cursoController.obtenerTodos,
 );
 

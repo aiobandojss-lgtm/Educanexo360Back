@@ -10,6 +10,7 @@ import {
   confirmarAsistenciaValidation,
 } from '../validations/calendario.validation';
 import gridfsManager from '../config/gridfs';
+import { invalidateOnCalendario } from '../middleware/dashboardCacheInvalidation.middleware';
 
 const router = express.Router();
 
@@ -19,7 +20,8 @@ router.use(authenticate);
 // Rutas para gestionar eventos
 router.post(
   '/',
-  authorize('ADMIN', 'DOCENTE', 'ESTUDIANTE', 'PADRE', 'ACUDIENTE'), // 👈 Añadido ACUDIENTE
+  authorize('ADMIN', 'DOCENTE', 'ESTUDIANTE', 'PADRE', 'ACUDIENTE'),
+  invalidateOnCalendario, // ← AGREGAR ESTA LÍNEA
   gridfsManager.getUpload()?.single('archivo') || [],
   validate(crearEventoValidation),
   calendarioController.crearEvento as unknown as express.RequestHandler,
@@ -40,6 +42,7 @@ router.get(
 router.put(
   '/:id',
   authorize('ADMIN', 'DOCENTE'),
+  invalidateOnCalendario, // ← AGREGAR ESTA LÍNEA
   gridfsManager.getUpload()?.single('archivo') || [],
   validate(actualizarEventoValidation),
   calendarioController.actualizarEvento as express.RequestHandler,
@@ -48,6 +51,7 @@ router.put(
 router.delete(
   '/:id',
   authorize('ADMIN', 'DOCENTE'),
+  invalidateOnCalendario, // ← AGREGAR ESTA LÍNEA
   calendarioController.eliminarEvento as express.RequestHandler,
 );
 

@@ -1,11 +1,9 @@
-// src/interfaces/INotificacion.ts
-
 import { Document, Types } from 'mongoose';
 
 export enum TipoNotificacion {
   MENSAJE = 'MENSAJE', // Nuevo mensaje
   CALIFICACION = 'CALIFICACION', // Nueva calificación
-  SISTEMA = 'SISTEMA', // Notificación del sistema
+  SISTEMA = 'SISTEMA', // Notificación del sistema - ✅ AGREGADO
   EVENTO = 'EVENTO', // Evento escolar
 }
 

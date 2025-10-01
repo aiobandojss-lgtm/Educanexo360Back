@@ -361,197 +361,210 @@ class CalendarioController {
 
   // Actualizar un evento existente
   async actualizarEvento(req: RequestWithUser, res: Response, next: NextFunction) {
-    try {
-      if (!req.user) {
-        throw new ApiError(401, 'No autorizado');
-      }
-
-      // Verificar si el usuario puede editar el evento
-      const evento = await EventoCalendario.findOne({
-        _id: req.params.id,
-        escuelaId: req.user.escuelaId,
-      });
-
-      if (!evento) {
-        throw new ApiError(404, 'Evento no encontrado');
-      }
-
-      // Solo el creador o un administrador puede editar el evento
-      if (evento.creadorId.toString() !== req.user._id && req.user.tipo !== 'ADMIN') {
-        throw new ApiError(403, 'No tienes permiso para editar este evento');
-      }
-
-      const datosActualizacion: any = { ...req.body };
-
-      // Procesar fechas
-      if (datosActualizacion.fechaInicio) {
-        datosActualizacion.fechaInicio = new Date(datosActualizacion.fechaInicio);
-      }
-
-      if (datosActualizacion.fechaFin) {
-        datosActualizacion.fechaFin = new Date(datosActualizacion.fechaFin);
-      }
-
-      // Procesar invitados
-      if (datosActualizacion.invitados && typeof datosActualizacion.invitados === 'string') {
-        try {
-          datosActualizacion.invitados = JSON.parse(datosActualizacion.invitados);
-        } catch (error) {
-          throw new ApiError(400, 'Formato de invitados inválido');
-        }
-      }
-
-      // Verificar si hay un archivo adjunto
-      if (req.files && req.files.length > 0) {
-        const file = req.files[0];
-        const bucket = gridfsManager.getBucket();
-
-        if (!bucket) {
-          throw new ApiError(500, 'Servicio de archivos no disponible');
-        }
-
-        // Si ya hay un archivo adjunto, eliminarlo
-        if (evento.archivoAdjunto && evento.archivoAdjunto.fileId) {
-          try {
-            await bucket.delete(
-              new mongoose.Types.ObjectId(evento.archivoAdjunto.fileId.toString()),
-            );
-          } catch (error) {
-            console.error('Error deleting old file:', error);
-          }
-        }
-
-        // Subir nuevo archivo a GridFS
-        const filename = file.filename || path.basename(file.path);
-        const uploadStream = bucket.openUploadStream(filename, {
-          metadata: {
-            originalName: file.originalname,
-            contentType: file.mimetype,
-            size: file.size,
-            uploadedBy: req.user._id,
-          },
-        });
-
-        const fileContent = fs.readFileSync(file.path);
-        uploadStream.write(fileContent);
-        uploadStream.end();
-
-        datosActualizacion.archivoAdjunto = {
-          fileId: uploadStream.id,
-          nombre: file.originalname,
-          tipo: file.mimetype,
-          tamaño: file.size,
-        };
-
-        // Limpiar archivo temporal
-        try {
-          fs.unlinkSync(file.path);
-        } catch (error) {
-          console.error('Error deleting temporary file:', error);
-        }
-      }
-
-      // Actualizar el evento
-      await EventoCalendario.findByIdAndUpdate(req.params.id, datosActualizacion, {
-        new: true,
-        runValidators: true,
-      });
-
-      // Obtener evento actualizado con campos populados
-      const eventoActualizado = await EventoCalendario.findById(req.params.id)
-        .populate('creadorId', 'nombre apellidos email tipo')
-        .populate('cursoId', 'nombre nivel')
-        .populate('invitados.usuarioId', 'nombre apellidos email tipo')
-        .lean();
-
-      if (!eventoActualizado) {
-        throw new ApiError(404, 'Evento no encontrado');
-      }
-
-      res.json({
-        success: true,
-        data: eventoActualizado,
-      });
-    } catch (error) {
-      next(error);
+  try {
+    if (!req.user) {
+      throw new ApiError(401, 'No autorizado');
     }
+
+    // Verificar si el usuario puede editar el evento
+    const evento = await EventoCalendario.findOne({
+      _id: req.params.id,
+      escuelaId: req.user.escuelaId,
+    });
+
+    if (!evento) {
+      throw new ApiError(404, 'Evento no encontrado');
+    }
+
+    // 🚨 CAMBIO AQUÍ: Agregar COORDINADOR y RECTOR a los roles permitidos
+    const rolesAdministrativos = ['ADMIN', 'COORDINADOR', 'RECTOR','DOCENTE','ADMINISTRATIVO'];
+    const esCreador = evento.creadorId.toString() === req.user._id;
+    const tienePermisoAdministrativo = rolesAdministrativos.includes(req.user.tipo);
+
+    // Verificar permisos: puede editar si es el creador O tiene rol administrativo
+    if (!esCreador && !tienePermisoAdministrativo) {
+      throw new ApiError(403, 'No tienes permiso para editar este evento');
+    }
+
+    const datosActualizacion: any = { ...req.body };
+
+    // Procesar fechas
+    if (datosActualizacion.fechaInicio) {
+      datosActualizacion.fechaInicio = new Date(datosActualizacion.fechaInicio);
+    }
+
+    if (datosActualizacion.fechaFin) {
+      datosActualizacion.fechaFin = new Date(datosActualizacion.fechaFin);
+    }
+
+    // Procesar invitados
+    if (datosActualizacion.invitados && typeof datosActualizacion.invitados === 'string') {
+      try {
+        datosActualizacion.invitados = JSON.parse(datosActualizacion.invitados);
+      } catch (error) {
+        throw new ApiError(400, 'Formato de invitados inválido');
+      }
+    }
+
+    // Verificar si hay un archivo adjunto
+    if (req.files && req.files.length > 0) {
+      const file = req.files[0];
+      const bucket = gridfsManager.getBucket();
+
+      if (!bucket) {
+        throw new ApiError(500, 'Servicio de archivos no disponible');
+      }
+
+      // Si ya hay un archivo adjunto, eliminarlo
+      if (evento.archivoAdjunto && evento.archivoAdjunto.fileId) {
+        try {
+          await bucket.delete(
+            new mongoose.Types.ObjectId(evento.archivoAdjunto.fileId.toString()),
+          );
+        } catch (error) {
+          console.error('Error deleting old file:', error);
+        }
+      }
+
+      // Subir nuevo archivo a GridFS
+      const filename = file.filename || path.basename(file.path);
+      const uploadStream = bucket.openUploadStream(filename, {
+        metadata: {
+          originalName: file.originalname,
+          contentType: file.mimetype,
+          size: file.size,
+          uploadedBy: req.user._id,
+        },
+      });
+
+      const fileContent = fs.readFileSync(file.path);
+      uploadStream.write(fileContent);
+      uploadStream.end();
+
+      datosActualizacion.archivoAdjunto = {
+        fileId: uploadStream.id,
+        nombre: file.originalname,
+        tipo: file.mimetype,
+        tamaño: file.size,
+      };
+
+      // Limpiar archivo temporal
+      try {
+        fs.unlinkSync(file.path);
+      } catch (error) {
+        console.error('Error deleting temporary file:', error);
+      }
+    }
+
+    // Actualizar el evento
+    await EventoCalendario.findByIdAndUpdate(req.params.id, datosActualizacion, {
+      new: true,
+      runValidators: true,
+    });
+
+    // Obtener evento actualizado con campos populados
+    const eventoActualizado = await EventoCalendario.findById(req.params.id)
+      .populate('creadorId', 'nombre apellidos email tipo')
+      .populate('cursoId', 'nombre nivel')
+      .populate('invitados.usuarioId', 'nombre apellidos email tipo')
+      .lean();
+
+    if (!eventoActualizado) {
+      throw new ApiError(404, 'Evento no encontrado');
+    }
+
+    res.json({
+      success: true,
+      data: eventoActualizado,
+    });
+  } catch (error) {
+    next(error);
   }
+}
 
   // 🚨 FUNCIÓN MODIFICADA - Eliminar (cancelar) un evento
   async eliminarEvento(req: RequestWithUser, res: Response, next: NextFunction) {
-    try {
-      console.log('🗑️ === INICIANDO CANCELACIÓN DE EVENTO ===');
-      console.log(`ID del evento: ${req.params.id}`);
-      console.log(`Usuario: ${req.user?.email} (${req.user?.tipo})`);
+  try {
+    console.log('🗑️ === INICIANDO CANCELACIÓN DE EVENTO ===');
+    console.log(`ID del evento: ${req.params.id}`);
+    console.log(`Usuario: ${req.user?.email} (${req.user?.tipo})`);
 
-      if (!req.user) {
-        throw new ApiError(401, 'No autorizado');
-      }
-
-      // Verificar si el usuario puede eliminar el evento
-      const evento = await EventoCalendario.findOne({
-        _id: req.params.id,
-        escuelaId: req.user.escuelaId,
-      });
-
-      if (!evento) {
-        console.log('❌ Evento no encontrado en la base de datos');
-        throw new ApiError(404, 'Evento no encontrado');
-      }
-
-      console.log(`✅ Evento encontrado: "${evento.titulo}"`);
-      console.log(`Estado actual: ${evento.estado}`);
-
-      // Solo el creador o un administrador puede eliminar el evento
-      if (evento.creadorId.toString() !== req.user._id && req.user.tipo !== 'ADMIN') {
-        console.log('❌ Usuario sin permisos para eliminar');
-        throw new ApiError(403, 'No tienes permiso para eliminar este evento');
-      }
-
-      // Verificar si ya está cancelado
-      if (evento.estado === 'CANCELADO') {
-        console.log('⚠️ El evento ya estaba cancelado');
-        throw new ApiError(400, 'El evento ya está cancelado');
-      }
-
-      // 🚨 CAMBIAR ESTADO A CANCELADO (mantener en BD para historial)
-      console.log('🔄 Cambiando estado del evento a CANCELADO...');
-      const eventoActualizado = await EventoCalendario.findByIdAndUpdate(
-        req.params.id,
-        {
-          estado: EstadoEvento.CANCELADO,
-          fechaCancelacion: new Date(),
-        },
-        { new: true },
-      );
-
-      if (!eventoActualizado) {
-        console.log('❌ No se pudo cancelar el evento');
-        throw new ApiError(500, 'Error al cancelar el evento');
-      }
-
-      console.log('✅ EVENTO CANCELADO EXITOSAMENTE');
-      console.log(`Título: "${eventoActualizado.titulo}"`);
-      console.log(`Nuevo estado: ${eventoActualizado.estado}`);
-      console.log('🗑️ === CANCELACIÓN COMPLETADA ===');
-
-      // Respuesta de éxito
-      res.json({
-        success: true,
-        message: 'Evento cancelado exitosamente',
-        data: {
-          _id: eventoActualizado._id,
-          titulo: eventoActualizado.titulo,
-          estado: eventoActualizado.estado,
-          cancelado: true,
-          fechaCancelacion: new Date().toISOString(),
-        },
-      });
-    } catch (error) {
-      console.error('❌ ERROR al cancelar evento:', error);
-      next(error);
+    if (!req.user) {
+      throw new ApiError(401, 'No autorizado');
     }
+
+    // Verificar si el usuario puede eliminar el evento
+    const evento = await EventoCalendario.findOne({
+      _id: req.params.id,
+      escuelaId: req.user.escuelaId,
+    });
+
+    if (!evento) {
+      console.log('❌ Evento no encontrado en la base de datos');
+      throw new ApiError(404, 'Evento no encontrado');
+    }
+
+    console.log(`✅ Evento encontrado: "${evento.titulo}"`);
+    console.log(`Estado actual: ${evento.estado}`);
+
+    // 🚨 CAMBIO AQUÍ: Agregar COORDINADOR, RECTOR, DOCENTE y ADMINISTRATIVO a los roles permitidos
+    const rolesAdministrativos = ['ADMIN', 'COORDINADOR', 'RECTOR', 'DOCENTE', 'ADMINISTRATIVO'];
+    const esCreador = evento.creadorId.toString() === req.user._id;
+    const tienePermisoAdministrativo = rolesAdministrativos.includes(req.user.tipo);
+
+    // Verificar permisos: puede eliminar si es el creador O tiene rol administrativo
+    if (!esCreador && !tienePermisoAdministrativo) {
+      console.log('❌ Usuario sin permisos para eliminar');
+      console.log(`   - Tipo de usuario: ${req.user.tipo}`);
+      console.log(`   - Es creador: ${esCreador}`);
+      console.log(`   - Tiene permiso administrativo: ${tienePermisoAdministrativo}`);
+      throw new ApiError(403, 'No tienes permiso para eliminar este evento');
+    }
+
+    // Verificar si ya está cancelado
+    if (evento.estado === 'CANCELADO') {
+      console.log('⚠️ El evento ya estaba cancelado');
+      throw new ApiError(400, 'El evento ya está cancelado');
+    }
+
+    // 🚨 CAMBIAR ESTADO A CANCELADO (mantener en BD para historial)
+    console.log('🔄 Cambiando estado del evento a CANCELADO...');
+    const eventoActualizado = await EventoCalendario.findByIdAndUpdate(
+      req.params.id,
+      {
+        estado: EstadoEvento.CANCELADO,
+        fechaCancelacion: new Date(),
+      },
+      { new: true },
+    );
+
+    if (!eventoActualizado) {
+      console.log('❌ No se pudo cancelar el evento');
+      throw new ApiError(500, 'Error al cancelar el evento');
+    }
+
+    console.log('✅ EVENTO CANCELADO EXITOSAMENTE');
+    console.log(`Título: "${eventoActualizado.titulo}"`);
+    console.log(`Nuevo estado: ${eventoActualizado.estado}`);
+    console.log('🗑️ === CANCELACIÓN COMPLETADA ===');
+
+    // Respuesta de éxito
+    res.json({
+      success: true,
+      message: 'Evento cancelado exitosamente',
+      data: {
+        _id: eventoActualizado._id,
+        titulo: eventoActualizado.titulo,
+        estado: eventoActualizado.estado,
+        cancelado: true,
+        fechaCancelacion: new Date().toISOString(),
+      },
+    });
+  } catch (error) {
+    console.error('❌ ERROR al cancelar evento:', error);
+    next(error);
   }
+}
 
   // Confirmar asistencia a un evento
   async confirmarAsistencia(req: RequestWithUser, res: Response, next: NextFunction) {
@@ -608,52 +621,53 @@ class CalendarioController {
   }
 
   async cambiarEstadoEvento(req: RequestWithUser, res: Response, next: NextFunction) {
-    try {
-      if (!req.user) {
-        throw new ApiError(401, 'No autorizado');
-      }
-
-      const { id } = req.params;
-      const { estado } = req.body;
-
-      // Verificar que el estado es válido
-      if (!['PENDIENTE', 'ACTIVO', 'FINALIZADO', 'CANCELADO'].includes(estado)) {
-        throw new ApiError(400, 'Estado no válido');
-      }
-
-      // Verificar si el usuario puede modificar el evento
-      const evento = await EventoCalendario.findOne({
-        _id: id,
-        escuelaId: req.user.escuelaId,
-      });
-
-      if (!evento) {
-        throw new ApiError(404, 'Evento no encontrado');
-      }
-
-      // Solo admins y docentes pueden cambiar el estado
-      if (req.user.tipo !== 'ADMIN' && req.user.tipo !== 'DOCENTE') {
-        throw new ApiError(403, 'No tienes permiso para cambiar el estado de este evento');
-      }
-
-      // Actualizar el estado
-      const eventoActualizado = await EventoCalendario.findByIdAndUpdate(
-        id,
-        { estado },
-        { new: true },
-      )
-        .populate('creadorId', 'nombre apellidos email tipo')
-        .populate('cursoId', 'nombre nivel');
-
-      res.json({
-        success: true,
-        data: eventoActualizado,
-        message: `Estado del evento cambiado a ${estado} exitosamente`,
-      });
-    } catch (error) {
-      next(error);
+  try {
+    if (!req.user) {
+      throw new ApiError(401, 'No autorizado');
     }
+
+    const { id } = req.params;
+    const { estado } = req.body;
+
+    // Verificar que el estado es válido
+    if (!['PENDIENTE', 'ACTIVO', 'FINALIZADO', 'CANCELADO'].includes(estado)) {
+      throw new ApiError(400, 'Estado no válido');
+    }
+
+    // Verificar si el usuario puede modificar el evento
+    const evento = await EventoCalendario.findOne({
+      _id: id,
+      escuelaId: req.user.escuelaId,
+    });
+
+    if (!evento) {
+      throw new ApiError(404, 'Evento no encontrado');
+    }
+
+    // 🚨 CAMBIO AQUÍ: Agregar COORDINADOR y RECTOR a los roles permitidos
+    const rolesConPermiso = ['ADMIN', 'COORDINADOR', 'RECTOR', 'DOCENTE','ADMINISTRATIVO'];
+    if (!rolesConPermiso.includes(req.user.tipo)) {
+      throw new ApiError(403, 'No tienes permiso para cambiar el estado de este evento');
+    }
+
+    // Actualizar el estado
+    const eventoActualizado = await EventoCalendario.findByIdAndUpdate(
+      id,
+      { estado },
+      { new: true },
+    )
+      .populate('creadorId', 'nombre apellidos email tipo')
+      .populate('cursoId', 'nombre nivel');
+
+    res.json({
+      success: true,
+      data: eventoActualizado,
+      message: `Estado del evento cambiado a ${estado} exitosamente`,
+    });
+  } catch (error) {
+    next(error);
   }
+}
 
   // Descargar un archivo adjunto de un evento
   async descargarAdjunto(req: RequestWithUser, res: Response, next: NextFunction) {

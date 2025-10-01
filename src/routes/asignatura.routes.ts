@@ -28,6 +28,13 @@ router.get(
   asignaturaController.obtenerNoAsignadasACurso,
 );
 
+// Añadir esta ruta en asignatura.routes.ts justo después de la ruta /curso/:cursoId
+router.get(
+  '/no-asignadas/:cursoId',
+  authorize('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'),
+  asignaturaController.obtenerNoAsignadasACurso,
+);
+
 // Rutas para administradores
 router.post(
   '/',
@@ -36,9 +43,10 @@ router.post(
   asignaturaController.crear,
 );
 
+// ✅ CORREGIDO: Usar el método actualizar normal (que ya maneja la desasignación)
 router.put(
   '/:id',
-  authorize('ADMIN'),
+  authorize('ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'),
   validate(actualizarAsignaturaValidation),
   asignaturaController.actualizar,
 );
@@ -53,12 +61,8 @@ router.put(
   asignaturaController.actualizarPeriodos,
 );
 
-// Añadir esta ruta en asignatura.routes.ts justo después de la ruta /curso/:cursoId
-router.get(
-  '/no-asignadas/:cursoId',
-  authorize('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'),
-  asignaturaController.obtenerNoAsignadasACurso,
-);
+// ✅ RUTA ESPECÍFICA PARA REMOVER DEL CURSO
+router.patch('/:id/remover-curso', authorize('ADMIN'), asignaturaController.removerDeCurso);
 
 // Rutas de consulta (accesibles para ADMIN y DOCENTE)
 router.get('/', authorize('ADMIN', 'DOCENTE'), asignaturaController.obtenerTodas);

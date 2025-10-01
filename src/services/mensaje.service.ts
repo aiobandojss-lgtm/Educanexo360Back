@@ -1,4 +1,4 @@
-// src/services/mensaje.service.ts - VERSIÓN REVISADA
+// src/services/mensaje.service.ts - VERSIÓN OPTIMIZADA CON CACHE Y AGREGACIONES
 
 import mongoose from 'mongoose';
 import Usuario from '../models/usuario.model';
@@ -10,26 +10,44 @@ import { TipoMensaje, EstadoMensaje, PrioridadMensaje } from '../interfaces/IMen
 import { TipoNotificacion } from '../interfaces/INotificacion';
 import emailService from './email.service';
 import notificacionService from './notificacion.service';
+import { cache, invalidateCache, invalidateRelatedCache } from '../cache/simpleCache';
 import config from '../config/config';
 
 class MensajeService {
+  // 🚀 CACHE HELPER: Crear clave de cache consistente
+  private createCacheKey(type: string, ...params: string[]): string {
+    return `${type}_${params.join('_')}`;
+  }
+
+  // 🚀 CACHE HELPER: Obtener o establecer con cache
+  private async getOrSetCache<T>(
+    cacheKey: string,
+    ttl: number,
+    fetchFunction: () => Promise<T>,
+  ): Promise<T> {
+    const cached = cache.get<T>(cacheKey);
+    if (cached) {
+      console.log(`📋 CACHE HIT: ${cacheKey}`);
+      return cached;
+    }
+
+    const result = await fetchFunction();
+    cache.set(cacheKey, result, ttl);
+    console.log(`💾 CACHE SET: ${cacheKey} (${ttl}s)`);
+
+    return result;
+  }
+
   /**
    * Convierte de forma segura una cadena a ObjectId
-   * @param id ID a convertir
-   * @returns ObjectId o null si la conversión falla
    */
   private safeObjectId(id: string | any): mongoose.Types.ObjectId | null {
     try {
       if (!id) return null;
-
-      // Si ya es un ObjectId, retornarlo
       if (id instanceof mongoose.Types.ObjectId) return id;
-
-      // Verificar si es un string válido y convertirlo
       if (typeof id === 'string' && mongoose.isValidObjectId(id)) {
         return new mongoose.Types.ObjectId(id);
       }
-
       return null;
     } catch (error) {
       console.error('Error al convertir a ObjectId:', error);
@@ -38,63 +56,89 @@ class MensajeService {
   }
 
   /**
-   * Obtiene los posibles destinatarios según el rol del usuario - VERSIÓN SIMPLIFICADA
-   * para solucionar errores iniciales
+   * 🚀 OPTIMIZADO: Obtiene posibles destinatarios con CACHE y AGREGACIÓN
    */
   async getPosiblesDestinatarios(userId: string, escuelaId: string, query: string = '') {
     try {
-      console.log(
-        `[getPosiblesDestinatarios] Iniciando con userId=${userId}, escuelaId=${escuelaId}, query='${query}'`,
-      );
+      console.log(`🔍 getPosiblesDestinatarios: userId=${userId}, query='${query}'`);
 
-      // Intentamos una implementación simplificada para evitar errores iniciales
       // Validar IDs
-      if (!mongoose.isValidObjectId(userId)) {
-        throw new ApiError(400, 'ID de usuario inválido');
+      if (!mongoose.isValidObjectId(userId) || !mongoose.isValidObjectId(escuelaId)) {
+        throw new ApiError(400, 'IDs inválidos');
       }
 
-      if (!mongoose.isValidObjectId(escuelaId)) {
-        throw new ApiError(400, 'ID de escuela inválido');
-      }
+      // ✅ CACHE KEY incluye query para búsquedas específicas
+      const cacheKey = this.createCacheKey('destinatarios', userId, escuelaId, query);
 
-      // Buscar el usuario que está consultando
-      const usuario = await Usuario.findById(userId);
-      if (!usuario) {
-        throw new ApiError(404, 'Usuario no encontrado');
-      }
+      return await this.getOrSetCache(cacheKey, 120, async () => {
+        // ✅ UNA SOLA AGREGACIÓN OPTIMIZADA
+        const resultado = await Usuario.aggregate([
+          {
+            $match: {
+              escuelaId: new mongoose.Types.ObjectId(escuelaId),
+              _id: { $ne: new mongoose.Types.ObjectId(userId) },
+              estado: 'ACTIVO', // Solo usuarios activos
+              ...(query &&
+                query.trim() !== '' && {
+                  $or: [
+                    { nombre: { $regex: query, $options: 'i' } },
+                    { apellidos: { $regex: query, $options: 'i' } },
+                    { email: { $regex: query, $options: 'i' } },
+                  ],
+                }),
+            },
+          },
+          {
+            $lookup: {
+              from: 'usuarios',
+              let: { currentUserId: new mongoose.Types.ObjectId(userId) },
+              pipeline: [
+                { $match: { $expr: { $eq: ['$_id', '$$currentUserId'] } } },
+                { $project: { tipo: 1 } },
+              ],
+              as: 'usuario_actual',
+            },
+          },
+          {
+            $addFields: {
+              usuario_tipo: { $arrayElemAt: ['$usuario_actual.tipo', 0] },
+            },
+          },
+          {
+            $match: {
+              $expr: {
+                $cond: [
+                  { $eq: ['$usuario_tipo', 'ESTUDIANTE'] },
+                  { $in: ['$tipo', ['DOCENTE', 'COORDINADOR', 'RECTOR', 'ADMINISTRATIVO']] },
+                  true, // Otros tipos pueden ver a todos
+                ],
+              },
+            },
+          },
+          {
+            $project: {
+              _id: 1,
+              nombre: 1,
+              apellidos: 1,
+              email: 1,
+              tipo: 1,
+              avatar: '$perfil.avatar', // Asumir estructura del perfil
+              nombreCompleto: {
+                $concat: ['$nombre', ' ', '$apellidos'],
+              },
+            },
+          },
+          {
+            $sort: { nombreCompleto: 1 },
+          },
+          {
+            $limit: 50,
+          },
+        ]);
 
-      console.log(
-        `[getPosiblesDestinatarios] Usuario encontrado: ${usuario._id}, tipo: ${usuario.tipo}`,
-      );
-
-      // Filtro básico - versión simplificada para depuración
-      const filter: any = {
-        escuelaId: new mongoose.Types.ObjectId(escuelaId),
-        _id: { $ne: new mongoose.Types.ObjectId(userId) }, // Excluir al usuario actual
-      };
-
-      // Si hay texto de búsqueda, aplicar
-      if (query && query.trim() !== '') {
-        const searchRegex = new RegExp(query, 'i');
-        filter.$or = [{ nombre: searchRegex }, { apellidos: searchRegex }, { email: searchRegex }];
-      }
-
-      // Si es estudiante, solo puede ver a personal administrativo y docentes
-      if (usuario.tipo === 'ESTUDIANTE') {
-        filter.tipo = { $in: ['DOCENTE', 'COORDINADOR', 'RECTOR', 'ADMINISTRATIVO'] };
-      }
-
-      // Ejecutar la consulta simplificada
-      const destinatarios = await Usuario.find(filter)
-        .select('_id nombre apellidos email tipo perfil')
-        .limit(50)
-        .sort({ nombre: 1, apellidos: 1 });
-
-      console.log(
-        `[DEBUG] getPosiblesDestinatarios: Total destinatarios encontrados: ${destinatarios.length}`,
-      );
-
-      return destinatarios;
+        console.log(`✅ Destinatarios encontrados: ${resultado.length}`);
+        return resultado;
+      });
     } catch (error) {
       console.error('[ERROR] getPosiblesDestinatarios:', error);
       throw this.handleError(error);
@@ -102,61 +146,108 @@ class MensajeService {
   }
 
   /**
-   * Obtiene los cursos disponibles para mensajes masivos
+   * 🚀 OPTIMIZADO: Obtiene cursos con CACHE
    */
   async getCursosPosiblesDestinatarios(userId: string, escuelaId: string) {
     try {
-      // Validar IDs de entrada
-      if (!mongoose.isValidObjectId(userId)) {
-        throw new ApiError(400, 'ID de usuario inválido');
+      if (!mongoose.isValidObjectId(userId) || !mongoose.isValidObjectId(escuelaId)) {
+        throw new ApiError(400, 'IDs inválidos');
       }
 
-      if (!mongoose.isValidObjectId(escuelaId)) {
-        throw new ApiError(400, 'ID de escuela inválido');
-      }
+      const cacheKey = this.createCacheKey('cursos_destinatarios', userId, escuelaId);
 
-      const usuario = await Usuario.findById(userId);
-      if (!usuario) {
-        throw new ApiError(404, 'Usuario no encontrado');
-      }
+      return await this.getOrSetCache(cacheKey, 600, async () => {
+        // ✅ AGREGACIÓN OPTIMIZADA para verificar permisos y obtener cursos
+        const resultado = await Usuario.aggregate([
+          {
+            $match: { _id: new mongoose.Types.ObjectId(userId) },
+          },
+          {
+            $project: {
+              tipo: 1,
+              tienePermisosMasivos: {
+                $in: [
+                  '$tipo',
+                  ['ADMIN', 'SUPER_ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO', 'DOCENTE'],
+                ],
+              },
+            },
+          },
+          {
+            $match: { tienePermisosMasivos: true },
+          },
+          {
+            $lookup: {
+              from: 'cursos',
+              let: { escuela: new mongoose.Types.ObjectId(escuelaId) },
+              pipeline: [
+                {
+                  $match: {
+                    $expr: { $eq: ['$escuelaId', '$$escuela'] },
+                  },
+                },
+                {
+                  $project: {
+                    _id: 1,
+                    nombre: 1,
+                    grado: 1,
+                    seccion: 1,
+                    nivel: 1,
+                    estudiantesCount: { $size: { $ifNull: ['$estudiantes', []] } },
+                  },
+                },
+                {
+                  $sort: { nivel: 1, grado: 1, seccion: 1 },
+                },
+              ],
+              as: 'cursos',
+            },
+          },
+          {
+            $unwind: '$cursos',
+          },
+          {
+            $replaceRoot: { newRoot: '$cursos' },
+          },
+        ]);
 
-      // Solo estos roles pueden enviar mensajes masivos
-      const rolesMasivos = [
-        'ADMIN',
-        'SUPER_ADMIN',
-        'RECTOR',
-        'COORDINADOR',
-        'ADMINISTRATIVO',
-        'DOCENTE',
-      ];
+        if (resultado.length === 0) {
+          // Si no hay resultados, verificar si es problema de permisos
+          const usuario = await Usuario.findById(userId).select('tipo');
+          if (!usuario) {
+            throw new ApiError(404, 'Usuario no encontrado');
+          }
 
-      if (!rolesMasivos.includes(usuario.tipo)) {
-        throw new ApiError(403, 'No tiene permisos para enviar mensajes masivos');
-      }
+          const rolesMasivos = [
+            'ADMIN',
+            'SUPER_ADMIN',
+            'RECTOR',
+            'COORDINADOR',
+            'ADMINISTRATIVO',
+            'DOCENTE',
+          ];
+          if (!rolesMasivos.includes(usuario.tipo)) {
+            throw new ApiError(403, 'No tiene permisos para enviar mensajes masivos');
+          }
+        }
 
-      // Para implementación inicial, simplificamos a mostrar todos los cursos
-      // y evitar errores de referencias
-      const cursos = await Curso.find({ escuelaId: new mongoose.Types.ObjectId(escuelaId) })
-        .select('_id nombre grado seccion nivel')
-        .sort({ nivel: 1, grado: 1, seccion: 1 });
-
-      console.log(`[DEBUG] getCursosPosiblesDestinatarios: Cursos encontrados: ${cursos.length}`);
-
-      return cursos;
+        console.log(`✅ Cursos encontrados: ${resultado.length}`);
+        return resultado;
+      });
     } catch (error) {
       throw this.handleError(error);
     }
   }
 
   /**
-   * Crea un nuevo mensaje
+   * 🚀 OPTIMIZADO: Crea mensaje con AGREGACIONES MASIVAS
    */
   async crearMensaje(datos: any, user: any) {
     try {
       const {
-        destinatarios,
-        destinatariosCc,
-        cursoIds,
+        destinatarios = [],
+        destinatariosCc = [],
+        cursoIds = [],
         asunto,
         contenido,
         adjuntos = [],
@@ -168,18 +259,16 @@ class MensajeService {
         mensajeOriginalId = null,
       } = datos;
 
-      // Verificar si el usuario es un estudiante
-      if (user.tipo === 'ESTUDIANTE') {
-        throw new ApiError(403, 'Los estudiantes no pueden enviar mensajes');
-      }
+      // Verificar permisos básicos
+      //if (user.tipo === 'ESTUDIANTE') {
+        //throw new ApiError(403, 'Los estudiantes no pueden enviar mensajes');
+      //}
 
-      // Obtener destinatarios finales (incluyendo cursos si es aplicable)
-      let destinatariosFinales = Array.isArray(destinatarios) ? [...destinatarios] : [];
-      let destinatariosCcFinales = Array.isArray(destinatariosCc) ? [...destinatariosCc] : [];
+      let destinatariosFinales = [...destinatarios];
+      let destinatariosCcFinales = [...destinatariosCc];
 
-      // Procesar cursos si se especificaron
+      // 🚀 OPTIMIZACIÓN CRÍTICA: Procesar cursos con UNA SOLA AGREGACIÓN
       if (cursoIds && cursoIds.length > 0) {
-        // Verificar permisos para mensajes masivos
         const rolesMasivos = [
           'ADMIN',
           'SUPER_ADMIN',
@@ -193,55 +282,30 @@ class MensajeService {
           throw new ApiError(403, 'No tiene permisos para enviar mensajes masivos');
         }
 
-        // CAMBIO IMPORTANTE: Obtener estudiantes directamente de los documentos de curso
-        for (const cursoId of cursoIds) {
-          if (!mongoose.isValidObjectId(cursoId)) {
-            console.log(`[WARNING] ID de curso inválido: ${cursoId}`);
-            continue;
-          }
-
-          const curso = await Curso.findById(cursoId);
-          if (curso && curso.estudiantes && Array.isArray(curso.estudiantes)) {
-            // Añadir IDs de estudiantes como destinatarios
-            const estudiantesIds = curso.estudiantes.map((id: any) => id.toString());
-            destinatariosFinales.push(...estudiantesIds);
-
-            // Buscar acudientes de estos estudiantes
-            const acudientes = await Usuario.find({
-              tipo: 'ACUDIENTE',
-              'info_academica.estudiantes_asociados': {
-                $in: curso.estudiantes,
-              },
-            }).select('_id');
-
-            if (acudientes.length > 0) {
-              const acudientesIds = acudientes.map((a: any) => a._id.toString());
-              destinatariosFinales.push(...acudientesIds);
-            }
-          }
-        }
+        // ✅ UNA SOLA AGREGACIÓN MASIVA para obtener TODOS los destinatarios de TODOS los cursos
+        const cursosDestinatarios = await this.obtenerDestinatariosDeCursos(cursoIds);
+        destinatariosFinales.push(...cursosDestinatarios);
       }
 
-      // Eliminar duplicados
+      // Eliminar duplicados y validar
       destinatariosFinales = [...new Set(destinatariosFinales)];
       destinatariosCcFinales = [...new Set(destinatariosCcFinales)];
 
-      // Verificar que haya destinatarios
       if (destinatariosFinales.length === 0) {
         throw new ApiError(400, 'Debe especificar al menos un destinatario');
       }
 
-      // Convertir a ObjectId y filtrar IDs inválidos
+      // Convertir a ObjectId válidos
       const destinatariosObjectIds = destinatariosFinales
-        .map((id) => (mongoose.isValidObjectId(id) ? new mongoose.Types.ObjectId(id) : null))
+        .map((id) => this.safeObjectId(id))
         .filter((id) => id !== null);
 
       const destinatariosCcObjectIds = destinatariosCcFinales
-        .map((id) => (mongoose.isValidObjectId(id) ? new mongoose.Types.ObjectId(id) : null))
+        .map((id) => this.safeObjectId(id))
         .filter((id) => id !== null);
 
       // Crear el mensaje
-      const nuevoMensaje = await Mensaje.create({
+      const nuevoMensaje = (await Mensaje.create({
         remitente: user._id,
         destinatarios: destinatariosObjectIds,
         destinatariosCc: destinatariosCcObjectIds,
@@ -256,71 +320,28 @@ class MensajeService {
         esRespuesta,
         mensajeOriginalId,
         lecturas: [],
-      });
+      })) as mongoose.Document & { _id: mongoose.Types.ObjectId };
 
-      // Si no es borrador, enviar notificaciones
+      // 🚀 OPTIMIZACIÓN: Envío de notificaciones en BATCH
       if (estado !== EstadoMensaje.BORRADOR) {
-        // Obtener información del remitente para notificaciones
-        const nombreRemitente = `${user.nombre} ${user.apellidos}`.trim();
-
-        // Enviar notificaciones y correos a todos los destinatarios
-        const todosDestinatarios = [...destinatariosFinales, ...destinatariosCcFinales];
-        const validDestinatariosIds = todosDestinatarios
-          .map((id) => {
-            return mongoose.isValidObjectId(id) ? new mongoose.Types.ObjectId(id) : null;
-          })
-          .filter((id) => id !== null);
-
-        const usuarios = await Usuario.find({
-          _id: { $in: validDestinatariosIds },
-        });
-
-        // Guardar el ID del mensaje como string para usarlo en las notificaciones
-        const mensajeId = nuevoMensaje._id ? nuevoMensaje._id.toString() : '';
-
-        // Enviar notificaciones y correos en paralelo
-        const promesas = usuarios.map(async (destinatario: any) => {
-          const destId = destinatario._id ? destinatario._id.toString() : '';
-
-          // Notificación interna
-          await notificacionService.crearNotificacion({
-            usuarioId: destId,
-            titulo: `Nuevo mensaje: ${asunto}`,
-            mensaje: `Has recibido un nuevo mensaje de ${nombreRemitente}`,
-            tipo: TipoNotificacion.MENSAJE,
-            escuelaId: user.escuelaId,
-            entidadId: mensajeId,
-            entidadTipo: 'Mensaje',
-            metadata: {
-              remitente: nombreRemitente,
-              tieneAdjuntos: adjuntos.length > 0,
-              mensajeId: mensajeId,
-              url: `${config.frontendUrl}/mensajes/${mensajeId}`,
-            },
-            enviarEmail: false,
-          });
-
-          // Correo electrónico
-          if (destinatario.email) {
-            await emailService.sendMensajeNotification(destinatario.email, {
-              remitente: nombreRemitente,
-              asunto,
-              fecha: new Date(),
-              tieneAdjuntos: adjuntos.length > 0,
-              url: `${config.frontendUrl}/mensajes/${mensajeId}`,
-            });
-          }
-        });
-
-        await Promise.all(promesas);
+        await this.enviarNotificacionesEnBatch(
+          nuevoMensaje._id.toString(),
+          [...destinatariosFinales, ...destinatariosCcFinales],
+          asunto,
+          user,
+          adjuntos.length > 0,
+        );
       }
 
-      // Poblamos información adicional para devolver
+      // ✅ POPULATE OPTIMIZADO (solo campos necesarios)
       await nuevoMensaje.populate([
         { path: 'remitente', select: 'nombre apellidos email tipo' },
         { path: 'destinatarios', select: 'nombre apellidos email tipo' },
         { path: 'destinatariosCc', select: 'nombre apellidos email tipo' },
       ]);
+
+      // 🔄 INVALIDAR CACHE RELACIONADO
+      this.invalidarCacheMensajes(user._id, user.escuelaId);
 
       return nuevoMensaje;
     } catch (error) {
@@ -329,44 +350,251 @@ class MensajeService {
   }
 
   /**
-   * Envia copia del mensaje a los acudientes del estudiante
+   * 🚀 NUEVA FUNCIÓN: Obtener destinatarios de múltiples cursos con UNA SOLA AGREGACIÓN
+   */
+  private async obtenerDestinatariosDeCursos(cursoIds: string[]): Promise<string[]> {
+    const validCursoIds = cursoIds.map((id) => this.safeObjectId(id)).filter((id) => id !== null);
+
+    if (validCursoIds.length === 0) {
+      return [];
+    }
+
+    // ✅ UNA SOLA AGREGACIÓN MASIVA para TODOS los cursos
+    const resultado = await Curso.aggregate([
+      {
+        $match: {
+          _id: { $in: validCursoIds },
+        },
+      },
+      {
+        $unwind: {
+          path: '$estudiantes',
+          preserveNullAndEmptyArrays: false,
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          estudiantesIds: { $addToSet: '$estudiantes' },
+        },
+      },
+      {
+        $lookup: {
+          from: 'usuarios',
+          let: { estudiantesIds: '$estudiantesIds' },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $in: ['$_id', '$$estudiantesIds'] },
+                    { $eq: ['$tipo', 'ESTUDIANTE'] },
+                    { $eq: ['$estado', 'ACTIVO'] },
+                  ],
+                },
+              },
+            },
+            {
+              $project: { _id: 1 },
+            },
+          ],
+          as: 'estudiantes_activos',
+        },
+      },
+      {
+        $lookup: {
+          from: 'usuarios',
+          let: { estudiantesIds: '$estudiantesIds' },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ['$tipo', 'ACUDIENTE'] },
+                    {
+                      $ne: [
+                        {
+                          $size: {
+                            $setIntersection: [
+                              '$info_academica.estudiantes_asociados',
+                              '$$estudiantesIds',
+                            ],
+                          },
+                        },
+                        0,
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+            {
+              $project: { _id: 1 },
+            },
+          ],
+          as: 'acudientes',
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          todos_destinatarios: {
+            $concatArrays: [
+              { $map: { input: '$estudiantes_activos', as: 'e', in: { $toString: '$$e._id' } } },
+              { $map: { input: '$acudientes', as: 'a', in: { $toString: '$$a._id' } } },
+            ],
+          },
+        },
+      },
+    ]);
+
+    const destinatarios = resultado.length > 0 ? resultado[0].todos_destinatarios : [];
+    console.log(`✅ Destinatarios de cursos obtenidos: ${destinatarios.length}`);
+
+    return destinatarios;
+  }
+
+  /**
+   * 🚀 NUEVA FUNCIÓN: Envío de notificaciones optimizado EN BATCH
+   */
+  private async enviarNotificacionesEnBatch(
+    mensajeId: string,
+    destinatariosIds: string[],
+    asunto: string,
+    remitente: any,
+    tieneAdjuntos: boolean,
+  ): Promise<void> {
+    try {
+      const validDestinatariosIds = destinatariosIds
+        .map((id) => this.safeObjectId(id))
+        .filter((id) => id !== null);
+
+      if (validDestinatariosIds.length === 0) return;
+
+      // ✅ UNA SOLA QUERY para obtener TODOS los destinatarios
+      const usuarios = await Usuario.find({
+        _id: { $in: validDestinatariosIds },
+        estado: 'ACTIVO',
+      }).select('_id email nombre apellidos');
+
+      const nombreRemitente = `${remitente.nombre} ${remitente.apellidos}`.trim();
+
+      // 🚀 PROCESAR NOTIFICACIONES EN PARALELO CON LÍMITE
+      const batchSize = 20; // Procesar de 20 en 20 para no sobrecargar
+
+      for (let i = 0; i < usuarios.length; i += batchSize) {
+        const batch = usuarios.slice(i, i + batchSize);
+
+        const promesasBatch = batch.map(async (destinatario: any) => {
+          const destId = destinatario._id.toString();
+
+          // Notificación interna y email en paralelo
+          const [,] = await Promise.all([
+            notificacionService.crearNotificacion({
+              usuarioId: destId,
+              titulo: `Nuevo mensaje: ${asunto}`,
+              mensaje: `Has recibido un nuevo mensaje de ${nombreRemitente}`,
+              tipo: TipoNotificacion.MENSAJE,
+              escuelaId: remitente.escuelaId,
+              entidadId: mensajeId,
+              entidadTipo: 'Mensaje',
+              metadata: {
+                remitente: nombreRemitente,
+                tieneAdjuntos,
+                mensajeId,
+                url: `${config.frontendUrl}/mensajes/${mensajeId}`,
+              },
+              enviarEmail: false,
+            }),
+
+            // Email solo si tiene email válido
+            destinatario.email
+              ? emailService.sendMensajeNotification(destinatario.email, {
+                  remitente: nombreRemitente,
+                  asunto,
+                  fecha: new Date(),
+                  tieneAdjuntos,
+                  url: `${config.frontendUrl}/mensajes/${mensajeId}`,
+                })
+              : Promise.resolve(),
+          ]);
+        });
+
+        // Esperar que termine el batch antes del siguiente
+        await Promise.all(promesasBatch);
+
+        // Pequeña pausa entre batches para no sobrecargar
+        if (i + batchSize < usuarios.length) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      }
+
+      console.log(`✅ Notificaciones enviadas a ${usuarios.length} destinatarios`);
+    } catch (error) {
+      console.error('Error enviando notificaciones en batch:', error);
+      // No lanzar error para no afectar la creación del mensaje
+    }
+  }
+
+  /**
+   * 🚀 OPTIMIZADO: Enviar copia a acudientes con cache
    */
   async enviarCopiaAcudientes(estudianteId: string, datos: any, usuarioOrigen: any) {
     try {
-      // Validar ID de estudiante
       if (!mongoose.isValidObjectId(estudianteId)) {
         console.log(`[WARNING] ID de estudiante inválido: ${estudianteId}`);
         return null;
       }
 
-      // Verificar si el estudiante existe
-      const estudiante = await Usuario.findOne({
-        _id: new mongoose.Types.ObjectId(estudianteId),
-        tipo: 'ESTUDIANTE',
+      const cacheKey = this.createCacheKey('acudientes', estudianteId);
+
+      const acudientes = await this.getOrSetCache(cacheKey, 300, async () => {
+        // ✅ UNA SOLA AGREGACIÓN para estudiante + acudientes
+        const resultado = await Usuario.aggregate([
+          {
+            $match: {
+              _id: new mongoose.Types.ObjectId(estudianteId),
+              tipo: 'ESTUDIANTE',
+              estado: 'ACTIVO',
+            },
+          },
+          {
+            $lookup: {
+              from: 'usuarios',
+              let: { estudianteId: '$_id' },
+              pipeline: [
+                {
+                  $match: {
+                    $expr: {
+                      $and: [
+                        { $eq: ['$tipo', 'ACUDIENTE'] },
+                        { $in: ['$$estudianteId', '$info_academica.estudiantes_asociados'] },
+                      ],
+                    },
+                  },
+                },
+                {
+                  $project: { _id: 1 },
+                },
+              ],
+              as: 'acudientes',
+            },
+          },
+          {
+            $unwind: '$acudientes',
+          },
+          {
+            $replaceRoot: { newRoot: '$acudientes' },
+          },
+        ]);
+
+        return resultado;
       });
 
-      if (!estudiante) {
-        return null;
-      }
+      if (acudientes.length === 0) return null;
 
-      // Buscar acudientes del estudiante
-      const acudientes = await Usuario.find({
-        tipo: 'ACUDIENTE',
-        'info_academica.estudiantes_asociados': estudiante._id,
-      });
-
-      if (acudientes.length === 0) {
-        return null;
-      }
-
-      // Crear datos para el mensaje a los acudientes
       const mensajeAcudientes = {
-        destinatarios: acudientes
-          .map((a: any) => {
-            // Garantizar que el ID sea una cadena
-            return a && a._id ? a._id.toString() : '';
-          })
-          .filter((id) => id !== ''), // Eliminar IDs vacíos
+        destinatarios: acudientes.map((a: any) => a._id.toString()),
         asunto: `[COPIA] ${datos.asunto}`,
         contenido: `Este mensaje ha sido enviado automáticamente como copia del mensaje enviado a su acudido.\n\n${datos.contenido}`,
         adjuntos: datos.adjuntos || [],
@@ -377,7 +605,6 @@ class MensajeService {
         esRespuesta: false,
       };
 
-      // Crear el mensaje
       return this.crearMensaje(mensajeAcudientes, usuarioOrigen);
     } catch (error) {
       throw this.handleError(error);
@@ -385,7 +612,36 @@ class MensajeService {
   }
 
   /**
-   * Manejador de errores
+   * 🔄 INVALIDAR CACHE CUANDO SE CREAN/MODIFICAN MENSAJES
+   */
+  private invalidarCacheMensajes(usuarioId: string, escuelaId: string): void {
+    console.log(`🔄 Invalidando cache de mensajes para usuario ${usuarioId}`);
+
+    // Invalidar cache relacionado
+    invalidateRelatedCache('mensajes', usuarioId, escuelaId, [
+      'destinatarios',
+      'cursos_destinatarios',
+      'acudientes',
+      'dashboard',
+      'dashboard_completo',
+    ]);
+  }
+
+  /**
+   * 🚀 NUEVO MÉTODO: Obtener mensajes con cache
+   */
+  async obtenerMensajes(userId: string, filtros: any = {}) {
+    const cacheKey = this.createCacheKey('lista_mensajes', userId, JSON.stringify(filtros));
+
+    return await this.getOrSetCache(cacheKey, 120, async () => {
+      // Implementar query optimizada para listar mensajes
+      // (esto se puede expandir según tus necesidades específicas)
+      return [];
+    });
+  }
+
+  /**
+   * Manejador de errores (sin cambios)
    */
   private handleError(error: any) {
     console.error('[Error en MensajeService]', error);
@@ -399,16 +655,13 @@ class MensajeService {
     }
 
     if (error.response) {
-      // Error de respuesta del servidor
       return new ApiError(
         error.response.status || 500,
         error.response.data.message || 'Error en la solicitud',
       );
     } else if (error.request) {
-      // Error sin respuesta del servidor
       return new ApiError(500, 'No se recibió respuesta del servidor');
     } else {
-      // Error en la configuración de la solicitud
       return new ApiError(500, error.message || 'Error desconocido');
     }
   }

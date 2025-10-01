@@ -33,6 +33,8 @@ import invitacionRoutes from './routes/invitacion.routes';
 import registroRoutes from './routes/registro.routes';
 import publicRoutes from './routes/public.routes';
 import estudianteRoutes from './routes/estudiante.routes';
+import cacheRoutes from './routes/cache.routes';
+import dashboardRoutes from './routes/dashboard.routes'; // ✅ IMPORTADO CORRECTAMENTE
 
 // Configuración de variables de entorno
 dotenv.config();
@@ -121,7 +123,11 @@ apiRouter.use('/superadmin', superadminRoutes);
 apiRouter.use('/invitaciones', invitacionRoutes);
 apiRouter.use('/registro', registroRoutes);
 apiRouter.use('/public', publicRoutes);
-apiRouter.use('/estudiantes', estudianteRoutes); // ✅ CORREGIDO: era '/api/estudiantes'
+apiRouter.use('/estudiantes', estudianteRoutes);
+apiRouter.use('/cache', cacheRoutes);
+
+// ✅ CORRECCIÓN PRINCIPAL: Dashboard dentro del apiRouter
+apiRouter.use('/dashboard', dashboardRoutes); // ✅ AHORA ESTÁ DENTRO DEL apiRouter
 
 // ===== MONTAR EL ROUTER API =====
 // Si hay basePath, lo usamos; de lo contrario, montamos en /api
@@ -214,6 +220,7 @@ const startServer = async () => {
     );
     console.log(`📝 API documentación: http://localhost:${PORT}${basePath}/api/docs`);
     console.log(`🩺 Health check: http://localhost:${PORT}${basePath}/api/health`);
+    console.log(`📊 Dashboard: http://localhost:${PORT}${basePath}/api/dashboard/estadisticas`); // ✅ Nueva línea de verificación
   });
 
   // Manejo graceful de cierre

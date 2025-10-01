@@ -8,6 +8,9 @@ import fs from 'fs';
 import multer from 'multer';
 import { TipoUsuario } from '../interfaces/IUsuario';
 
+import { cacheMiddleware } from '../cache/simpleCache';
+import { invalidateOnMensaje } from '../middleware/dashboardCacheInvalidation.middleware';
+
 const router = express.Router();
 
 // Middleware para verificar permisos de borradores
@@ -123,6 +126,10 @@ router.get('/destinatarios-acudiente', (req: any, res: Response, next: NextFunct
   mensajeController.getDestinatariosParaAcudiente(req, res, next);
 });
 
+router.get('/destinatarios-estudiante', (req: any, res: Response, next: NextFunction) => {
+  mensajeController.getDestinatariosParaAcudiente(req, res, next); // ← Usar la misma función
+});
+
 // Rutas para obtener destinatarios y cursos disponibles
 router.get('/destinatarios-disponibles', (req: any, res: Response, next: NextFunction) => {
   mensajeController.getPosiblesDestinatarios(req, res, next);
@@ -133,11 +140,16 @@ router.get('/cursos-disponibles', (req: any, res: Response, next: NextFunction) 
 });
 
 // Rutas para mensajes
-router.post('/', upload.array('adjuntos', 5), (req: any, res: Response, next: NextFunction) => {
-  mensajeController.crear(req, res, next);
-});
+router.post(
+  '/',
+  upload.array('adjuntos', 5),
+  invalidateOnMensaje,
+  (req: any, res: Response, next: NextFunction) => {
+    mensajeController.crear(req, res, next);
+  },
+);
 
-router.get('/', (req: any, res: Response, next: NextFunction) => {
+router.get('/', cacheMiddleware('mensajes'), (req: any, res: Response, next: NextFunction) => {
   mensajeController.obtenerTodos(req, res, next);
 });
 

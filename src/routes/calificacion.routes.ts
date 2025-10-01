@@ -10,6 +10,7 @@ import {
   agregarCalificacionLogroValidation,
   actualizarCalificacionLogroValidation,
 } from '../validations/calificacion.validation';
+import { cacheMiddleware } from '../cache/simpleCache';
 
 const router = express.Router();
 
@@ -27,6 +28,7 @@ router.post(
 router.get(
   '/',
   authorize('ADMIN', 'DOCENTE', 'ESTUDIANTE', 'PADRE'),
+  cacheMiddleware('calificaciones'),
   calificacionController.obtenerTodas,
 );
 

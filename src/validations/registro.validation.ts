@@ -1,4 +1,28 @@
-import { body } from 'express-validator';
+import { body, ValidationChain } from 'express-validator';
+
+// Validación personalizada para detectar emails duplicados en la misma solicitud
+const validarEmailsEstudiantes: ValidationChain = body('estudiantes').custom(
+  (estudiantes, { req }) => {
+    if (!Array.isArray(estudiantes)) {
+      throw new Error('Estudiantes debe ser un array');
+    }
+
+    const emailsEstudiantes = estudiantes
+      .map((est) => est.email)
+      .filter((email) => email && email.trim() !== '');
+
+    // Verificar duplicados entre estudiantes
+    const emailsUnicos = new Set(emailsEstudiantes.map((email) => email.toLowerCase()));
+
+    if (emailsUnicos.size !== emailsEstudiantes.length) {
+      throw new Error(
+        'No se pueden registrar múltiples estudiantes con el mismo correo electrónico',
+      );
+    }
+
+    return true;
+  },
+);
 
 export const registroValidation = {
   crearSolicitud: [
@@ -22,6 +46,8 @@ export const registroValidation = {
       .withMessage('Email de estudiante no válido')
       .normalizeEmail(),
     body('estudiantes.*.codigo_estudiante').optional().trim(),
+    // Añadir la validación personalizada
+    validarEmailsEstudiantes,
   ],
 
   rechazarSolicitud: [

@@ -7,6 +7,7 @@ import {
   cambiarPasswordValidation,
   asociarEstudianteValidation,
 } from '../validations/usuario.validation';
+import { cacheMiddleware } from '../cache/simpleCache';
 
 const router = express.Router();
 
@@ -18,6 +19,7 @@ router.get(
   '/',
   // Solo permitimos listar usuarios a roles administrativos con permisos completos
   authMiddleware.authorize('ADMIN', 'RECTOR', 'COORDINADOR'),
+  cacheMiddleware('usuarios'),
   usuarioController.obtenerUsuarios,
 );
 

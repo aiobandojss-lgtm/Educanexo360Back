@@ -122,18 +122,57 @@ class AsignaturaController {
     }
   }
 
+  // ✅ SOLUCIÓN REAL: Modificar el método actualizar para manejar desasignación de cursos
   async actualizar(req: RequestWithUser, res: Response, next: NextFunction) {
     try {
       if (!req.user) {
         throw new ApiError(401, 'No autorizado');
       }
 
+      // ✅ MANEJO ESPECIAL: Si se envía cursoId como string vacío o null, removerlo del curso
+      const updateData = { ...req.body };
+
+      if (
+        updateData.cursoId === '' ||
+        updateData.cursoId === null ||
+        updateData.cursoId === 'null'
+      ) {
+        console.log(`🔄 Desasignando asignatura ${req.params.id} de su curso`);
+
+        // Usar $unset para remover completamente el campo cursoId
+        const asignatura = await Asignatura.findOneAndUpdate(
+          {
+            _id: req.params.id,
+            escuelaId: req.user.escuelaId,
+          },
+          {
+            $unset: { cursoId: 1 }, // Remover el campo completamente
+            estado: 'ACTIVO', // Mantener activa
+          },
+          { new: true, runValidators: false }, // Desactivar validaciones para esta operación
+        ).populate(['docenteId']);
+
+        if (!asignatura) {
+          throw new ApiError(404, 'Asignatura no encontrada');
+        }
+
+        console.log('✅ Asignatura desasignada del curso exitosamente');
+
+        res.json({
+          success: true,
+          data: asignatura,
+          message: 'Asignatura removida del curso exitosamente',
+        });
+        return;
+      }
+
+      // ✅ ACTUALIZACIÓN NORMAL: Para otros casos de actualización
       const asignatura = await Asignatura.findOneAndUpdate(
         {
           _id: req.params.id,
           escuelaId: req.user.escuelaId,
         },
-        req.body,
+        updateData,
         { new: true, runValidators: true },
       ).populate(['cursoId', 'docenteId']);
 
@@ -313,6 +352,28 @@ class AsignaturaController {
       });
     } catch (error) {
       console.error('Error en obtenerNoAsignadasACurso:', error);
+      next(error);
+    }
+  }
+
+  async removerDeCurso(req: RequestWithUser, res: Response, next: NextFunction) {
+    try {
+      if (!req.user) {
+        throw new ApiError(401, 'No autorizado');
+      }
+
+      const asignatura = await Asignatura.findOneAndUpdate(
+        { _id: req.params.id, escuelaId: req.user.escuelaId },
+        { $unset: { cursoId: 1 } },
+        { new: true, runValidators: false },
+      );
+
+      if (!asignatura) {
+        throw new ApiError(404, 'Asignatura no encontrada');
+      }
+
+      res.json({ success: true, message: 'Asignatura removida del curso' });
+    } catch (error) {
       next(error);
     }
   }

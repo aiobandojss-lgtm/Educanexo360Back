@@ -41,6 +41,7 @@ export interface ISolicitudRegistroBase {
   comentarios?: string;
 
   usuariosCreados?: Types.ObjectId[];
+  advertencias?: string[];
 }
 
 // Interfaz del documento para Mongoose
@@ -135,6 +136,11 @@ const SolicitudRegistroSchema = new Schema<ISolicitudRegistro>(
     comentarios: {
       type: String,
     },
+    advertencias: [
+      {
+        type: String,
+      },
+    ],
     usuariosCreados: [
       {
         type: Schema.Types.ObjectId,

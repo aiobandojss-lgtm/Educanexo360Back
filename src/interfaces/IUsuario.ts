@@ -41,6 +41,16 @@ export interface IUsuarioBase {
   };
   resetPasswordToken?: string;
   resetPasswordExpires?: Date;
+  
+  // 🔥 CAMPOS FCM AGREGADOS AQUÍ
+  fcmToken?: string;
+  platform?: 'ios' | 'android';
+  deviceInfo?: {
+    deviceName?: string;
+    osVersion?: string;
+    appVersion?: string;
+  };
+  fcmTokenUpdatedAt?: Date;
 }
 
 export interface IUsuario extends IUsuarioBase, Document {

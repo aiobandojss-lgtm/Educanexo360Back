@@ -1,6 +1,6 @@
 import mongoose, { Schema, Document } from 'mongoose';
 import bcrypt from 'bcryptjs';
-import { IUsuario, TipoUsuario, EstadoUsuario } from '../interfaces/IUsuario';
+import { IUsuario } from '../interfaces/IUsuario'; // ✅ QUITAR TipoUsuario, EstadoUsuario
 
 const UsuarioSchema = new Schema(
   {
@@ -73,6 +73,27 @@ const UsuarioSchema = new Schema(
         },
       ],
     },
+    
+    // 🔥 CAMPOS FCM AGREGADOS AQUÍ
+    fcmToken: {
+      type: String,
+      default: null,
+      index: true
+    },
+    platform: {
+      type: String,
+      enum: ['ios', 'android'],
+      default: null
+    },
+    deviceInfo: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {}
+    },
+    fcmTokenUpdatedAt: {
+      type: Date,
+      default: null
+    },
+    
     // Campos para recuperación de contraseña
     resetPasswordToken: String,
     resetPasswordExpires: Date,

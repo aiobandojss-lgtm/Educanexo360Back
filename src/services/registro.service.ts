@@ -41,6 +41,9 @@ Por favor, revise la solicitud en el panel de administración.
   /**
    * Crea una nueva solicitud de registro
    */
+  /**
+   * Crea una nueva solicitud de registro
+   */
   async crearSolicitud(data: {
     invitacionId: string;
     nombre: string;
@@ -53,9 +56,7 @@ Por favor, revise la solicitud en el panel de administración.
       fechaNacimiento?: Date;
       cursoId: string;
       codigo_estudiante?: string;
-      email?: string;
-      esExistente?: boolean;
-      estudianteExistenteId?: string;
+      email?: string; // Campo opcional
     }>;
   }) {
     // Validar la invitación
@@ -85,12 +86,63 @@ Por favor, revise la solicitud en el panel de administración.
       );
     }
 
-    // Verificar que los emails de estudiantes (si se proporcionan) no estén en uso
-    for (const estudiante of data.estudiantes) {
+    // Array para almacenar advertencias sobre cambios automáticos
+    const advertencias: string[] = [];
+
+    // Procesar emails de estudiantes y detectar duplicados
+    const estudiantesProcessed = data.estudiantes.map((estudiante, index) => {
+      // Si el email del estudiante es igual al del acudiente, generar uno automático
+      if (estudiante.email && estudiante.email.toLowerCase() === data.email.toLowerCase()) {
+        advertencias.push(
+          `El estudiante ${estudiante.nombre} ${estudiante.apellidos} usará un email generado automáticamente ya que coincide con el email del acudiente.`,
+        );
+
+        // Crear una nueva instancia sin email
+        const estudianteSinEmail: {
+          nombre: string;
+          apellidos: string;
+          fechaNacimiento?: Date;
+          cursoId: string;
+          codigo_estudiante?: string;
+          email?: string;
+        } = {
+          nombre: estudiante.nombre,
+          apellidos: estudiante.apellidos,
+          fechaNacimiento: estudiante.fechaNacimiento,
+          cursoId: estudiante.cursoId,
+          codigo_estudiante: estudiante.codigo_estudiante,
+          // No incluimos email
+        };
+
+        return estudianteSinEmail;
+      }
+
+      // Retornar el estudiante completo si no hay conflicto
+      return estudiante;
+    });
+
+    // Verificar que los emails de estudiantes restantes no estén en uso
+    for (const [index, estudiante] of estudiantesProcessed.entries()) {
       if (estudiante.email) {
+        // Verificar si el email ya está en uso por otro usuario
         const estudianteExistente = await Usuario.findOne({ email: estudiante.email });
         if (estudianteExistente) {
           throw new ApiError(400, `El correo ${estudiante.email} ya está en uso por otro usuario`);
+        }
+
+        // Verificar si hay duplicados entre los mismos estudiantes de esta solicitud
+        const duplicadoEnLista = estudiantesProcessed.find(
+          (otroEst, otroIndex) =>
+            otroIndex !== index &&
+            otroEst.email &&
+            otroEst.email.toLowerCase() === estudiante.email!.toLowerCase(),
+        );
+
+        if (duplicadoEnLista) {
+          throw new ApiError(
+            400,
+            `El correo ${estudiante.email} está duplicado entre los estudiantes de esta solicitud`,
+          );
         }
       }
     }
@@ -103,12 +155,9 @@ Por favor, revise la solicitud en el panel de administración.
       apellidos: data.apellidos,
       email: data.email,
       telefono: data.telefono,
-      estudiantes: data.estudiantes.map((est) => ({
+      estudiantes: estudiantesProcessed.map((est) => ({
         ...est,
         cursoId: new Types.ObjectId(est.cursoId),
-        estudianteExistenteId: est.estudianteExistenteId
-          ? new Types.ObjectId(est.estudianteExistenteId)
-          : undefined,
       })),
       estado: EstadoSolicitud.PENDIENTE,
       fechaSolicitud: new Date(),
@@ -119,7 +168,10 @@ Por favor, revise la solicitud en el panel de administración.
     // Enviar notificación a administradores
     await this.notificarNuevaSolicitud(solicitud);
 
-    return solicitud;
+    return {
+      solicitud,
+      advertencias, // Retornar advertencias para informar al usuario
+    };
   }
 
   /**
