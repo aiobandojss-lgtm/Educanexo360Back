@@ -815,6 +815,13 @@ export const obtenerAsistenciaDia = async (
  * Obtener resumen general de asistencia
  * @route GET /api/asistencia/resumen
  */
+// src/controllers/asistencia.controller.ts
+// MÉTODO: obtenerResumen (línea ~580)
+
+/**
+ * Obtener resumen general de asistencia
+ * @route GET /api/asistencia/resumen
+ */
 export const obtenerResumen = async (req: RequestWithUser, res: Response, next: NextFunction) => {
   try {
     if (!req.user) {
@@ -840,11 +847,12 @@ export const obtenerResumen = async (req: RequestWithUser, res: Response, next: 
       query.docenteId = req.user._id;
     }
 
-    // Obtener todos los registros de asistencia que coincidan con los filtros
+    // ✅ CAMBIO 1: Agregar asignaturaId al select y populate
     const registros = await Asistencia.find(query)
-      .populate('cursoId', 'nombre nivel grado grupo') // Cambiar 'seccion' por 'grupo'
+      .populate('cursoId', 'nombre nivel grado grupo')
+      .populate('asignaturaId', 'nombre codigo') // ← ✅ AGREGAR ESTA LÍNEA
       .populate('docenteId', 'nombre apellidos')
-      .select('fecha cursoId docenteId estudiantes createdAt finalizado');
+      .select('fecha cursoId asignaturaId docenteId estudiantes createdAt finalizado'); // ← ✅ Agregar asignaturaId
 
     // Transformar los datos para el formato que espera el frontend
     const resumen = registros.map((registro) => {
@@ -875,6 +883,12 @@ export const obtenerResumen = async (req: RequestWithUser, res: Response, next: 
       const cursoData = registro.cursoId
         ? (registro.cursoId as any)
         : { nombre: 'Sin curso', grado: '', grupo: '' };
+      
+      // ✅ CAMBIO 2: Agregar asignaturaData
+      const asignaturaData = registro.asignaturaId
+        ? (registro.asignaturaId as any)
+        : null;
+      
       const docenteData = registro.docenteId
         ? (registro.docenteId as any)
         : { nombre: 'Sin nombre', apellidos: '' };
@@ -888,6 +902,11 @@ export const obtenerResumen = async (req: RequestWithUser, res: Response, next: 
           grado: cursoData.grado || '',
           grupo: cursoData.grupo || '',
         },
+        // ✅ CAMBIO 3: Agregar campo asignatura en el resultado
+        asignatura: asignaturaData ? {
+          _id: asignaturaData._id || '',
+          nombre: asignaturaData.nombre || '',
+        } : null,
         totalEstudiantes,
         presentes,
         ausentes,

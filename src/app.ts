@@ -34,7 +34,8 @@ import registroRoutes from './routes/registro.routes';
 import publicRoutes from './routes/public.routes';
 import estudianteRoutes from './routes/estudiante.routes';
 import cacheRoutes from './routes/cache.routes';
-import dashboardRoutes from './routes/dashboard.routes'; // ✅ IMPORTADO CORRECTAMENTE
+import dashboardRoutes from './routes/dashboard.routes'; 
+import tareaRoutes from './routes/tarea.routes';
 
 // Configuración de variables de entorno
 dotenv.config();
@@ -128,6 +129,7 @@ apiRouter.use('/cache', cacheRoutes);
 
 // ✅ CORRECCIÓN PRINCIPAL: Dashboard dentro del apiRouter
 apiRouter.use('/dashboard', dashboardRoutes); // ✅ AHORA ESTÁ DENTRO DEL apiRouter
+app.use(`${basePath}/api/tareas`, tareaRoutes);
 
 // ===== MONTAR EL ROUTER API =====
 // Si hay basePath, lo usamos; de lo contrario, montamos en /api
