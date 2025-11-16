@@ -65,7 +65,19 @@ class UsuarioController {
       // Incluir RECTOR y COORDINADOR junto con ADMIN como roles con permisos administrativos
       const tieneRolAdministrativo = ['ADMIN', 'RECTOR', 'COORDINADOR'].includes(req.user.tipo);
 
-      if (!solicitandoPropioUsuario && !tieneRolAdministrativo) {
+      // ✅ NUEVO: Verificar si es acudiente intentando ver el perfil de un hijo asociado
+      let esHijoAsociado = false;
+      if (req.user.tipo === 'ACUDIENTE') {
+        // Obtener el perfil del acudiente para verificar sus estudiantes asociados
+        const acudiente = await Usuario.findById(req.user._id);
+        const estudiantesAsociados = acudiente?.info_academica?.estudiantes_asociados || [];
+        esHijoAsociado = estudiantesAsociados.some(
+          (estudianteId) => estudianteId.toString() === req.params.id
+        );
+      }
+
+      // ✅ MODIFICADO: Permitir acceso si es propio perfil, rol administrativo, O hijo asociado
+      if (!solicitandoPropioUsuario && !tieneRolAdministrativo && !esHijoAsociado) {
         throw new ApiError(403, 'No tienes permiso para ver este perfil');
       }
 
