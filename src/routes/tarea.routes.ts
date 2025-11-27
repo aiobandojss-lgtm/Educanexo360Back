@@ -138,8 +138,17 @@ router.get(
   tareaController.verEntregas
 );
 
+// Ruta antigua (PUT) - mantener por compatibilidad con web React
 router.put(
   '/:id/entregas/:entregaId',
+  authorize('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'),
+  validate(tareaValidation.calificar),
+  tareaController.calificarEntrega
+);
+
+// ✅ NUEVA RUTA: POST con /calificar explícito (para Flutter)
+router.post(
+  '/:id/entregas/:entregaId/calificar',
   authorize('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'),
   validate(tareaValidation.calificar),
   tareaController.calificarEntrega

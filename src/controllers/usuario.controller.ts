@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import Usuario from '../models/usuario.model';
+import Curso from '../models/curso.model';
 import ApiError from '../utils/ApiError';
 
 // Extender el tipo Request para incluir el usuario
@@ -53,7 +54,7 @@ class UsuarioController {
     }
   }
 
-  async obtenerUsuario(req: RequestWithUser, res: Response, next: NextFunction) {
+  async obtenerUsuario(req: RequestWithUser, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!req.user) {
         throw new ApiError(401, 'No autorizado');
@@ -90,6 +91,44 @@ class UsuarioController {
         throw new ApiError(404, 'Usuario no encontrado');
       }
 
+      // 🔧 NUEVA FUNCIONALIDAD: Si es ESTUDIANTE, buscar su curso
+      if (usuario.tipo === 'ESTUDIANTE') {
+        // Buscar el curso donde este estudiante está en el array de estudiantes
+        const curso = await Curso.findOne({
+          escuelaId: usuario.escuelaId,
+          estudiantes: usuario._id,
+          estado: 'ACTIVO'
+        }).select('_id nombre nivel grado grupo jornada');
+
+        // Si encontramos el curso, agregarlo a la respuesta
+        if (curso) {
+          // Convertir el usuario a objeto plano para poder modificarlo
+          const usuarioObj = usuario.toObject();
+          
+          // Asegurar que info_academica existe
+          if (!usuarioObj.info_academica) {
+            usuarioObj.info_academica = {};
+          }
+          
+          // Agregar el curso como objeto populated en grado (esto es lo que espera Flutter)
+          (usuarioObj.info_academica as any).grado = {
+            _id: curso._id,
+            nombre: curso.nombre,
+            nivel: curso.nivel,
+            grado: curso.grado,
+            grupo: curso.grupo,
+            jornada: curso.jornada
+          };
+
+          res.json({
+            success: true,
+            data: usuarioObj,
+          });
+          return;
+        }
+      }
+
+      // Si no es estudiante o no se encontró curso, devolver usuario normal
       res.json({
         success: true,
         data: usuario,
