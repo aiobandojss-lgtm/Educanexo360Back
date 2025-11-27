@@ -945,17 +945,20 @@ async misTareas(req: RequestWithUser, res: Response, next: NextFunction) {
 
     // 🔥 CORRECCIÓN: Aplicar filtros con $elemMatch para verificar estudiante específico
     if (filtroEstado === 'pendientes') {
+      // ✅ CORREGIDO: Solo PENDIENTE y VISTA (sin ATRASADA)
       query.entregas = {
         $elemMatch: {
           estudianteId: req.user._id,
-          estado: { $in: ['PENDIENTE', 'VISTA', 'ATRASADA'] }
+          estado: { $in: ['PENDIENTE', 'VISTA'] }
         }
       };
     } else if (filtroEstado === 'entregadas') {
+      // ✅ CORREGIDO: Solo ENTREGADA y ATRASADA (sin CALIFICADA)
       query.entregas = {
         $elemMatch: {
           estudianteId: req.user._id,
-          estado: { $in: ['ENTREGADA', 'ATRASADA','CALIFICADA'] }
+          estado: { $in: ['ENTREGADA', 'ATRASADA'] },
+          calificacion: { $exists: false } // Asegurar que no tenga calificación
         }
       };
     } else if (filtroEstado === 'calificadas') {
