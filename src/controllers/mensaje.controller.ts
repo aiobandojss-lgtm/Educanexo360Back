@@ -2936,6 +2936,113 @@ export class MensajeController {
     }
   }
 
+  /**
+   * Obtener últimos mensajes sin leer (optimizado para dashboard)
+   * GET /api/mensajes/ultimos?limit=3
+   */
+  async obtenerUltimos(req: RequestWithUser, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) {
+      throw new ApiError(401, 'No autorizado');
+    }
+
+    const limit = parseInt(req.query.limit as string) || 3;
+    const userId = req.user._id;
+
+    console.log(`📬 Obteniendo últimos ${limit} mensajes para usuario: ${userId}`);
+
+    // Buscar mensajes donde el usuario es destinatario Y no ha leído
+    const mensajes = await Mensaje.find({
+      destinatarios: userId,
+      tipo: { $ne: TipoMensaje.BORRADOR },
+      'lecturas.usuarioId': { $ne: userId }
+    })
+      .sort({ createdAt: -1 }) // ← CAMBIO: usar createdAt en vez de fechaEnvio
+      .limit(limit)
+      .populate('remitente', 'nombre apellidos')
+      .select('asunto contenido createdAt fechaEnvio remitente') // ← Agregar createdAt
+      .lean();
+
+    console.log(`✅ Encontrados ${mensajes.length} mensajes sin leer`);
+
+    // Formatear respuesta con preview y tiempo relativo
+    const formatted = mensajes.map((mensaje: any) => {
+      const remitente = mensaje.remitente;
+      const nombre = remitente?.nombre || '';
+      const apellidos = remitente?.apellidos || '';
+      
+      // Crear iniciales
+      const iniciales = `${nombre.charAt(0)}${apellidos.charAt(0)}`.toUpperCase();
+      
+      // Preview del contenido (primeros 50 caracteres)
+      const preview = mensaje.contenido 
+        ? mensaje.contenido.substring(0, 50).trim() + '...'
+        : 'Sin contenido';
+      
+      // 🔍 DEBUG: Ver qué fechas tiene el mensaje
+      console.log(`🔍 Mensaje ${mensaje._id}:`);
+      console.log(`   fechaEnvio: ${mensaje.fechaEnvio}`);
+      console.log(`   createdAt: ${mensaje.createdAt}`);
+      
+      // Usar createdAt si no hay fechaEnvio
+      const fechaReal = mensaje.fechaEnvio || mensaje.createdAt;
+      console.log(`   ✅ Fecha a usar: ${fechaReal}`);
+      
+      // Calcular tiempo relativo
+      const ahora = new Date();
+      const fechaMensaje = new Date(fechaReal);
+      const diffMs = ahora.getTime() - fechaMensaje.getTime();
+      const diffMinutos = Math.floor(diffMs / 60000);
+      
+      console.log(`   ⏱️ Diferencia en minutos: ${diffMinutos}`);
+      
+      let tiempoRelativo: string;
+      if (diffMinutos < 1) {
+        tiempoRelativo = 'Justo ahora';
+      } else if (diffMinutos < 60) {
+        tiempoRelativo = `Hace ${diffMinutos} min`;
+      } else if (diffMinutos < 1440) {
+        const horas = Math.floor(diffMinutos / 60);
+        tiempoRelativo = `Hace ${horas} ${horas === 1 ? 'hora' : 'horas'}`;
+      } else {
+        const dias = Math.floor(diffMinutos / 1440);
+        tiempoRelativo = `Hace ${dias} ${dias === 1 ? 'día' : 'días'}`;
+      }
+
+      console.log(`   ⏰ Tiempo calculado: ${tiempoRelativo}`);
+
+      const resultado = {
+        id: mensaje._id,
+        remitente: {
+          nombre: nombre,
+          apellidos: apellidos,
+          nombreCompleto: `${nombre} ${apellidos}`.trim(),
+          iniciales: iniciales
+        },
+        asunto: mensaje.asunto,
+        preview: preview,
+        fechaEnvio: fechaReal, // ← Usar la fecha real
+        tiempoRelativo: tiempoRelativo
+      };
+      
+      console.log(`   📦 Resultado:`, JSON.stringify(resultado, null, 2));
+      
+      return resultado;
+    });
+
+    console.log(`📤 Enviando ${formatted.length} mensajes formateados`);
+
+    res.json({
+      success: true,
+      data: formatted
+    });
+
+  } catch (error) {
+    console.error('❌ Error obteniendo últimos mensajes:', error);
+    next(error);
+  }
+}
+
   async responder(req: RequestWithUser, res: Response, next: NextFunction) {
     try {
       if (!req.user) {

@@ -153,6 +153,10 @@ router.get('/', cacheMiddleware('mensajes'), (req: any, res: Response, next: Nex
   mensajeController.obtenerTodos(req, res, next);
 });
 
+router.get('/ultimos', (req: any, res: Response, next: NextFunction) => {
+  mensajeController.obtenerUltimos(req, res, next);
+});
+
 router.get('/:id', (req: any, res: Response, next: NextFunction) => {
   mensajeController.obtenerPorId(req, res, next);
 });
@@ -182,6 +186,11 @@ router.put('/:id/desarchivar', (req: any, res: Response, next: NextFunction) => 
 
 // Nueva ruta para marcar como leído/no leído
 router.put('/:id/lectura', (req: any, res: Response, next: NextFunction) => {
+  mensajeController.actualizarEstadoLectura(req, res, next);
+});
+
+// ✅ ALIAS: Ruta alternativa /leer (para compatibilidad con Flutter)
+router.put('/:id/leer', (req: any, res: Response, next: NextFunction) => {
   mensajeController.actualizarEstadoLectura(req, res, next);
 });
 
