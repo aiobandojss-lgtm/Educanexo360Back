@@ -8,6 +8,7 @@ import gridfsManager from '../config/gridfs';
 import emailService from '../services/email.service';
 import notificacionService from '../services/notificacion.service';
 import mensajeService from '../services/mensaje.service'; // Importamos el nuevo servicio
+import { escapeRegex } from '../utils/escapeRegex';
 import config from '../config/config';
 import ApiError from '../utils/ApiError';
 import { TipoMensaje, EstadoMensaje, PrioridadMensaje } from '../interfaces/IMensaje';
@@ -89,7 +90,7 @@ export class MensajeController {
           };
 
           if (searchQuery) {
-            const searchRegex = new RegExp(searchQuery, 'i');
+            const searchRegex = new RegExp(escapeRegex(searchQuery), 'i');
             filter.$or = [
               { nombre: searchRegex },
               { apellidos: searchRegex },
@@ -384,7 +385,7 @@ export class MensajeController {
 
               // Aplicar filtro de búsqueda si existe
               if (searchQuery) {
-                const searchRegex = new RegExp(searchQuery, 'i');
+                const searchRegex = new RegExp(escapeRegex(searchQuery), 'i');
                 filter.$or = [
                   { nombre: searchRegex },
                   { apellidos: searchRegex },
@@ -2170,7 +2171,7 @@ export class MensajeController {
 
       // Filtro de búsqueda por asunto o contenido
       if (busqueda) {
-        const regex = new RegExp(busqueda as string, 'i');
+        const regex = new RegExp(escapeRegex(busqueda as string), 'i');
         pipeline.push({
           $match: {
             $or: [{ asunto: regex }, { contenido: regex }],

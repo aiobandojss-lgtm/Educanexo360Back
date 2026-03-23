@@ -652,7 +652,7 @@ El equipo de EducaNexo360`,
     }>,
   ) {
     // Obtener URL de la plataforma desde variables de entorno o usar por defecto
-    const PLATFORM_URL = process.env.FRONTEND_URL || 'https://educa-nexo360-react.vercel.app';
+    const PLATFORM_URL = process.env.FRONTEND_URL || 'https://educanexo360-web.vercel.app';
     const LOGIN_URL = `${PLATFORM_URL}/login`;
 
     // Construir lista de estudiantes para el correo

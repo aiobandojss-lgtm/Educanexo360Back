@@ -4,6 +4,7 @@ import { SignOptions, sign, verify } from 'jsonwebtoken';
 import axios from 'axios';
 import config from '../../config/config';
 import crypto from 'crypto';
+import { jwtConfig } from '../../config/jwt.config';
 
 interface JwtPayload {
   sub: string;
@@ -38,7 +39,7 @@ class AuthService {
 
     return {
       access: {
-        token: sign(payload, process.env.JWT_SECRET || 'p8EzG5qXm3vKr7tY9jN2wB4aD6cF1uH8sL0oI5yR', {
+        token: sign(payload, jwtConfig.secret, {
           expiresIn: process.env.JWT_EXPIRES_IN || defaultAccessExpiry,
         } as SignOptions),
         expires: process.env.JWT_EXPIRES_IN || defaultAccessExpiry,
@@ -46,7 +47,7 @@ class AuthService {
       refresh: {
         token: sign(
           payload,
-          process.env.REFRESH_TOKEN_SECRET || 'L7bT3xW9rQ5mZ1vK8cN4hJ6dP2aS0fG3eY5iU7oB',
+          jwtConfig.refreshSecret,
           {
             expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || defaultRefreshExpiry,
           } as SignOptions,
@@ -107,7 +108,7 @@ class AuthService {
     try {
       const decoded = verify(
         refreshToken,
-        process.env.REFRESH_TOKEN_SECRET || 'L7bT3xW9rQ5mZ1vK8cN4hJ6dP2aS0fG3eY5iU7oB',
+        jwtConfig.refreshSecret,
       ) as JwtPayload;
 
       const user = await Usuario.findById(decoded.sub);

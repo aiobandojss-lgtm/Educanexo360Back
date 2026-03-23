@@ -2,10 +2,11 @@
 
 import express, { Request, Response, NextFunction } from 'express';
 import mensajeController, { ROLES_CON_BORRADORES } from '../controllers/mensaje.controller';
-import { authenticate } from '../middleware/auth.middleware';
+import { authenticate, authorize } from '../middleware/auth.middleware';
 import path from 'path';
 import fs from 'fs';
 import multer from 'multer';
+import { sanitizeFilename } from '../utils/sanitizeFilename';
 import { TipoUsuario } from '../interfaces/IUsuario';
 
 import { cacheMiddleware } from '../cache/simpleCache';
@@ -47,7 +48,7 @@ const storage = multer.diskStorage({
   },
   filename: function (req, file, cb) {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    cb(null, uniqueSuffix + path.extname(file.originalname));
+    cb(null, uniqueSuffix + path.extname(sanitizeFilename(file.originalname)));
   },
 });
 
@@ -122,22 +123,34 @@ router.delete(
 );
 
 // Ruta para obtener destinatarios específicamente para acudientes
-router.get('/destinatarios-acudiente', (req: any, res: Response, next: NextFunction) => {
-  mensajeController.getDestinatariosParaAcudiente(req, res, next);
-});
+router.get(
+  '/destinatarios-acudiente',
+  authorize('ACUDIENTE', 'ESTUDIANTE'),
+  (req: any, res: Response, next: NextFunction) => {
+    mensajeController.getDestinatariosParaAcudiente(req, res, next);
+  },
+);
 
-router.get('/destinatarios-estudiante', (req: any, res: Response, next: NextFunction) => {
-  mensajeController.getDestinatariosParaAcudiente(req, res, next); // ← Usar la misma función
-});
+router.get(
+  '/destinatarios-estudiante',
+  authorize('ACUDIENTE', 'ESTUDIANTE'),
+  (req: any, res: Response, next: NextFunction) => {
+    mensajeController.getDestinatariosParaAcudiente(req, res, next); // ← Usar la misma función
+  },
+);
 
 // Rutas para obtener destinatarios y cursos disponibles
 router.get('/destinatarios-disponibles', (req: any, res: Response, next: NextFunction) => {
   mensajeController.getPosiblesDestinatarios(req, res, next);
 });
 
-router.get('/cursos-disponibles', (req: any, res: Response, next: NextFunction) => {
-  mensajeController.getCursosPosiblesDestinatarios(req, res, next);
-});
+router.get(
+  '/cursos-disponibles',
+  authorize('ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO', 'DOCENTE'),
+  (req: any, res: Response, next: NextFunction) => {
+    mensajeController.getCursosPosiblesDestinatarios(req, res, next);
+  },
+);
 
 // Rutas para mensajes
 router.post(

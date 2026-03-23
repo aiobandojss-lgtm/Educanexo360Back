@@ -7,6 +7,7 @@ import tareaValidation from '../validations/tarea.validation';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import { sanitizeFilename } from '../utils/sanitizeFilename';
 
 const router = express.Router();
 
@@ -21,7 +22,7 @@ const storage = multer.diskStorage({
   },
   filename: function (req, file, cb) {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    cb(null, uniqueSuffix + '-' + file.originalname);
+    cb(null, uniqueSuffix + '-' + sanitizeFilename(file.originalname));
   },
 });
 
@@ -177,6 +178,7 @@ router.get(
 
 router.get(
   '/especial/proximas-vencer',
+  authorize('DOCENTE', 'ESTUDIANTE', 'ADMIN', 'RECTOR', 'COORDINADOR'),
   tareaController.proximasVencer
 );
 

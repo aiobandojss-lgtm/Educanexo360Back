@@ -5,6 +5,7 @@ import { GridFSBucket } from 'mongodb';
 import multer from 'multer';
 import path from 'path';
 import crypto from 'crypto';
+import { sanitizeFilename } from '../utils/sanitizeFilename';
 
 // Clase singleton para manejar GridFS
 class GridFSManager {
@@ -31,7 +32,7 @@ class GridFSManager {
         filename: function (req, file, cb) {
           crypto.randomBytes(16, (err, buf) => {
             if (err) return cb(err, '');
-            const filename = buf.toString('hex') + path.extname(file.originalname);
+            const filename = buf.toString('hex') + path.extname(sanitizeFilename(file.originalname));
             cb(null, filename);
           });
         },

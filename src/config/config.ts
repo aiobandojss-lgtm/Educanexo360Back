@@ -11,7 +11,7 @@ export default {
   mongoUri: process.env.MONGO_URI || 'mongodb://localhost:27017/educaNexo360',
 
   jwt: {
-    secret: process.env.JWT_SECRET || 'tu_jwt_secret_muy_seguro',
+    secret: process.env.JWT_SECRET as string,
     accessExpirationMinutes: process.env.JWT_ACCESS_EXPIRATION_MINUTES || '1d',
     refreshExpirationDays: process.env.JWT_REFRESH_EXPIRATION_DAYS || '7d',
     resetPasswordExpirationMinutes: 10,

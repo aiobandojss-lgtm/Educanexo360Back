@@ -2,14 +2,19 @@
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
+import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 
 // Cargar variables de entorno
 dotenv.config();
 
-// URL de conexión a MongoDB
-const mongoUri =
-  process.env.MONGODB_URI ||
-  'mongodb+srv://educanexo_admin:kFYY2Xi1QpArXMRi@cluster0.fvqnr.mongodb.net/educanexo360?retryWrites=true&w=majority&appName=Cluster0';
+// URL de conexión a MongoDB — obligatoria, nunca hardcodeada
+const mongoUri = process.env.MONGODB_URI;
+if (!mongoUri) {
+  console.error('ERROR: La variable MONGODB_URI no está definida. Configúrala antes de ejecutar este script.');
+  process.exit(1);
+}
 
 async function addSuperAdmin() {
   try {
@@ -19,7 +24,8 @@ async function addSuperAdmin() {
 
     // Datos del super admin
     const email = 'superadmin@educanexo360.com';
-    const password = 'Superadmin123';
+    // Contraseña aleatoria segura — nunca hardcodeada
+    const password = crypto.randomBytes(16).toString('hex');
     const nombre = 'Super';
     const apellidos = 'Admin';
 
@@ -70,9 +76,15 @@ async function addSuperAdmin() {
     console.log(`- Nombre: ${nombre} ${apellidos}`);
     console.log(`- Tipo: SUPER_ADMIN`);
 
-    console.log('\nCredenciales para iniciar sesión:');
-    console.log(`- Email: ${email}`);
-    console.log(`- Contraseña: ${password}`);
+    // Escribir credenciales a archivo temporal — nunca a los logs del servidor
+    const credPath = path.join(__dirname, '../../superadmin-credentials.txt');
+    fs.writeFileSync(
+      credPath,
+      `Email: ${email}\nContraseña: ${password}\nFecha: ${new Date().toISOString()}\n`,
+      { mode: 0o600 }, // Solo lectura para el propietario
+    );
+    console.log(`\n⚠️  Credenciales guardadas en: ${credPath}`);
+    console.log('⚠️  Guarda las credenciales y elimina ese archivo inmediatamente.');
   } catch (error) {
     console.error('\n❌ Error:', error);
     if (error instanceof Error && error.name === 'MongoServerError') {

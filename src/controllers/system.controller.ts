@@ -12,28 +12,21 @@ import ApiError from '../utils/ApiError';
  */
 export const checkSystemStatus = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    console.log('Verificando estado del sistema...');
-
     // Verificar si hay escuelas
     const schoolCount = await Escuela.countDocuments();
     const hasSchools = schoolCount > 0;
-    console.log(`Escuelas encontradas: ${schoolCount}`);
 
     // Verificar si hay administradores
     const adminCount = await Usuario.countDocuments({ tipo: 'ADMIN' });
     const hasAdmins = adminCount > 0;
-    console.log(`Administradores encontrados: ${adminCount}`);
 
     // Un sistema se considera inicializado si tiene al menos una escuela y un administrador
     const initialized = hasSchools && hasAdmins;
-    console.log(`Sistema inicializado: ${initialized}`);
 
     res.status(200).json({
       success: true,
       data: {
         initialized,
-        hasSchools,
-        hasAdmins,
       },
     });
   } catch (error) {
@@ -50,21 +43,25 @@ export const initializeSystem = async (req: Request, res: Response, next: NextFu
   let session = null;
 
   try {
-    console.log('Iniciando inicialización del sistema...');
-    console.log('Datos recibidos:', JSON.stringify(req.body, null, 2));
+    // Verificar token de setup antes de cualquier operación
+    const setupToken = process.env.SYSTEM_SETUP_TOKEN;
+    if (!setupToken) {
+      throw new ApiError(403, 'Este endpoint no está disponible en este ambiente');
+    }
+    if (req.headers['x-setup-token'] !== setupToken) {
+      throw new ApiError(403, 'Token de inicialización inválido');
+    }
 
     // Verificar si el sistema ya está inicializado
     const schoolCount = await Escuela.countDocuments();
     const adminCount = await Usuario.countDocuments({ tipo: 'ADMIN' });
 
     if (schoolCount > 0 || adminCount > 0) {
-      console.log('El sistema ya ha sido inicializado');
       throw new ApiError(400, 'El sistema ya ha sido inicializado');
     }
 
     session = await mongoose.startSession();
     session.startTransaction();
-    console.log('Sesión de transacción iniciada');
 
     const { escuela, admin } = req.body;
 
@@ -74,7 +71,6 @@ export const initializeSystem = async (req: Request, res: Response, next: NextFu
     }
 
     // Crear la escuela - ajustado para coincidir con tu modelo real
-    console.log('Creando escuela...');
     try {
       const periodos = [];
       const numPeriodos = escuela.configuracion.periodos_academicos || 4;
@@ -114,11 +110,8 @@ export const initializeSystem = async (req: Request, res: Response, next: NextFu
         periodos_academicos: periodos,
       };
 
-      console.log('Datos de escuela preparados:', JSON.stringify(escuelaData, null, 2));
-
       const newEscuela = new Escuela(escuelaData);
-      const savedEscuela = await newEscuela.save({ session });
-      console.log('Escuela guardada con ID:', savedEscuela._id);
+      await newEscuela.save({ session });
     } catch (error) {
       console.error('Error al crear la escuela:', error);
       throw error;
@@ -131,7 +124,6 @@ export const initializeSystem = async (req: Request, res: Response, next: NextFu
     }
 
     // Crear el usuario administrador
-    console.log('Creando administrador...');
     let savedAdmin;
     try {
       const newAdmin = new Usuario({
@@ -141,26 +133,15 @@ export const initializeSystem = async (req: Request, res: Response, next: NextFu
         escuelaId: savedEscuela._id,
       });
 
-      console.log('Datos de administrador preparados:', {
-        nombre: newAdmin.nombre,
-        apellidos: newAdmin.apellidos,
-        email: newAdmin.email,
-        tipo: newAdmin.tipo,
-        escuelaId: newAdmin.escuelaId,
-      });
-
       savedAdmin = await newAdmin.save({ session });
-      console.log('Administrador guardado con ID:', savedAdmin._id);
     } catch (error) {
       console.error('Error al crear el administrador:', error);
       throw error;
     }
 
     // Finalizar la transacción
-    console.log('Confirmando transacción...');
     await session.commitTransaction();
     session.endSession();
-    console.log('Transacción confirmada');
 
     // Responder sin intentar generar tokens (para evitar errores potenciales)
     res.status(201).json({
@@ -182,8 +163,6 @@ export const initializeSystem = async (req: Request, res: Response, next: NextFu
         },
       },
     });
-
-    console.log('Inicialización completada exitosamente');
   } catch (error) {
     console.error('Error en initializeSystem:', error);
 
@@ -192,7 +171,6 @@ export const initializeSystem = async (req: Request, res: Response, next: NextFu
       try {
         await session.abortTransaction();
         session.endSession();
-        console.log('Transacción abortada debido a error');
       } catch (sessionError) {
         console.error('Error al abortar la transacción:', sessionError);
       }

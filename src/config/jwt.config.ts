@@ -9,10 +9,19 @@ interface JWTConfig {
   refreshExpiresIn: string;
 }
 
+const jwtSecret = process.env.JWT_SECRET;
+const refreshSecret = process.env.REFRESH_TOKEN_SECRET;
+
+if (!jwtSecret || !refreshSecret) {
+  throw new Error(
+    'FATAL: Las variables JWT_SECRET y REFRESH_TOKEN_SECRET son obligatorias. El servidor no puede arrancar sin ellas.',
+  );
+}
+
 export const jwtConfig: JWTConfig = {
-  secret: process.env.JWT_SECRET || 'tu_jwt_secret_muy_seguro',
+  secret: jwtSecret,
   expiresIn: process.env.JWT_EXPIRES_IN || '1d',
-  refreshSecret: process.env.REFRESH_TOKEN_SECRET || 'tu_refresh_token_secret_muy_seguro',
+  refreshSecret: refreshSecret,
   refreshExpiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || '7d',
 } as const;
 

@@ -53,11 +53,16 @@ const corsOptions = {
     callback: (error: Error | null, allow?: boolean) => void,
   ) {
     const allowedOrigins = process.env.ALLOWED_ORIGINS
-      ? process.env.ALLOWED_ORIGINS.split(',')
+      ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
       : ['http://localhost:3000', 'http://localhost:3001'];
 
     // Añadir explícitamente el dominio de Vercel
-    allowedOrigins.push('https://educa-nexo360-react.vercel.app');
+    allowedOrigins.push('https://educanexo360-web.vercel.app');
+
+    // Incluir FRONTEND_URL si está definida en variables de entorno
+    if (process.env.FRONTEND_URL) {
+      allowedOrigins.push(process.env.FRONTEND_URL);
+    }
 
     // Permitir solicitudes sin origen (como Postman o solicitudes del servidor)
     if (!origin) return callback(null, true);
@@ -66,10 +71,7 @@ const corsOptions = {
       callback(null, true);
     } else {
       console.log(`Solicitud CORS bloqueada: ${origin}`);
-      // Durante el desarrollo/diagnóstico podemos permitir todos los orígenes
-      // En producción deberías cambiar esto a:
-      // callback(new Error('No permitido por CORS'));
-      callback(null, true);
+      callback(new Error('No permitido por CORS'));
     }
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
@@ -103,10 +105,11 @@ apiRouter.get('/health', (req: Request, res: Response) => {
 });
 
 // ===== RUTAS DE LA API en el router =====
-apiRouter.use('/auth', rateLimiter(60000, 20), authRoutes);
-apiRouter.use('/mensajes', rateLimiter(60000, 100), mensajeRoutes);
+apiRouter.use('/auth', rateLimiter(60000, 20), authRoutes);           // 20 req/min — login, registro
+apiRouter.use('/mensajes', rateLimiter(60000, 60), mensajeRoutes);    // 60 req/min — tiene uploads
+apiRouter.use('/usuarios', rateLimiter(60000, 60), usuarioRoutes);    // 60 req/min — busquedas con regex
+apiRouter.use('/dashboard', rateLimiter(60000, 30), dashboardRoutes); // 30 req/min — queries de agregacion pesadas
 apiRouter.use('/escuelas', escuelaRoutes);
-apiRouter.use('/usuarios', usuarioRoutes);
 apiRouter.use('/cursos', cursoRoutes);
 apiRouter.use('/asignaturas', asignaturaRoutes);
 apiRouter.use('/logros', logroRoutes);
@@ -121,15 +124,13 @@ apiRouter.use('/system', systemRoutes);
 apiRouter.use('/superadmin', superadminRoutes);
 
 // RUTAS PARA EL SISTEMA DE INVITACIONES Y REGISTRO
-apiRouter.use('/invitaciones', invitacionRoutes);
-apiRouter.use('/registro', registroRoutes);
+apiRouter.use('/invitaciones', rateLimiter(60000, 20), invitacionRoutes); // 20 req/min — previene abuso de invitaciones
+apiRouter.use('/registro', rateLimiter(60000, 10), registroRoutes);       // 10 req/min — previene spam de cuentas
 apiRouter.use('/public', publicRoutes);
 apiRouter.use('/estudiantes', estudianteRoutes);
 apiRouter.use('/cache', cacheRoutes);
 
-// ✅ CORRECCIÓN PRINCIPAL: Dashboard dentro del apiRouter
-apiRouter.use('/dashboard', dashboardRoutes); // ✅ AHORA ESTÁ DENTRO DEL apiRouter
-app.use(`${basePath}/api/tareas`, tareaRoutes);
+app.use(`${basePath}/api/tareas`, rateLimiter(60000, 60), tareaRoutes); // 60 req/min — tiene uploads
 
 // ===== MONTAR EL ROUTER API =====
 // Si hay basePath, lo usamos; de lo contrario, montamos en /api

@@ -7,6 +7,7 @@ import Usuario from '../models/usuario.model';
 import ApiError from '../utils/ApiError';
 import { GridFSBucket } from 'mongodb';
 import * as fs from 'fs';
+import { escapeRegex } from '../utils/escapeRegex';
 
 interface RequestWithUser extends Request {
   user?: {
@@ -161,8 +162,8 @@ class TareaController {
       if (req.query.busqueda) {
         const busqueda = req.query.busqueda as string;
         filters.$or = [
-          { titulo: { $regex: busqueda, $options: 'i' } },
-          { descripcion: { $regex: busqueda, $options: 'i' } },
+          { titulo: { $regex: escapeRegex(busqueda), $options: 'i' } },
+          { descripcion: { $regex: escapeRegex(busqueda), $options: 'i' } },
         ];
       }
 

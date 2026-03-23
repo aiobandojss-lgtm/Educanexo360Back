@@ -1,6 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
 import ApiError from '../utils/ApiError';
-import config from '../config/config';
 
 export const errorConverter = (err: any, req: Request, res: Response, next: NextFunction) => {
   let error = err;
@@ -15,7 +14,7 @@ export const errorConverter = (err: any, req: Request, res: Response, next: Next
 export const errorHandler = (err: ApiError, req: Request, res: Response, _next: NextFunction) => {
   let { statusCode, message } = err;
 
-  if (config.env === 'production' && !err.isOperational) {
+  if (process.env.NODE_ENV === 'production' && !err.isOperational) {
     statusCode = 500;
     message = 'Error Interno del Servidor';
   }
@@ -25,10 +24,10 @@ export const errorHandler = (err: ApiError, req: Request, res: Response, _next: 
   const response = {
     code: statusCode,
     message,
-    ...(config.env === 'development' && { stack: err.stack }),
+    ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
   };
 
-  if (config.env === 'development') {
+  if (process.env.NODE_ENV === 'development') {
     console.error(err);
   }
 

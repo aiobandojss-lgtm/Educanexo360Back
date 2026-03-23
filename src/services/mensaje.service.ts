@@ -8,6 +8,7 @@ import Asignatura from '../models/asignatura.model';
 import ApiError from '../utils/ApiError';
 import { TipoMensaje, EstadoMensaje, PrioridadMensaje } from '../interfaces/IMensaje';
 import { TipoNotificacion } from '../interfaces/INotificacion';
+import { escapeRegex } from '../utils/escapeRegex';
 import emailService from './email.service';
 import notificacionService from './notificacion.service';
 import { cache, invalidateCache, invalidateRelatedCache } from '../cache/simpleCache';
@@ -81,9 +82,9 @@ class MensajeService {
               ...(query &&
                 query.trim() !== '' && {
                   $or: [
-                    { nombre: { $regex: query, $options: 'i' } },
-                    { apellidos: { $regex: query, $options: 'i' } },
-                    { email: { $regex: query, $options: 'i' } },
+                    { nombre: { $regex: escapeRegex(query), $options: 'i' } },
+                    { apellidos: { $regex: escapeRegex(query), $options: 'i' } },
+                    { email: { $regex: escapeRegex(query), $options: 'i' } },
                   ],
                 }),
             },

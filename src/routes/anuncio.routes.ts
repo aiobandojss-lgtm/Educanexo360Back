@@ -6,6 +6,7 @@ import anuncioValidation from '../validations/anuncio.validation';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import { sanitizeFilename } from '../utils/sanitizeFilename';
 import { cacheMiddleware } from '../cache/simpleCache';
 import { invalidateOnAnuncio } from '../middleware/dashboardCacheInvalidation.middleware';
 
@@ -23,7 +24,7 @@ const storage = multer.diskStorage({
   },
   filename: function (req, file, cb) {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    cb(null, uniqueSuffix + '-' + file.originalname);
+    cb(null, uniqueSuffix + '-' + sanitizeFilename(file.originalname));
   },
 });
 

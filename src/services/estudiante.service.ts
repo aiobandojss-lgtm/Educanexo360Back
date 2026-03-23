@@ -3,6 +3,7 @@ import { Types } from 'mongoose';
 import Usuario from '../models/usuario.model';
 import Curso from '../models/curso.model';
 import ApiError from '../utils/ApiError';
+import { escapeRegex } from '../utils/escapeRegex';
 
 export interface BusquedaEstudianteOptions {
   nombre?: string;
@@ -62,16 +63,16 @@ class EstudianteService {
 
     if (criterios.nombre && criterios.apellidos) {
       orConditions.push({
-        nombre: new RegExp(criterios.nombre, 'i'),
-        apellidos: new RegExp(criterios.apellidos, 'i'),
+        nombre: new RegExp(escapeRegex(criterios.nombre), 'i'),
+        apellidos: new RegExp(escapeRegex(criterios.apellidos), 'i'),
       });
     } else if (criterios.nombre) {
       orConditions.push({
-        nombre: new RegExp(criterios.nombre, 'i'),
+        nombre: new RegExp(escapeRegex(criterios.nombre), 'i'),
       });
     } else if (criterios.apellidos) {
       orConditions.push({
-        apellidos: new RegExp(criterios.apellidos, 'i'),
+        apellidos: new RegExp(escapeRegex(criterios.apellidos), 'i'),
       });
     }
 

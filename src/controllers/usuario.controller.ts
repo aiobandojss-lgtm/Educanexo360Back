@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import Usuario from '../models/usuario.model';
 import Curso from '../models/curso.model';
 import ApiError from '../utils/ApiError';
+import { escapeRegex } from '../utils/escapeRegex';
 
 // Extender el tipo Request para incluir el usuario
 interface RequestWithUser extends Request {
@@ -37,9 +38,9 @@ class UsuarioController {
       // Agregar búsqueda si hay término de búsqueda
       if (searchTerm) {
         query.$or = [
-          { nombre: new RegExp(searchTerm, 'i') },
-          { apellidos: new RegExp(searchTerm, 'i') },
-          { email: new RegExp(searchTerm, 'i') },
+          { nombre: new RegExp(escapeRegex(searchTerm), 'i') },
+          { apellidos: new RegExp(escapeRegex(searchTerm), 'i') },
+          { email: new RegExp(escapeRegex(searchTerm), 'i') },
         ];
       }
 
@@ -235,9 +236,9 @@ class UsuarioController {
       const filter = {
         escuelaId: req.user.escuelaId,
         $or: [
-          { nombre: new RegExp(searchTerm, 'i') },
-          { apellidos: new RegExp(searchTerm, 'i') },
-          { email: new RegExp(searchTerm, 'i') },
+          { nombre: new RegExp(escapeRegex(searchTerm), 'i') },
+          { apellidos: new RegExp(escapeRegex(searchTerm), 'i') },
+          { email: new RegExp(escapeRegex(searchTerm), 'i') },
         ],
       };
 

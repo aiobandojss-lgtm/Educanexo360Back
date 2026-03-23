@@ -14,7 +14,7 @@ export const configureSecurityMiddleware = (app: Express) => {
         'http://localhost:3001',
         'https://educanexo360.creativebycode.com',
         'https://www.educanexo360.creativebycode.com',
-        'https://educa-nexo360-react.vercel.app',
+        'https://educanexo360-web.vercel.app',
       ];
 
       // Permitir solicitudes sin origen (como Postman)
@@ -24,7 +24,7 @@ export const configureSecurityMiddleware = (app: Express) => {
         callback(null, true);
       } else {
         console.log(`Origen bloqueado por CORS: ${origin}`);
-        callback(null, true); // Temporalmente permitimos todos para diagnóstico
+        callback(new Error('No permitido por CORS'));
       }
     },
     credentials: true,
