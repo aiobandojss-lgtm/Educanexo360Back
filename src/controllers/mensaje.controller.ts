@@ -933,6 +933,35 @@ export class MensajeController {
         throw new ApiError(500, 'El mensaje no se actualizó correctamente');
       }
 
+      // Enviar copias a acudientes si hay estudiantes entre los destinatarios del borrador
+      try {
+        const destinatariosIds = (mensajeEnviado.destinatarios as any[]).map((d: any) =>
+          typeof d === 'object' && d._id ? d._id.toString() : d.toString()
+        );
+
+        if (destinatariosIds.length > 0) {
+          const estudiantesInfo = await Usuario.find({
+            _id: { $in: destinatariosIds },
+            tipo: 'ESTUDIANTE',
+          }).select('_id');
+
+          const datosMensaje = {
+            asunto: mensajeEnviado.asunto,
+            contenido: mensajeEnviado.contenido,
+            adjuntos: mensajeEnviado.adjuntos || [],
+            tipo: mensajeEnviado.tipo,
+            prioridad: mensajeEnviado.prioridad,
+            etiquetas: mensajeEnviado.etiquetas || [],
+          };
+
+          for (const est of estudiantesInfo) {
+            await mensajeService.enviarCopiaAcudientes((est._id as any).toString(), datosMensaje, req.user);
+          }
+        }
+      } catch (errorCopia) {
+        console.error('[ERROR] enviarCopiaAcudientes en borrador falló pero el mensaje fue enviado:', errorCopia);
+      }
+
       res.status(200).json({
         success: true,
         data: mensajeEnviado,
@@ -2090,18 +2119,20 @@ export class MensajeController {
       // Esto solo es necesario si no se han incluido cursos, ya que el servicio
       // ya incluye a los acudientes cuando se seleccionan cursos
       if (cursoIdsArray.length === 0 && destinatariosArray.length > 0) {
-        // Encontrar destinatarios que son estudiantes
-        // Hacemos la consulta de forma asíncrona y correcta
-        const estudiantesInfo = await Usuario.find({
-          _id: { $in: destinatariosArray },
-          tipo: 'ESTUDIANTE',
-        }).select('_id');
+        try {
+          const estudiantesInfo = await Usuario.find({
+            _id: { $in: destinatariosArray },
+            tipo: 'ESTUDIANTE',
+          }).select('_id');
 
-        const estudiantesIds = estudiantesInfo.map((est: any) => est._id.toString());
+          const estudiantesIds = estudiantesInfo.map((est: any) => est._id.toString());
 
-        // Enviar mensajes a acudientes para cada estudiante
-        for (const estudianteId of estudiantesIds) {
-          await mensajeService.enviarCopiaAcudientes(estudianteId, datosMensaje, req.user);
+          for (const estudianteId of estudiantesIds) {
+            await mensajeService.enviarCopiaAcudientes(estudianteId, datosMensaje, req.user);
+          }
+        } catch (errorCopia) {
+          // El mensaje principal ya fue guardado — no bloquear la respuesta por un error en la copia
+          console.error('[ERROR] enviarCopiaAcudientes falló pero el mensaje principal fue enviado:', errorCopia);
         }
       }
 

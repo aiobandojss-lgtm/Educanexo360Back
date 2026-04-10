@@ -9,6 +9,17 @@ import fs from 'fs';
 // Cambiar a false cuando se quiera habilitar nuevamente
 const DISABLE_EMAIL_SENDING = false;
 
+// Dominio usado para correos ficticios de estudiantes sin email propio
+const DOMINIO_EMAIL_FICTICIO = '@estudiante.educanexo.com';
+
+/**
+ * Detecta si un email fue generado automáticamente por el sistema
+ * (estudiantes sin correo real). Estos emails no deben recibir notificaciones.
+ */
+export function esEmailFicticio(email: string): boolean {
+  return email.endsWith(DOMINIO_EMAIL_FICTICIO);
+}
+
 class EmailService {
   private transporter: nodemailer.Transporter;
   private dailyEmailCount = 0;

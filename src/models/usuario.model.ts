@@ -83,7 +83,6 @@ const UsuarioSchema = new Schema(
     platform: {
       type: String,
       enum: ['ios', 'android'],
-      default: null
     },
     deviceInfo: {
       type: mongoose.Schema.Types.Mixed,

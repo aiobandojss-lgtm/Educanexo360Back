@@ -9,7 +9,7 @@ import ApiError from '../utils/ApiError';
 import { TipoMensaje, EstadoMensaje, PrioridadMensaje } from '../interfaces/IMensaje';
 import { TipoNotificacion } from '../interfaces/INotificacion';
 import { escapeRegex } from '../utils/escapeRegex';
-import emailService from './email.service';
+import emailService, { esEmailFicticio } from './email.service';
 import notificacionService from './notificacion.service';
 import { cache, invalidateCache, invalidateRelatedCache } from '../cache/simpleCache';
 import config from '../config/config';
@@ -508,8 +508,8 @@ class MensajeService {
               enviarEmail: false,
             }),
 
-            // Email solo si tiene email válido
-            destinatario.email
+            // Email solo si tiene correo real (excluye correos ficticios de estudiantes)
+            destinatario.email && !esEmailFicticio(destinatario.email)
               ? emailService.sendMensajeNotification(destinatario.email, {
                   remitente: nombreRemitente,
                   asunto,
@@ -549,9 +549,14 @@ class MensajeService {
 
       const cacheKey = this.createCacheKey('acudientes', estudianteId);
 
-      const acudientes = await this.getOrSetCache(cacheKey, 300, async () => {
-        // ✅ UNA SOLA AGREGACIÓN para estudiante + acudientes
-        const resultado = await Usuario.aggregate([
+      // No cachear resultados vacíos — podrían contaminar llamadas futuras si la asociación aún no existía
+      const cached = cache.get<any[]>(cacheKey);
+      let acudientes: any[];
+      if (cached && cached.length > 0) {
+        console.log(`📋 CACHE HIT: ${cacheKey}`);
+        acudientes = cached;
+      } else {
+        acudientes = await Usuario.aggregate([
           {
             $match: {
               _id: new mongoose.Types.ObjectId(estudianteId),
@@ -588,11 +593,17 @@ class MensajeService {
             $replaceRoot: { newRoot: '$acudientes' },
           },
         ]);
+        // Solo cachear si hay resultados
+        if (acudientes.length > 0) {
+          cache.set(cacheKey, acudientes, 300);
+          console.log(`💾 CACHE SET: ${cacheKey} (300s)`);
+        }
+      }
 
-        return resultado;
-      });
-
-      if (acudientes.length === 0) return null;
+      if (acudientes.length === 0) {
+        console.log(`[INFO] enviarCopiaAcudientes: no se encontraron acudientes para estudiante ${estudianteId}`);
+        return null;
+      }
 
       const mensajeAcudientes = {
         destinatarios: acudientes.map((a: any) => a._id.toString()),
