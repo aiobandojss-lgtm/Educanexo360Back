@@ -12,6 +12,8 @@ interface RequestWithUser extends Request {
     nombre: string;
     apellidos: string;
     estado: string;
+    permisos: string[];
+    perfilRolId?: string;
   };
 }
 
@@ -102,6 +104,7 @@ class EscuelaController {
         sitioWeb: escuela.sitioWeb || '',
         logo: escuela.logo || '',
         descripcion: escuela.descripcion || '',
+        periodos_academicos: escuela.periodos_academicos || [],
       };
 
       res.json({
