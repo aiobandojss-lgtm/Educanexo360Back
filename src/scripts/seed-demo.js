@@ -12,6 +12,20 @@ if (!MONGO_URI) {
 const ESC1_ID = new mongoose.Types.ObjectId('67cbd7457b538a736df6c31f'); // Centro Docente
 const ESC2_ID = new mongoose.Types.ObjectId('67ccaf317bb6eedc21de542c'); // Colegio San José
 
+// Distribución de asignaturas por docente:
+// doc1 (Matemáticas) → Primero A, Segundo A, Tercero A         (3 cursos)
+// doc2 (Español)     → Jardín A, Transición A, Primero A       (3 cursos)
+// doc3 (Ciencias)    → Segundo A, Tercero A                    (2 cursos)
+//
+// asigIds[0] Español        → Jardín A      (doc2, c1)
+// asigIds[1] Español        → Transición A  (doc2, c2)
+// asigIds[2] Matemáticas    → Primero A     (doc1, c3)
+// asigIds[3] Español        → Primero A     (doc2, c3)
+// asigIds[4] Matemáticas    → Segundo A     (doc1, c4)
+// asigIds[5] Ciencias Nat.  → Segundo A     (doc3, c4)
+// asigIds[6] Matemáticas    → Tercero A     (doc1, c5)
+// asigIds[7] Ciencias Nat.  → Tercero A     (doc3, c5)
+
 async function limpiarColecciones(db) {
   const colecciones = [
     'usuarios', 'cursos', 'asignaturas', 'calificaciones',
@@ -25,15 +39,29 @@ async function limpiarColecciones(db) {
   }
 }
 
+function buildAsignaturas(asigIds, doc1Id, doc2Id, doc3Id, c1Id, c2Id, c3Id, c4Id, c5Id, escuelaId, periodos) {
+  const ahora = new Date();
+  return [
+    { _id: asigIds[0], nombre: 'Español',          descripcion: 'Español - año académico 2026',          cursoId: c1Id, docenteId: doc2Id, escuelaId, intensidad_horaria: 4, estado: 'ACTIVO', periodos, createdAt: ahora, updatedAt: ahora },
+    { _id: asigIds[1], nombre: 'Español',          descripcion: 'Español - año académico 2026',          cursoId: c2Id, docenteId: doc2Id, escuelaId, intensidad_horaria: 4, estado: 'ACTIVO', periodos, createdAt: ahora, updatedAt: ahora },
+    { _id: asigIds[2], nombre: 'Matemáticas',      descripcion: 'Matemáticas - año académico 2026',      cursoId: c3Id, docenteId: doc1Id, escuelaId, intensidad_horaria: 4, estado: 'ACTIVO', periodos, createdAt: ahora, updatedAt: ahora },
+    { _id: asigIds[3], nombre: 'Español',          descripcion: 'Español - año académico 2026',          cursoId: c3Id, docenteId: doc2Id, escuelaId, intensidad_horaria: 4, estado: 'ACTIVO', periodos, createdAt: ahora, updatedAt: ahora },
+    { _id: asigIds[4], nombre: 'Matemáticas',      descripcion: 'Matemáticas - año académico 2026',      cursoId: c4Id, docenteId: doc1Id, escuelaId, intensidad_horaria: 4, estado: 'ACTIVO', periodos, createdAt: ahora, updatedAt: ahora },
+    { _id: asigIds[5], nombre: 'Ciencias Naturales',descripcion: 'Ciencias Naturales - año académico 2026',cursoId: c4Id, docenteId: doc3Id, escuelaId, intensidad_horaria: 3, estado: 'ACTIVO', periodos, createdAt: ahora, updatedAt: ahora },
+    { _id: asigIds[6], nombre: 'Matemáticas',      descripcion: 'Matemáticas - año académico 2026',      cursoId: c5Id, docenteId: doc1Id, escuelaId, intensidad_horaria: 4, estado: 'ACTIVO', periodos, createdAt: ahora, updatedAt: ahora },
+    { _id: asigIds[7], nombre: 'Ciencias Naturales',descripcion: 'Ciencias Naturales - año académico 2026',cursoId: c5Id, docenteId: doc3Id, escuelaId, intensidad_horaria: 3, estado: 'ACTIVO', periodos, createdAt: ahora, updatedAt: ahora },
+  ];
+}
+
 async function seedEscuela1(db, pass) {
   console.log('\n🏫 Insertando datos — Centro Docente rep de colombia...');
 
   const adminId  = new mongoose.Types.ObjectId();
   const rectorId = new mongoose.Types.ObjectId();
   const coordId  = new mongoose.Types.ObjectId();
-  const doc1Id   = new mongoose.Types.ObjectId(); // Matemáticas
-  const doc2Id   = new mongoose.Types.ObjectId(); // Español
-  const doc3Id   = new mongoose.Types.ObjectId(); // Ciencias Naturales
+  const doc1Id   = new mongoose.Types.ObjectId(); // Matemáticas → Primero, Segundo, Tercero
+  const doc2Id   = new mongoose.Types.ObjectId(); // Español     → Jardín, Transición, Primero
+  const doc3Id   = new mongoose.Types.ObjectId(); // Ciencias    → Segundo, Tercero
 
   const c1Id = new mongoose.Types.ObjectId(); // Jardín A
   const c2Id = new mongoose.Types.ObjectId(); // Transición A
@@ -41,15 +69,7 @@ async function seedEscuela1(db, pass) {
   const c4Id = new mongoose.Types.ObjectId(); // Segundo A
   const c5Id = new mongoose.Types.ObjectId(); // Tercero A
 
-  // asigIds[0-2]  → Jardín A:      Mat, Esp, Cien
-  // asigIds[3-5]  → Transición A:  Mat, Esp, Cien
-  // asigIds[6-8]  → Primero A:     Mat, Esp, Cien
-  // asigIds[9-11] → Segundo A:     Mat, Esp, Cien
-  // asigIds[12-14]→ Tercero A:     Mat, Esp, Cien
-  const asigIds = Array.from({ length: 15 }, () => new mongoose.Types.ObjectId());
-
-  // est[0-1] Jardín A | est[2-3] Transición A | est[4-5] Primero A
-  // est[6-7] Segundo A | est[8-9] Tercero A
+  const asigIds = Array.from({ length: 8 }, () => new mongoose.Types.ObjectId());
   const estIds  = Array.from({ length: 10 }, () => new mongoose.Types.ObjectId());
   const acudIds = Array.from({ length: 7  }, () => new mongoose.Types.ObjectId());
 
@@ -93,11 +113,9 @@ async function seedEscuela1(db, pass) {
       permisos: [],
       info_academica: {
         asignaturas_asignadas: [
-          { asignaturaId: asigIds[0],  cursoId: c1Id },
-          { asignaturaId: asigIds[3],  cursoId: c2Id },
-          { asignaturaId: asigIds[6],  cursoId: c3Id },
-          { asignaturaId: asigIds[9],  cursoId: c4Id },
-          { asignaturaId: asigIds[12], cursoId: c5Id },
+          { asignaturaId: asigIds[2], cursoId: c3Id }, // Mat Primero
+          { asignaturaId: asigIds[4], cursoId: c4Id }, // Mat Segundo
+          { asignaturaId: asigIds[6], cursoId: c5Id }, // Mat Tercero
         ],
       },
       createdAt: ahora, updatedAt: ahora,
@@ -110,11 +128,9 @@ async function seedEscuela1(db, pass) {
       permisos: [],
       info_academica: {
         asignaturas_asignadas: [
-          { asignaturaId: asigIds[1],  cursoId: c1Id },
-          { asignaturaId: asigIds[4],  cursoId: c2Id },
-          { asignaturaId: asigIds[7],  cursoId: c3Id },
-          { asignaturaId: asigIds[10], cursoId: c4Id },
-          { asignaturaId: asigIds[13], cursoId: c5Id },
+          { asignaturaId: asigIds[0], cursoId: c1Id }, // Esp Jardín
+          { asignaturaId: asigIds[1], cursoId: c2Id }, // Esp Transición
+          { asignaturaId: asigIds[3], cursoId: c3Id }, // Esp Primero
         ],
       },
       createdAt: ahora, updatedAt: ahora,
@@ -127,11 +143,8 @@ async function seedEscuela1(db, pass) {
       permisos: [],
       info_academica: {
         asignaturas_asignadas: [
-          { asignaturaId: asigIds[2],  cursoId: c1Id },
-          { asignaturaId: asigIds[5],  cursoId: c2Id },
-          { asignaturaId: asigIds[8],  cursoId: c3Id },
-          { asignaturaId: asigIds[11], cursoId: c4Id },
-          { asignaturaId: asigIds[14], cursoId: c5Id },
+          { asignaturaId: asigIds[5], cursoId: c4Id }, // Cien Segundo
+          { asignaturaId: asigIds[7], cursoId: c5Id }, // Cien Tercero
         ],
       },
       createdAt: ahora, updatedAt: ahora,
@@ -150,34 +163,10 @@ async function seedEscuela1(db, pass) {
   console.log('   ✅ Cursos insertados (5)');
 
   // ─── ASIGNATURAS ─────────────────────────────────────────────────────────────
-  const cursosAsig = [
-    { cId: c1Id, offset: 0  },
-    { cId: c2Id, offset: 3  },
-    { cId: c3Id, offset: 6  },
-    { cId: c4Id, offset: 9  },
-    { cId: c5Id, offset: 12 },
-  ];
-  const materias = [
-    { nombre: 'Matemáticas',       docenteId: doc1Id, intensidad: 4 },
-    { nombre: 'Español',           docenteId: doc2Id, intensidad: 4 },
-    { nombre: 'Ciencias Naturales',docenteId: doc3Id, intensidad: 3 },
-  ];
-  const asignaturas = [];
-  for (const { cId, offset } of cursosAsig) {
-    for (let i = 0; i < materias.length; i++) {
-      const m = materias[i];
-      asignaturas.push({
-        _id: asigIds[offset + i],
-        nombre: m.nombre,
-        descripcion: `${m.nombre} - año académico 2026`,
-        cursoId: cId, docenteId: m.docenteId, escuelaId: ESC1_ID,
-        intensidad_horaria: m.intensidad, estado: 'ACTIVO',
-        periodos: periodos2026, createdAt: ahora, updatedAt: ahora,
-      });
-    }
-  }
-  await db.collection('asignaturas').insertMany(asignaturas);
-  console.log('   ✅ Asignaturas insertadas (15)');
+  await db.collection('asignaturas').insertMany(
+    buildAsignaturas(asigIds, doc1Id, doc2Id, doc3Id, c1Id, c2Id, c3Id, c4Id, c5Id, ESC1_ID, periodos2026)
+  );
+  console.log('   ✅ Asignaturas insertadas (8)');
 
   // ─── ESTUDIANTES ─────────────────────────────────────────────────────────────
   const estudiantesData = [
@@ -205,15 +194,14 @@ async function seedEscuela1(db, pass) {
   console.log('   ✅ Estudiantes insertados (10)');
 
   // ─── ACUDIENTES ──────────────────────────────────────────────────────────────
-  // 3 con 2 hijos | 4 con 1 hijo
   const acudientesData = [
-    { _id: acudIds[0], email: 'acudiente1@educanexo360.creativebycode.com', nombre: 'Marcela',      apellidos: 'Ramírez Cruz',   hijos: [estIds[0], estIds[4]] }, // Jardín + Primero
-    { _id: acudIds[1], email: 'acudiente2@educanexo360.creativebycode.com', nombre: 'Jorge Armando',apellidos: 'Ortiz Méndez',   hijos: [estIds[2], estIds[6]] }, // Transición + Segundo
-    { _id: acudIds[2], email: 'acud03.cdrc@demo.com',                        nombre: 'Claudia',      apellidos: 'Torres Ríos',    hijos: [estIds[1], estIds[8]] }, // Jardín + Tercero
-    { _id: acudIds[3], email: 'acud04.cdrc@demo.com',                        nombre: 'Hernando',     apellidos: 'García Mora',    hijos: [estIds[3]] },
-    { _id: acudIds[4], email: 'acud05.cdrc@demo.com',                        nombre: 'Patricia',     apellidos: 'Muñoz Vargas',   hijos: [estIds[5]] },
-    { _id: acudIds[5], email: 'acud06.cdrc@demo.com',                        nombre: 'Ricardo',      apellidos: 'Gómez Suárez',   hijos: [estIds[7]] },
-    { _id: acudIds[6], email: 'acud07.cdrc@demo.com',                        nombre: 'Esperanza',    apellidos: 'Ávila Parra',    hijos: [estIds[9]] },
+    { _id: acudIds[0], email: 'acudiente1@educanexo360.creativebycode.com', nombre: 'Marcela',      apellidos: 'Ramírez Cruz',  hijos: [estIds[0], estIds[4]] }, // Jardín + Primero
+    { _id: acudIds[1], email: 'acudiente2@educanexo360.creativebycode.com', nombre: 'Jorge Armando',apellidos: 'Ortiz Méndez',  hijos: [estIds[2], estIds[6]] }, // Transición + Segundo
+    { _id: acudIds[2], email: 'acud03.cdrc@demo.com',                        nombre: 'Claudia',      apellidos: 'Torres Ríos',   hijos: [estIds[1], estIds[8]] }, // Jardín + Tercero
+    { _id: acudIds[3], email: 'acud04.cdrc@demo.com',                        nombre: 'Hernando',     apellidos: 'García Mora',   hijos: [estIds[3]] },
+    { _id: acudIds[4], email: 'acud05.cdrc@demo.com',                        nombre: 'Patricia',     apellidos: 'Muñoz Vargas',  hijos: [estIds[5]] },
+    { _id: acudIds[5], email: 'acud06.cdrc@demo.com',                        nombre: 'Ricardo',      apellidos: 'Gómez Suárez',  hijos: [estIds[7]] },
+    { _id: acudIds[6], email: 'acud07.cdrc@demo.com',                        nombre: 'Esperanza',    apellidos: 'Ávila Parra',   hijos: [estIds[9]] },
   ];
   await db.collection('usuarios').insertMany(
     acudientesData.map(a => ({
@@ -226,8 +214,7 @@ async function seedEscuela1(db, pass) {
   );
   console.log('   ✅ Acudientes insertados (7) — 3 con 2 hijos, 4 con 1 hijo');
 
-  return { adminId, rectorId, coordId, doc1Id, doc2Id, doc3Id,
-           c1Id, c2Id, c3Id, c4Id, c5Id, estIds, acudIds };
+  return { adminId };
 }
 
 async function seedEscuela2(db, pass) {
@@ -236,9 +223,9 @@ async function seedEscuela2(db, pass) {
   const adminId  = new mongoose.Types.ObjectId();
   const rectorId = new mongoose.Types.ObjectId();
   const coordId  = new mongoose.Types.ObjectId();
-  const doc1Id   = new mongoose.Types.ObjectId(); // Matemáticas
-  const doc2Id   = new mongoose.Types.ObjectId(); // Español
-  const doc3Id   = new mongoose.Types.ObjectId(); // Ciencias Naturales
+  const doc1Id   = new mongoose.Types.ObjectId(); // Matemáticas → Primero, Segundo, Tercero
+  const doc2Id   = new mongoose.Types.ObjectId(); // Español     → Jardín, Transición, Primero
+  const doc3Id   = new mongoose.Types.ObjectId(); // Ciencias    → Segundo, Tercero
 
   const c1Id = new mongoose.Types.ObjectId(); // Jardín A
   const c2Id = new mongoose.Types.ObjectId(); // Transición A
@@ -246,7 +233,7 @@ async function seedEscuela2(db, pass) {
   const c4Id = new mongoose.Types.ObjectId(); // Segundo A
   const c5Id = new mongoose.Types.ObjectId(); // Tercero A
 
-  const asigIds = Array.from({ length: 15 }, () => new mongoose.Types.ObjectId());
+  const asigIds = Array.from({ length: 8 }, () => new mongoose.Types.ObjectId());
   const estIds  = Array.from({ length: 10 }, () => new mongoose.Types.ObjectId());
   const acudIds = Array.from({ length: 7  }, () => new mongoose.Types.ObjectId());
 
@@ -290,11 +277,9 @@ async function seedEscuela2(db, pass) {
       permisos: [],
       info_academica: {
         asignaturas_asignadas: [
-          { asignaturaId: asigIds[0],  cursoId: c1Id },
-          { asignaturaId: asigIds[3],  cursoId: c2Id },
-          { asignaturaId: asigIds[6],  cursoId: c3Id },
-          { asignaturaId: asigIds[9],  cursoId: c4Id },
-          { asignaturaId: asigIds[12], cursoId: c5Id },
+          { asignaturaId: asigIds[2], cursoId: c3Id }, // Mat Primero
+          { asignaturaId: asigIds[4], cursoId: c4Id }, // Mat Segundo
+          { asignaturaId: asigIds[6], cursoId: c5Id }, // Mat Tercero
         ],
       },
       createdAt: ahora, updatedAt: ahora,
@@ -307,11 +292,9 @@ async function seedEscuela2(db, pass) {
       permisos: [],
       info_academica: {
         asignaturas_asignadas: [
-          { asignaturaId: asigIds[1],  cursoId: c1Id },
-          { asignaturaId: asigIds[4],  cursoId: c2Id },
-          { asignaturaId: asigIds[7],  cursoId: c3Id },
-          { asignaturaId: asigIds[10], cursoId: c4Id },
-          { asignaturaId: asigIds[13], cursoId: c5Id },
+          { asignaturaId: asigIds[0], cursoId: c1Id }, // Esp Jardín
+          { asignaturaId: asigIds[1], cursoId: c2Id }, // Esp Transición
+          { asignaturaId: asigIds[3], cursoId: c3Id }, // Esp Primero
         ],
       },
       createdAt: ahora, updatedAt: ahora,
@@ -324,11 +307,8 @@ async function seedEscuela2(db, pass) {
       permisos: [],
       info_academica: {
         asignaturas_asignadas: [
-          { asignaturaId: asigIds[2],  cursoId: c1Id },
-          { asignaturaId: asigIds[5],  cursoId: c2Id },
-          { asignaturaId: asigIds[8],  cursoId: c3Id },
-          { asignaturaId: asigIds[11], cursoId: c4Id },
-          { asignaturaId: asigIds[14], cursoId: c5Id },
+          { asignaturaId: asigIds[5], cursoId: c4Id }, // Cien Segundo
+          { asignaturaId: asigIds[7], cursoId: c5Id }, // Cien Tercero
         ],
       },
       createdAt: ahora, updatedAt: ahora,
@@ -347,31 +327,10 @@ async function seedEscuela2(db, pass) {
   console.log('   ✅ Cursos insertados (5)');
 
   // ─── ASIGNATURAS ─────────────────────────────────────────────────────────────
-  const cursosAsig = [
-    { cId: c1Id, offset: 0  }, { cId: c2Id, offset: 3  }, { cId: c3Id, offset: 6  },
-    { cId: c4Id, offset: 9  }, { cId: c5Id, offset: 12 },
-  ];
-  const materias = [
-    { nombre: 'Matemáticas',       docenteId: doc1Id, intensidad: 4 },
-    { nombre: 'Español',           docenteId: doc2Id, intensidad: 4 },
-    { nombre: 'Ciencias Naturales',docenteId: doc3Id, intensidad: 3 },
-  ];
-  const asignaturas = [];
-  for (const { cId, offset } of cursosAsig) {
-    for (let i = 0; i < materias.length; i++) {
-      const m = materias[i];
-      asignaturas.push({
-        _id: asigIds[offset + i],
-        nombre: m.nombre,
-        descripcion: `${m.nombre} - año académico 2026`,
-        cursoId: cId, docenteId: m.docenteId, escuelaId: ESC2_ID,
-        intensidad_horaria: m.intensidad, estado: 'ACTIVO',
-        periodos: periodos2026, createdAt: ahora, updatedAt: ahora,
-      });
-    }
-  }
-  await db.collection('asignaturas').insertMany(asignaturas);
-  console.log('   ✅ Asignaturas insertadas (15)');
+  await db.collection('asignaturas').insertMany(
+    buildAsignaturas(asigIds, doc1Id, doc2Id, doc3Id, c1Id, c2Id, c3Id, c4Id, c5Id, ESC2_ID, periodos2026)
+  );
+  console.log('   ✅ Asignaturas insertadas (8)');
 
   // ─── ESTUDIANTES ─────────────────────────────────────────────────────────────
   const estudiantesData = [
@@ -488,25 +447,25 @@ async function seedEventos(db, creadorId1, creadorId2) {
 
   const definicionEventos = [
     // MAYO 2026
-    { titulo: 'Día del Maestro',                          descripcion: 'Celebración del Día del Maestro con acto cultural y reconocimientos al personal docente.',                                     fechaInicio: new Date('2026-05-15T08:00:00'), fechaFin: new Date('2026-05-15T12:00:00'), todoElDia: false, lugar: 'Auditorio principal',          tipo: 'INSTITUCIONAL', color: '#e91e63' },
-    { titulo: 'Entrega de boletines — Período 1',         descripcion: 'Entrega oficial de boletines del primer período a padres de familia y estudiantes.',                                            fechaInicio: new Date('2026-05-20T07:00:00'), fechaFin: new Date('2026-05-20T17:00:00'), todoElDia: false, lugar: 'Salones de clase',             tipo: 'ACADEMICO',     color: '#1976d2' },
-    { titulo: 'Reunión de padres de familia',             descripcion: 'Reunión informativa con padres de familia para socializar resultados del primer período y compromisos del segundo.',            fechaInicio: new Date('2026-05-22T18:00:00'), fechaFin: new Date('2026-05-22T20:00:00'), todoElDia: false, lugar: 'Auditorio',                    tipo: 'INSTITUCIONAL', color: '#388e3c' },
-    { titulo: 'Izada de bandera — Mayo',                  descripcion: 'Acto cívico mensual con participación de todos los grados.',                                                                    fechaInicio: new Date('2026-05-29T07:00:00'), fechaFin: new Date('2026-05-29T08:00:00'), todoElDia: false, lugar: 'Patio central',                tipo: 'INSTITUCIONAL', color: '#f57c00' },
+    { titulo: 'Día del Maestro',                    descripcion: 'Celebración del Día del Maestro con acto cultural y reconocimientos al personal docente.',                          fechaInicio: new Date('2026-05-15T08:00:00'), fechaFin: new Date('2026-05-15T12:00:00'), todoElDia: false, lugar: 'Auditorio principal',       tipo: 'INSTITUCIONAL', color: '#e91e63' },
+    { titulo: 'Entrega de boletines — Período 1',   descripcion: 'Entrega oficial de boletines del primer período a padres de familia y estudiantes.',                                fechaInicio: new Date('2026-05-20T07:00:00'), fechaFin: new Date('2026-05-20T17:00:00'), todoElDia: false, lugar: 'Salones de clase',          tipo: 'ACADEMICO',     color: '#1976d2' },
+    { titulo: 'Reunión de padres de familia',        descripcion: 'Reunión informativa con padres de familia para socializar resultados del primer período.',                           fechaInicio: new Date('2026-05-22T18:00:00'), fechaFin: new Date('2026-05-22T20:00:00'), todoElDia: false, lugar: 'Auditorio',                 tipo: 'INSTITUCIONAL', color: '#388e3c' },
+    { titulo: 'Izada de bandera — Mayo',             descripcion: 'Acto cívico mensual con participación de todos los grados.',                                                        fechaInicio: new Date('2026-05-29T07:00:00'), fechaFin: new Date('2026-05-29T08:00:00'), todoElDia: false, lugar: 'Patio central',             tipo: 'INSTITUCIONAL', color: '#f57c00' },
     // JUNIO 2026
-    { titulo: 'Semana Cultural Institucional',            descripcion: 'Semana de expresión artística y cultural con presentaciones de todos los grados.',                                             fechaInicio: new Date('2026-06-15T07:00:00'), fechaFin: new Date('2026-06-19T17:00:00'), todoElDia: true,  lugar: 'Instalaciones del colegio',    tipo: 'CULTURAL',      color: '#7b1fa2' },
-    { titulo: 'Jornada Deportiva',                        descripcion: 'Torneo interno de fútbol, baloncesto y atletismo para los estudiantes.',                                                        fechaInicio: new Date('2026-06-25T07:00:00'), fechaFin: new Date('2026-06-25T14:00:00'), todoElDia: false, lugar: 'Cancha y patio deportivo',     tipo: 'DEPORTIVO',     color: '#00796b' },
-    { titulo: 'Cierre primer semestre',                   descripcion: 'Último día de clases del primer semestre. Entrega de informes a coordinación.',                                                 fechaInicio: new Date('2026-06-26T07:00:00'), fechaFin: new Date('2026-06-26T13:00:00'), todoElDia: false, lugar: 'Salones',                      tipo: 'ACADEMICO',     color: '#1976d2' },
-    { titulo: 'Inicio vacaciones de mitad de año',        descripcion: 'Inicio del período de vacaciones de mitad de año. Regreso el 14 de julio.',                                                    fechaInicio: new Date('2026-06-27T00:00:00'), fechaFin: new Date('2026-07-13T23:59:00'), todoElDia: true,  lugar: '',                             tipo: 'INSTITUCIONAL', color: '#455a64' },
+    { titulo: 'Semana Cultural Institucional',       descripcion: 'Semana de expresión artística y cultural con presentaciones de todos los grados.',                                  fechaInicio: new Date('2026-06-15T07:00:00'), fechaFin: new Date('2026-06-19T17:00:00'), todoElDia: true,  lugar: 'Instalaciones del colegio', tipo: 'CULTURAL',      color: '#7b1fa2' },
+    { titulo: 'Jornada Deportiva',                   descripcion: 'Torneo interno de fútbol, baloncesto y atletismo para los estudiantes.',                                            fechaInicio: new Date('2026-06-25T07:00:00'), fechaFin: new Date('2026-06-25T14:00:00'), todoElDia: false, lugar: 'Cancha deportiva',          tipo: 'DEPORTIVO',     color: '#00796b' },
+    { titulo: 'Cierre primer semestre',              descripcion: 'Último día de clases del primer semestre. Entrega de informes a coordinación.',                                     fechaInicio: new Date('2026-06-26T07:00:00'), fechaFin: new Date('2026-06-26T13:00:00'), todoElDia: false, lugar: 'Salones',                   tipo: 'ACADEMICO',     color: '#1976d2' },
+    { titulo: 'Inicio vacaciones de mitad de año',   descripcion: 'Inicio del período de vacaciones de mitad de año. Regreso el 14 de julio.',                                        fechaInicio: new Date('2026-06-27T00:00:00'), fechaFin: new Date('2026-07-13T23:59:00'), todoElDia: true,  lugar: '',                          tipo: 'INSTITUCIONAL', color: '#455a64' },
     // JULIO 2026
-    { titulo: 'Regreso a clases — Segundo semestre',      descripcion: 'Inicio del segundo semestre académico 2026. Todos los estudiantes deben presentarse a las 7:00 a.m.',                          fechaInicio: new Date('2026-07-14T07:00:00'), fechaFin: new Date('2026-07-14T13:00:00'), todoElDia: false, lugar: 'Instalaciones del colegio',    tipo: 'ACADEMICO',     color: '#1976d2' },
-    { titulo: 'Reunión de docentes — Planeación',         descripcion: 'Jornada de planeación curricular para el segundo semestre. Obligatoria para todos los docentes.',                              fechaInicio: new Date('2026-07-14T14:00:00'), fechaFin: new Date('2026-07-14T18:00:00'), todoElDia: false, lugar: 'Sala de profesores',           tipo: 'INSTITUCIONAL', color: '#f57c00' },
-    { titulo: 'Feria de Ciencias',                        descripcion: 'Exposición de proyectos científicos elaborados por los estudiantes. Abierta a la comunidad.',                                  fechaInicio: new Date('2026-07-24T08:00:00'), fechaFin: new Date('2026-07-24T15:00:00'), todoElDia: false, lugar: 'Patio principal',               tipo: 'ACADEMICO',     color: '#00897b' },
-    { titulo: 'Elección de Personero Estudiantil',        descripcion: 'Proceso democrático de elección del personero estudiantil para el período 2026-2027.',                                         fechaInicio: new Date('2026-07-28T08:00:00'), fechaFin: new Date('2026-07-28T11:00:00'), todoElDia: false, lugar: 'Aulas de votación',            tipo: 'INSTITUCIONAL', color: '#c62828' },
+    { titulo: 'Regreso a clases — Segundo semestre', descripcion: 'Inicio del segundo semestre académico 2026. Todos los estudiantes deben presentarse a las 7:00 a.m.',              fechaInicio: new Date('2026-07-14T07:00:00'), fechaFin: new Date('2026-07-14T13:00:00'), todoElDia: false, lugar: 'Instalaciones del colegio', tipo: 'ACADEMICO',     color: '#1976d2' },
+    { titulo: 'Reunión de docentes — Planeación',    descripcion: 'Jornada de planeación curricular para el segundo semestre. Obligatoria para todos los docentes.',                  fechaInicio: new Date('2026-07-14T14:00:00'), fechaFin: new Date('2026-07-14T18:00:00'), todoElDia: false, lugar: 'Sala de profesores',        tipo: 'INSTITUCIONAL', color: '#f57c00' },
+    { titulo: 'Feria de Ciencias',                   descripcion: 'Exposición de proyectos científicos elaborados por los estudiantes. Abierta a la comunidad.',                      fechaInicio: new Date('2026-07-24T08:00:00'), fechaFin: new Date('2026-07-24T15:00:00'), todoElDia: false, lugar: 'Patio principal',           tipo: 'ACADEMICO',     color: '#00897b' },
+    { titulo: 'Elección de Personero Estudiantil',   descripcion: 'Proceso democrático de elección del personero estudiantil para el período 2026-2027.',                             fechaInicio: new Date('2026-07-28T08:00:00'), fechaFin: new Date('2026-07-28T11:00:00'), todoElDia: false, lugar: 'Aulas de votación',         tipo: 'INSTITUCIONAL', color: '#c62828' },
   ];
 
   const todos = [
-    ...definicionEventos.map(e => ({ _id: new mongoose.Types.ObjectId(), ...e, estado: 'PENDIENTE', creadorId: creadorId1, escuelaId: ESC1_ID, invitados: [], recordatorios: [], createdAt: ahora, updatedAt: ahora })),
-    ...definicionEventos.map(e => ({ _id: new mongoose.Types.ObjectId(), ...e, estado: 'PENDIENTE', creadorId: creadorId2, escuelaId: ESC2_ID, invitados: [], recordatorios: [], createdAt: ahora, updatedAt: ahora })),
+    ...definicionEventos.map(e => ({ _id: new mongoose.Types.ObjectId(), ...e, estado: 'ACTIVO', creadorId: creadorId1, escuelaId: ESC1_ID, invitados: [], recordatorios: [], createdAt: ahora, updatedAt: ahora })),
+    ...definicionEventos.map(e => ({ _id: new mongoose.Types.ObjectId(), ...e, estado: 'ACTIVO', creadorId: creadorId2, escuelaId: ESC2_ID, invitados: [], recordatorios: [], createdAt: ahora, updatedAt: ahora })),
   ];
   await db.collection('eventocalendarios').insertMany(todos);
   console.log(`   ✅ Eventos insertados (${todos.length})`);
@@ -533,8 +492,9 @@ async function seed() {
   console.log('\n✅ Seed completado exitosamente');
   console.log('\n📋 Credenciales de acceso (contraseña: Demo2026*):');
   console.log('   ADMIN Centro Docente : admin@educanexo360.creativebycode.com');
-  console.log('   DOCENTE Matemáticas  : docente1@educanexo360.creativebycode.com');
-  console.log('   DOCENTE Español      : docente2@educanexo360.creativebycode.com');
+  console.log('   DOCENTE Matemáticas  : docente1@educanexo360.creativebycode.com  → ve Primero, Segundo, Tercero');
+  console.log('   DOCENTE Español      : docente2@educanexo360.creativebycode.com  → ve Jardín, Transición, Primero');
+  console.log('   DOCENTE Ciencias     : docente.ciencias.cdrc@demo.com            → ve Segundo, Tercero');
   console.log('   ACUDIENTE (2 hijos)  : acudiente1@educanexo360.creativebycode.com');
   console.log('   ACUDIENTE (2 hijos)  : acudiente2@educanexo360.creativebycode.com');
   console.log('   ADMIN Colegio SJ     : admin.csj@demo.com');
