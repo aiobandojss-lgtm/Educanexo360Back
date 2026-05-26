@@ -5,6 +5,7 @@ export enum TipoNotificacion {
   CALIFICACION = 'CALIFICACION', // Nueva calificación
   SISTEMA = 'SISTEMA', // Notificación del sistema - ✅ AGREGADO
   EVENTO = 'EVENTO', // Evento escolar
+  ALERTA_ASISTENCIA = 'ALERTA_ASISTENCIA', // Alerta automática de inasistencia
 }
 
 export enum EstadoNotificacion {
