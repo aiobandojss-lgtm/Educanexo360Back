@@ -11,6 +11,8 @@ import {
   IEstadisticasEstudiante,
   EstadoAsistencia,
 } from '../interfaces/IAsistencia';
+import AlertaAsistencia from '../models/alertaAsistencia.model';
+import { triggerAlertasAsistencia } from '../services/alertaAsistencia.service';
 
 // Definir la interfaz para Request con el usuario autenticado
 interface RequestWithUser extends Request {
@@ -114,6 +116,23 @@ export const crearAsistencia = async (req: RequestWithUser, res: Response, next:
     req.body.escuelaId = req.user.escuelaId;
 
     const nuevaAsistencia = await Asistencia.create(req.body);
+
+    setImmediate(() => {
+      const docenteId = req.user!._id.toString();
+      const cursoId = nuevaAsistencia.cursoId.toString();
+      const escuelaId = req.user!.escuelaId.toString();
+      const periodoId = nuevaAsistencia.periodoId?.toString();
+
+      for (const entrada of nuevaAsistencia.estudiantes ?? []) {
+        triggerAlertasAsistencia(
+          entrada.estudianteId.toString(),
+          cursoId,
+          escuelaId,
+          docenteId,
+          periodoId,
+        ).catch((err: any) => console.error('[AlertaAsistencia]', err));
+      }
+    });
 
     return res.status(201).json({
       success: true,
@@ -385,6 +404,23 @@ export const finalizarAsistencia = async (
     // Finalizar el registro
     asistencia.finalizado = true;
     await asistencia.save();
+
+    setImmediate(() => {
+      const docenteId = req.user!._id.toString();
+      const cursoId = asistencia.cursoId.toString();
+      const escuelaId = req.user!.escuelaId.toString();
+      const periodoId = asistencia.periodoId?.toString();
+
+      for (const entrada of asistencia.estudiantes ?? []) {
+        triggerAlertasAsistencia(
+          entrada.estudianteId.toString(),
+          cursoId,
+          escuelaId,
+          docenteId,
+          periodoId,
+        ).catch((err: any) => console.error('[AlertaAsistencia]', err));
+      }
+    });
 
     return res.status(200).json({
       success: true,
@@ -1084,6 +1120,45 @@ export const obtenerResumenPeriodo = async (
         totalClases: registros.length,
         estudiantes: estudiantesEstadisticas,
       },
+    });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+/**
+ * GET /api/asistencia/alertas
+ * Retorna alertas de asistencia con populate de estudiante y curso.
+ */
+export const getAlertasAsistencia = async (
+  req: RequestWithUser,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    if (!req.user) {
+      return next(new ApiError(401, 'No autorizado'));
+    }
+
+    const { cursoId, estudianteId, nivel, periodoId } = req.query;
+
+    const filtro: Record<string, any> = {
+      escuelaId: req.user.escuelaId,
+    };
+
+    if (cursoId) filtro.cursoId = cursoId;
+    if (estudianteId) filtro.estudianteId = estudianteId;
+    if (nivel) filtro.nivel = nivel;
+    if (periodoId) filtro.periodoId = periodoId;
+
+    const alertas = await AlertaAsistencia.find(filtro)
+      .populate('estudianteId', 'nombre apellidos')
+      .populate('cursoId', 'nombre nivel grado grupo')
+      .sort({ fechaEnvio: -1 });
+
+    return res.status(200).json({
+      success: true,
+      data: alertas,
     });
   } catch (error) {
     return next(error);

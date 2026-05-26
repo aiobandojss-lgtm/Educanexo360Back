@@ -1,6 +1,6 @@
 // src/validations/asistencia.validation.ts
 
-import { body } from 'express-validator';
+import { body, query } from 'express-validator';
 import { EstadoAsistencia } from '../interfaces/IAsistencia';
 
 export const crearAsistenciaValidation = [
@@ -81,4 +81,14 @@ export const actualizarAsistenciaValidation = [
     .optional()
     .isIn(['CLASE', 'ACTIVIDAD', 'EVENTO', 'OTRO'])
     .withMessage('Tipo de sesión inválido'),
+];
+
+export const alertasAsistenciaValidation = [
+  query('cursoId').optional().isMongoId().withMessage('ID de curso inválido'),
+  query('estudianteId').optional().isMongoId().withMessage('ID de estudiante inválido'),
+  query('nivel')
+    .optional()
+    .isIn(['ALERTA', 'CRITICO', 'INMINENTE'])
+    .withMessage('Nivel de alerta inválido'),
+  query('periodoId').optional().isMongoId().withMessage('ID de período inválido'),
 ];
