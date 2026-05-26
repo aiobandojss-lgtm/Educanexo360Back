@@ -6,6 +6,7 @@ import { validate } from '../middleware/validate.middleware';
 import {
   crearAsistenciaValidation,
   actualizarAsistenciaValidation,
+  alertasAsistenciaValidation,
 } from '../validations/asistencia.validation';
 import {
   crearAsistencia,
@@ -19,6 +20,7 @@ import {
   obtenerAsistenciaDia,
   obtenerResumenPeriodo,
   obtenerResumen,
+  getAlertasAsistencia,
 } from '../controllers/asistencia.controller';
 
 const router = express.Router();
@@ -28,6 +30,12 @@ router.use(authenticate);
 
 // Rutas para estadísticas y consultas especiales (deben ir antes de las rutas con :id)
 router.get('/dia', obtenerAsistenciaDia as RequestHandler);
+router.get(
+  '/alertas',
+  authorize('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'),
+  validate(alertasAsistenciaValidation),
+  getAlertasAsistencia as RequestHandler,
+);
 router.get('/estadisticas/curso/:cursoId', obtenerEstadisticasCurso as RequestHandler);
 router.get(
   '/estadisticas/estudiante/:estudianteId',
