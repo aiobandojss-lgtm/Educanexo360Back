@@ -90,5 +90,5 @@ export const alertasAsistenciaValidation = [
     .optional()
     .isIn(['ALERTA', 'CRITICO', 'INMINENTE'])
     .withMessage('Nivel de alerta inválido'),
-  query('periodoId').optional().isMongoId().withMessage('ID de período inválido'),
+  query('periodoId').optional().isString().notEmpty().withMessage('ID de período inválido'),
 ];
