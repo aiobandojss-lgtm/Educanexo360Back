@@ -117,23 +117,6 @@ export const crearAsistencia = async (req: RequestWithUser, res: Response, next:
 
     const nuevaAsistencia = await Asistencia.create(req.body);
 
-    setImmediate(() => {
-      const docenteId = req.user!._id.toString();
-      const cursoId = nuevaAsistencia.cursoId.toString();
-      const escuelaId = req.user!.escuelaId.toString();
-      const periodoId = nuevaAsistencia.periodoId?.toString();
-
-      for (const entrada of nuevaAsistencia.estudiantes ?? []) {
-        triggerAlertasAsistencia(
-          entrada.estudianteId.toString(),
-          cursoId,
-          escuelaId,
-          docenteId,
-          periodoId,
-        ).catch((err: any) => console.error('[AlertaAsistencia]', err));
-      }
-    });
-
     return res.status(201).json({
       success: true,
       data: nuevaAsistencia,
