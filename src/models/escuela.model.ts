@@ -95,8 +95,7 @@ const EscuelaSchema: Schema = new Schema(
 );
 
 // Índices
-EscuelaSchema.index({ email: 1 }, { unique: true });
-EscuelaSchema.index({ codigo: 1 }, { unique: true });
+// email y codigo ya tienen unique:true inline — solo índice de estado aquí
 EscuelaSchema.index({ estado: 1 });
 
 const Escuela = mongoose.model('Escuela', EscuelaSchema);
