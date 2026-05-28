@@ -5,10 +5,12 @@ import Escuela from '../models/escuela.model';
 import Curso from '../models/curso.model';
 import Usuario from '../models/usuario.model';
 import Notificacion from '../models/notificacion.model';
+import Mensaje from '../models/mensaje.model';
 import emailService from './email.service';
 import { EstadoAsistencia } from '../interfaces/IAsistencia';
 import { NivelAlertaAsistencia } from '../interfaces/IAlertaAsistencia';
 import { EstadoNotificacion, TipoNotificacion } from '../interfaces/INotificacion';
+import { TipoMensaje, PrioridadMensaje } from '../interfaces/IMensaje';
 
 type DestinatarioAlerta = {
   _id: mongoose.Types.ObjectId;
@@ -16,6 +18,40 @@ type DestinatarioAlerta = {
   nombre?: string;
   apellidos?: string;
 };
+
+function generarCuerpoMensaje(
+  nivel: NivelAlertaAsistencia,
+  nombreEstudiante: string,
+  nombreCurso: string,
+  porcentajeAusencias: number,
+): string {
+  const descripciones: Record<NivelAlertaAsistencia, string> = {
+    ALERTA: 'ha alcanzado el 15% de ausencias',
+    CRITICO: 'ha superado el 25% de ausencias',
+    INMINENTE: 'está en riesgo de reprobación por inasistencia (más del 30%)',
+  };
+  return (
+    `El estudiante ${nombreEstudiante} del curso ${nombreCurso} ${descripciones[nivel]}.\n\n` +
+    `Porcentaje actual de ausencias: ${porcentajeAusencias.toFixed(1)}%.\n\n` +
+    `Por favor revise el módulo de Asistencia → Informes → Riesgo para más detalles.`
+  );
+}
+
+async function obtenerOCrearUsuarioSistema(): Promise<{ _id: mongoose.Types.ObjectId }> {
+  const EMAIL_SISTEMA = 'sistema@educanexo360.com';
+  const existente = await Usuario.findOne({ email: EMAIL_SISTEMA }).select('_id');
+  if (existente) return existente as any;
+  // SUPER_ADMIN no requiere escuelaId; password es hasheado por el pre-save hook del modelo
+  const nuevo = await Usuario.create({
+    email: EMAIL_SISTEMA,
+    password: `sistema-${Date.now()}-${Math.random().toString(36)}`,
+    nombre: 'Sistema',
+    apellidos: 'EducaNexo360',
+    tipo: 'SUPER_ADMIN',
+    estado: 'ACTIVO',
+  });
+  return nuevo as any;
+}
 
 async function obtenerPeriodoIdVigente(escuelaId: string, periodoId?: string): Promise<string> {
   if (periodoId) {
@@ -75,6 +111,7 @@ async function enviarNotificacionesAlerta(params: {
     return;
   }
 
+  // Canal 1: Notificación interna (campanita)
   for (const destinatario of destinatariosUnicos) {
     try {
       await Notificacion.create({
@@ -92,8 +129,41 @@ async function enviarNotificacionesAlerta(params: {
           periodoId,
         },
       });
+    } catch (error) {
+      console.error('[AlertaAsistencia] Error en Canal 1:', error);
+    }
+  }
 
-      if (destinatario.email) {
+  // Canal 2: Mensaje en bandeja de recibidos
+  try {
+    const prefijos: Record<NivelAlertaAsistencia, string> = {
+      ALERTA: '⚠️',
+      CRITICO: '🔴',
+      INMINENTE: '🚨',
+    };
+    const prioridades: Record<NivelAlertaAsistencia, PrioridadMensaje> = {
+      ALERTA: PrioridadMensaje.NORMAL,
+      CRITICO: PrioridadMensaje.NORMAL,
+      INMINENTE: PrioridadMensaje.ALTA,
+    };
+    const sistemaUser = await obtenerOCrearUsuarioSistema();
+    await Mensaje.create({
+      remitente: sistemaUser._id,
+      destinatarios: destinatariosUnicos.map((d) => d._id),
+      asunto: `${prefijos[nivel]} Alerta ${nivel} — ${nombreEstudiante}`,
+      contenido: generarCuerpoMensaje(nivel, nombreEstudiante, nombreCurso, porcentajeAusencias),
+      tipo: TipoMensaje.INSTITUCIONAL,
+      prioridad: prioridades[nivel],
+      escuelaId: new mongoose.Types.ObjectId(escuelaId),
+    });
+  } catch (errCanal2) {
+    console.error('[AlertaAsistencia] Error en Canal 2:', errCanal2);
+  }
+
+  // Canal 3: Email
+  for (const destinatario of destinatariosUnicos) {
+    if (destinatario.email) {
+      try {
         await emailService.sendEmail({
           to: destinatario.email,
           subject: titulo,
@@ -103,13 +173,13 @@ async function enviarNotificacionesAlerta(params: {
             <p>Ingrese a <strong>EducaNexo360</strong> para revisar el detalle de la alerta.</p>
           `,
         });
+      } catch (error) {
+        console.error('[AlertaAsistencia] Error en Canal 3:', error);
       }
-    } catch (error) {
-      console.error('Error al enviar notificación de alerta de asistencia:', error);
     }
   }
 
-  // Canal 3: FCM / push notifications se puede integrar aquí cuando el frontend móvil lo soporte.
+  // Canal 4: FCM / push notifications — pendiente cuando Flutter integre Firebase.
 }
 
 export async function triggerAlertasAsistencia(
@@ -127,15 +197,6 @@ export async function triggerAlertasAsistencia(
     'estudiantes.estudianteId': new mongoose.Types.ObjectId(estudianteId),
   }).select('estudiantes');
 
-  // DEBUG TEMPORAL — quitar después de diagnosticar
-  console.log('[AlertaAsistencia DEBUG]', {
-    estudianteId,
-    cursoId,
-    escuelaId,
-    periodoFinal,
-    registrosEncontrados: registros.length,
-  });
-
   const entradas = registros.flatMap((registro: any) =>
     (registro.estudiantes || []).filter(
       (estudiante: any) => estudiante.estudianteId?.toString() === estudianteId,
@@ -143,21 +204,12 @@ export async function triggerAlertasAsistencia(
   );
 
   const totalDias = entradas.length;
-
-  const diasAusente = entradas.filter((entrada: any) => entrada.estado === EstadoAsistencia.AUSENTE).length;
-  const porcentajeAusencias = totalDias > 0 ? (diasAusente / totalDias) * 100 : 0;
-
-  // DEBUG TEMPORAL — quitar después de diagnosticar
-  console.log('[AlertaAsistencia DEBUG]', {
-    entradasAplanadas: totalDias,
-    diasAusente,
-    porcentajeAusencias,
-    umbralesQueAplican: [30, 25, 15].filter(u => porcentajeAusencias >= u),
-  });
-
   if (totalDias === 0) {
     return;
   }
+
+  const diasAusente = entradas.filter((entrada: any) => entrada.estado === EstadoAsistencia.AUSENTE).length;
+  const porcentajeAusencias = (diasAusente / totalDias) * 100;
 
   const UMBRALES: { nivel: NivelAlertaAsistencia; minPct: number }[] = [
     { nivel: 'INMINENTE', minPct: 30 },
