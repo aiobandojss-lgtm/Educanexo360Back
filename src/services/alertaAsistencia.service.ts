@@ -121,17 +121,20 @@ export async function triggerAlertasAsistencia(
 ): Promise<void> {
   const periodoFinal = await obtenerPeriodoIdVigente(escuelaId, periodoId);
 
-  const consultaAsistencias: Record<string, any> = {
+  const registros = await Asistencia.find({
     cursoId,
     escuelaId,
     'estudiantes.estudianteId': new mongoose.Types.ObjectId(estudianteId),
-  };
+  }).select('estudiantes');
 
-  if (periodoFinal !== 'sin-periodo') {
-    consultaAsistencias.periodoId = periodoFinal;
-  }
-
-  const registros = await Asistencia.find(consultaAsistencias).select('estudiantes');
+  // DEBUG TEMPORAL — quitar después de diagnosticar
+  console.log('[AlertaAsistencia DEBUG]', {
+    estudianteId,
+    cursoId,
+    escuelaId,
+    periodoFinal,
+    registrosEncontrados: registros.length,
+  });
 
   const entradas = registros.flatMap((registro: any) =>
     (registro.estudiantes || []).filter(
@@ -140,12 +143,21 @@ export async function triggerAlertasAsistencia(
   );
 
   const totalDias = entradas.length;
+
+  const diasAusente = entradas.filter((entrada: any) => entrada.estado === EstadoAsistencia.AUSENTE).length;
+  const porcentajeAusencias = totalDias > 0 ? (diasAusente / totalDias) * 100 : 0;
+
+  // DEBUG TEMPORAL — quitar después de diagnosticar
+  console.log('[AlertaAsistencia DEBUG]', {
+    entradasAplanadas: totalDias,
+    diasAusente,
+    porcentajeAusencias,
+    umbralesQueAplican: [30, 25, 15].filter(u => porcentajeAusencias >= u),
+  });
+
   if (totalDias === 0) {
     return;
   }
-
-  const diasAusente = entradas.filter((entrada: any) => entrada.estado === EstadoAsistencia.AUSENTE).length;
-  const porcentajeAusencias = (diasAusente / totalDias) * 100;
 
   const UMBRALES: { nivel: NivelAlertaAsistencia; minPct: number }[] = [
     { nivel: 'INMINENTE', minPct: 30 },
