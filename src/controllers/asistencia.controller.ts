@@ -391,7 +391,8 @@ export const finalizarAsistencia = async (
     await asistencia.save();
 
     setImmediate(() => {
-      const docenteId = req.user!._id.toString();
+      // Usar el docenteId del registro, no de quien finaliza (puede ser rector/coordinador)
+      const docenteId = asistencia.docenteId.toString();
       const cursoId = asistencia.cursoId.toString();
       const escuelaId = req.user!.escuelaId.toString();
       const periodoId = asistencia.periodoId?.toString();

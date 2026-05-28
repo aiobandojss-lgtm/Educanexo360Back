@@ -1,4 +1,6 @@
 import mongoose from 'mongoose';
+import { randomUUID } from 'crypto';
+import bcrypt from 'bcryptjs';
 import Asistencia from '../models/asistencia.model';
 import AlertaAsistencia from '../models/alertaAsistencia.model';
 import Escuela from '../models/escuela.model';
@@ -30,27 +32,43 @@ function generarCuerpoMensaje(
     CRITICO: 'ha superado el 25% de ausencias',
     INMINENTE: 'está en riesgo de reprobación por inasistencia (más del 30%)',
   };
-  return (
-    `El estudiante ${nombreEstudiante} del curso ${nombreCurso} ${descripciones[nivel]}.\n\n` +
-    `Porcentaje actual de ausencias: ${porcentajeAusencias.toFixed(1)}%.\n\n` +
-    `Por favor revise el módulo de Asistencia → Informes → Riesgo para más detalles.`
-  );
+  const umbrales: Record<NivelAlertaAsistencia, string> = {
+    ALERTA: '15%',
+    CRITICO: '25%',
+    INMINENTE: '30%',
+  };
+  return `
+<p>El estudiante <strong>${nombreEstudiante}</strong> del curso <strong>${nombreCurso}</strong> ${descripciones[nivel]}.</p>
+
+<p>
+  <strong>Porcentaje actual de ausencias:</strong> ${porcentajeAusencias.toFixed(1)}%<br>
+  <strong>Umbral superado:</strong> ${umbrales[nivel]}
+</p>
+
+<p>Por favor revise el módulo <strong>Asistencia → Informes → Riesgo</strong> para más detalles.</p>
+  `.trim();
 }
 
 async function obtenerOCrearUsuarioSistema(): Promise<{ _id: mongoose.Types.ObjectId }> {
   const EMAIL_SISTEMA = 'sistema@educanexo360.com';
-  const existente = await Usuario.findOne({ email: EMAIL_SISTEMA }).select('_id');
-  if (existente) return existente as any;
-  // SUPER_ADMIN no requiere escuelaId; password es hasheado por el pre-save hook del modelo
-  const nuevo = await Usuario.create({
-    email: EMAIL_SISTEMA,
-    password: `sistema-${Date.now()}-${Math.random().toString(36)}`,
-    nombre: 'Sistema',
-    apellidos: 'EducaNexo360',
-    tipo: 'SUPER_ADMIN',
-    estado: 'ACTIVO',
-  });
-  return nuevo as any;
+  // findOneAndUpdate con upsert atómico — evita race condition cuando varios triggers
+  // corren en paralelo para el mismo registro de asistencia.
+  // Pre-save hook no corre con findOneAndUpdate, por eso hasheamos el password aquí.
+  const sistema = await Usuario.findOneAndUpdate(
+    { email: EMAIL_SISTEMA },
+    {
+      $setOnInsert: {
+        email: EMAIL_SISTEMA,
+        password: await bcrypt.hash(randomUUID(), 10),
+        nombre: 'Sistema',
+        apellidos: 'EducaNexo360',
+        tipo: 'SUPER_ADMIN',
+        estado: 'ACTIVO',
+      },
+    },
+    { upsert: true, new: true, select: '_id' },
+  );
+  return sistema as any;
 }
 
 async function obtenerPeriodoIdVigente(escuelaId: string, periodoId?: string): Promise<string> {
@@ -189,6 +207,8 @@ export async function triggerAlertasAsistencia(
   docenteId: string,
   periodoId?: string,
 ): Promise<void> {
+  console.log('[AlertaAsistencia] trigger iniciando para estudianteId:', estudianteId);
+
   const periodoFinal = await obtenerPeriodoIdVigente(escuelaId, periodoId);
 
   const registros = await Asistencia.find({
@@ -204,12 +224,16 @@ export async function triggerAlertasAsistencia(
   );
 
   const totalDias = entradas.length;
+  console.log('[AlertaAsistencia] registros:', registros.length, '| entradas aplanadas:', totalDias);
+
   if (totalDias === 0) {
+    console.log('[AlertaAsistencia] salida temprana: 0 entradas');
     return;
   }
 
   const diasAusente = entradas.filter((entrada: any) => entrada.estado === EstadoAsistencia.AUSENTE).length;
   const porcentajeAusencias = (diasAusente / totalDias) * 100;
+  console.log('[AlertaAsistencia] ausentes:', diasAusente, '/', totalDias, '=', porcentajeAusencias.toFixed(1) + '%');
 
   const UMBRALES: { nivel: NivelAlertaAsistencia; minPct: number }[] = [
     { nivel: 'INMINENTE', minPct: 30 },
@@ -218,7 +242,10 @@ export async function triggerAlertasAsistencia(
   ];
 
   const umbralesAplicables = UMBRALES.filter((umbral) => porcentajeAusencias >= umbral.minPct);
+  console.log('[AlertaAsistencia] umbrales aplicables:', umbralesAplicables.map(u => u.nivel));
+
   if (umbralesAplicables.length === 0) {
+    console.log('[AlertaAsistencia] salida temprana: porcentaje no supera ningún umbral');
     return;
   }
 
@@ -246,6 +273,7 @@ export async function triggerAlertasAsistencia(
   const nombreCurso = (curso as any)?.nombre ?? '';
 
   for (const umbral of umbralesAplicables) {
+    console.log('[AlertaAsistencia] intentando crear alerta nivel:', umbral.nivel);
     try {
       await AlertaAsistencia.create({
         estudianteId,
@@ -256,6 +284,7 @@ export async function triggerAlertasAsistencia(
         periodoId: periodoFinal,
         notificadosIds: destinatarios.map((destinatario) => destinatario._id),
       });
+      console.log('[AlertaAsistencia] alerta creada:', umbral.nivel);
 
       await enviarNotificacionesAlerta({
         nivel: umbral.nivel,
@@ -270,8 +299,10 @@ export async function triggerAlertasAsistencia(
       });
     } catch (error: any) {
       if (error?.code !== 11000) {
+        console.error('[AlertaAsistencia] error no-11000 en nivel', umbral.nivel, ':', error);
         throw error;
       }
+      console.log('[AlertaAsistencia] alerta nivel', umbral.nivel, 'ya existe (11000) — omitida');
     }
   }
 }
