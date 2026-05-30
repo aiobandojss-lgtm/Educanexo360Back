@@ -258,6 +258,7 @@ class MensajeService {
         etiquetas = [],
         esRespuesta = false,
         mensajeOriginalId = null,
+        esCopiaAcudiente = false,
       } = datos;
 
       // Verificar permisos básicos
@@ -321,6 +322,10 @@ class MensajeService {
         esRespuesta,
         mensajeOriginalId,
         lecturas: [],
+        esCopiaAcudiente,
+        cursoIds: cursoIds
+          .map((id: string) => this.safeObjectId(id))
+          .filter((id: any) => id !== null),
       })) as mongoose.Document & { _id: mongoose.Types.ObjectId };
 
       // 🚀 OPTIMIZACIÓN: Envío de notificaciones en BATCH
@@ -615,6 +620,7 @@ class MensajeService {
         estado: EstadoMensaje.ENVIADO,
         etiquetas: datos.etiquetas || [],
         esRespuesta: false,
+        esCopiaAcudiente: true,
       };
 
       return this.crearMensaje(mensajeAcudientes, usuarioOrigen);
