@@ -659,6 +659,131 @@ class MensajeService {
   }
 
   /**
+   * Estadísticas de mensajes enviados por cada docente en un periodo.
+   * Arranca desde la colección de docentes para incluir los que enviaron 0 mensajes.
+   */
+  async obtenerEstadisticasDocentes(
+    escuelaId: string,
+    params: {
+      desde: string;
+      hasta: string;
+      cursoId?: string;
+      docenteId?: string;
+    },
+  ) {
+    try {
+      const { desde, hasta, cursoId, docenteId } = params;
+
+      const desdeDate = new Date(desde);
+      const hastaDate = new Date(hasta);
+      hastaDate.setUTCHours(23, 59, 59, 999);
+
+      const matchDocentes: any = {
+        tipo: 'DOCENTE',
+        escuelaId: new mongoose.Types.ObjectId(escuelaId),
+        estado: 'ACTIVO',
+      };
+
+      if (docenteId && mongoose.isValidObjectId(docenteId)) {
+        matchDocentes._id = new mongoose.Types.ObjectId(docenteId);
+      }
+
+      if (cursoId && mongoose.isValidObjectId(cursoId)) {
+        matchDocentes['info_academica.asignaturas_asignadas.cursoId'] =
+          new mongoose.Types.ObjectId(cursoId);
+      }
+
+      const pipeline: any[] = [
+        { $match: matchDocentes },
+        {
+          $addFields: {
+            cursosIds: {
+              $setUnion: [
+                {
+                  $map: {
+                    input: { $ifNull: ['$info_academica.asignaturas_asignadas', []] },
+                    as: 'a',
+                    in: '$$a.cursoId',
+                  },
+                },
+                [],
+              ],
+            },
+          },
+        },
+        {
+          $lookup: {
+            from: 'cursos',
+            localField: 'cursosIds',
+            foreignField: '_id',
+            pipeline: [{ $project: { nombre: 1 } }],
+            as: 'cursosInfo',
+          },
+        },
+        {
+          $lookup: {
+            from: 'mensajes',
+            let: { docenteId: '$_id' },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $and: [
+                      { $eq: ['$remitente', '$$docenteId'] },
+                      { $gte: ['$createdAt', desdeDate] },
+                      { $lte: ['$createdAt', hastaDate] },
+                      { $ne: ['$esCopiaAcudiente', true] },
+                      { $ne: ['$tipo', TipoMensaje.BORRADOR] },
+                    ],
+                  },
+                },
+              },
+              { $project: { _id: 1, createdAt: 1 } },
+            ],
+            as: 'mensajes',
+          },
+        },
+        {
+          $project: {
+            docenteId: '$_id',
+            nombre: 1,
+            apellidos: 1,
+            count: { $size: '$mensajes' },
+            ultimoMensaje: {
+              $cond: {
+                if: { $gt: [{ $size: '$mensajes' }, 0] },
+                then: { $max: '$mensajes.createdAt' },
+                else: null,
+              },
+            },
+            cursos: {
+              $map: {
+                input: '$cursosInfo',
+                as: 'c',
+                in: { _id: '$$c._id', nombre: '$$c.nombre' },
+              },
+            },
+          },
+        },
+        { $sort: { count: 1 } },
+      ];
+
+      const docentes = await Usuario.aggregate(pipeline);
+
+      return {
+        data: docentes,
+        meta: {
+          desde: desdeDate.toISOString(),
+          hasta: hastaDate.toISOString(),
+          totalDocentes: docentes.length,
+        },
+      };
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  /**
    * Manejador de errores (sin cambios)
    */
   private handleError(error: any) {
