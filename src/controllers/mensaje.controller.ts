@@ -29,6 +29,8 @@ interface RequestWithUser extends Request {
     nombre: string;
     apellidos: string;
     estado: string;
+    permisos: string[];
+    perfilRolId?: string;
     info_academica?: any;
   };
   files?: Express.Multer.File[];
@@ -2250,6 +2252,7 @@ export class MensajeController {
         matchBandeja.esRemitente = true;
         matchBandeja.estadoUsuario = { $ne: EstadoMensaje.ELIMINADO };
         matchBandeja.tipo = { $ne: TipoMensaje.BORRADOR };
+        matchBandeja.esCopiaAcudiente = { $ne: true };
       } else if (bandeja === 'borradores') {
         // Verificar que el usuario tiene permiso para acceder a borradores
         if (!ROLES_CON_BORRADORES.includes(req.user.tipo)) {
