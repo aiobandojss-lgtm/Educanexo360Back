@@ -784,6 +784,122 @@ class MensajeService {
   }
 
   /**
+   * Lista paginada de mensajes enviados por un docente en un periodo.
+   * Excluye copias automáticas a acudientes y borradores.
+   */
+  async obtenerMensajesAuditoria(
+    escuelaId: string,
+    params: {
+      remitenteId: string;
+      desde: string;
+      hasta: string;
+      pagina?: number;
+      limite?: number;
+    },
+  ) {
+    try {
+      const { remitenteId, desde, hasta, pagina = 1, limite = 20 } = params;
+
+      const desdeDate = new Date(desde);
+      const hastaDate = new Date(hasta);
+      hastaDate.setUTCHours(23, 59, 59, 999);
+      const skip = (pagina - 1) * limite;
+
+      const pipeline: any[] = [
+        {
+          $match: {
+            remitente: new mongoose.Types.ObjectId(remitenteId),
+            escuelaId: new mongoose.Types.ObjectId(escuelaId),
+            createdAt: { $gte: desdeDate, $lte: hastaDate },
+            esCopiaAcudiente: { $ne: true },
+            tipo: { $ne: TipoMensaje.BORRADOR },
+          },
+        },
+        {
+          $lookup: {
+            from: 'usuarios',
+            let: { dests: '$destinatarios' },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $and: [
+                      { $in: ['$_id', '$$dests'] },
+                      { $eq: ['$tipo', 'ESTUDIANTE'] },
+                    ],
+                  },
+                },
+              },
+              { $project: { _id: 1, nombre: 1, apellidos: 1 } },
+            ],
+            as: 'destinatariosEstudiantes',
+          },
+        },
+        {
+          $lookup: {
+            from: 'cursos',
+            localField: 'cursoIds',
+            foreignField: '_id',
+            pipeline: [{ $project: { _id: 1, nombre: 1 } }],
+            as: 'cursosInfo',
+          },
+        },
+        {
+          $project: {
+            asunto: 1,
+            createdAt: 1,
+            tipo: 1,
+            destinatario: {
+              $cond: {
+                if: { $eq: ['$tipo', TipoMensaje.INDIVIDUAL] },
+                then: { $arrayElemAt: ['$destinatariosEstudiantes', 0] },
+                else: '$$REMOVE',
+              },
+            },
+            cursoNombre: {
+              $cond: {
+                if: { $ne: ['$tipo', TipoMensaje.INDIVIDUAL] },
+                then: {
+                  $let: {
+                    vars: { curso: { $arrayElemAt: ['$cursosInfo', 0] } },
+                    in: '$$curso.nombre',
+                  },
+                },
+                else: '$$REMOVE',
+              },
+            },
+            cantidadDestinatariosEstudiantes: {
+              $cond: {
+                if: { $ne: ['$tipo', TipoMensaje.INDIVIDUAL] },
+                then: { $size: '$destinatariosEstudiantes' },
+                else: '$$REMOVE',
+              },
+            },
+          },
+        },
+        { $sort: { createdAt: -1 } },
+        {
+          $facet: {
+            data: [{ $skip: skip }, { $limit: limite }],
+            total: [{ $count: 'count' }],
+          },
+        },
+      ];
+
+      const [result] = await Mensaje.aggregate(pipeline);
+      const total: number = result.total[0]?.count ?? 0;
+      const paginas = Math.ceil(total / limite);
+
+      return {
+        data: result.data,
+        meta: { total, pagina, limite, paginas },
+      };
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  /**
    * Manejador de errores (sin cambios)
    */
   private handleError(error: any) {
