@@ -800,6 +800,10 @@ class MensajeService {
     try {
       const { remitenteId, desde, hasta, pagina = 1, limite = 20 } = params;
 
+      if (!mongoose.isValidObjectId(remitenteId)) {
+        throw new ApiError(400, 'remitenteId inválido');
+      }
+
       const desdeDate = new Date(desde);
       const hastaDate = new Date(hasta);
       hastaDate.setUTCHours(23, 59, 59, 999);
