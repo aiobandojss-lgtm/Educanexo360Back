@@ -145,12 +145,15 @@ const MensajeSchema = new Schema(
       type: Boolean,
       default: false,
     },
-    cursoIds: [
-      {
-        type: Schema.Types.ObjectId,
-        ref: 'Curso',
-      },
-    ],
+    cursoIds: {
+      type: [
+        {
+          type: Schema.Types.ObjectId,
+          ref: 'Curso',
+        },
+      ],
+      default: [],
+    },
   },
   {
     timestamps: true,
