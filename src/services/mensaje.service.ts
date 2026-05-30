@@ -716,7 +716,7 @@ class MensajeService {
             from: 'cursos',
             localField: 'cursosIds',
             foreignField: '_id',
-            pipeline: [{ $project: { nombre: 1 } }],
+            pipeline: [{ $project: { _id: 1, nombre: 1 } }],
             as: 'cursosInfo',
           },
         },
