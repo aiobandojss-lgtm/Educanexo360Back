@@ -170,6 +170,112 @@ router.get('/ultimos', (req: any, res: Response, next: NextFunction) => {
   mensajeController.obtenerUltimos(req, res, next);
 });
 
+/**
+ * @swagger
+ * /api/mensajes/estadisticas-docentes:
+ *   get:
+ *     summary: Estadísticas de mensajes enviados por cada docente en un periodo
+ *     tags: [Mensajes]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: desde
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: Fecha inicio del periodo (ISO 8601)
+ *       - in: query
+ *         name: hasta
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: Fecha fin del periodo (ISO 8601 — se extiende a 23:59:59 UTC)
+ *       - in: query
+ *         name: cursoId
+ *         schema:
+ *           type: string
+ *         description: Filtrar solo docentes de ese curso
+ *       - in: query
+ *         name: docenteId
+ *         schema:
+ *           type: string
+ *         description: Filtrar por un docente específico
+ *     responses:
+ *       200:
+ *         description: Lista de docentes con conteo de mensajes y cursos asignados
+ *       400:
+ *         description: Parámetros desde/hasta faltantes o ID inválido
+ *       401:
+ *         description: No autenticado
+ *       403:
+ *         description: Rol insuficiente (requiere RECTOR, COORDINADOR o ADMIN)
+ */
+router.get(
+  '/estadisticas-docentes',
+  authorize('RECTOR', 'COORDINADOR', 'ADMIN'),
+  (req: any, res: Response, next: NextFunction) => {
+    mensajeController.estadisticasDocentes(req, res, next);
+  },
+);
+
+/**
+ * @swagger
+ * /api/mensajes/auditoria:
+ *   get:
+ *     summary: Lista paginada de mensajes enviados por un docente específico
+ *     tags: [Mensajes]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: remitenteId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: ID del docente a auditar
+ *       - in: query
+ *         name: desde
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *       - in: query
+ *         name: hasta
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *       - in: query
+ *         name: pagina
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limite
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *     responses:
+ *       200:
+ *         description: Mensajes del docente con info de destinatario o curso
+ *       400:
+ *         description: Parámetros requeridos faltantes o remitenteId inválido
+ *       401:
+ *         description: No autenticado
+ *       403:
+ *         description: Rol insuficiente (requiere RECTOR, COORDINADOR o ADMIN)
+ */
+router.get(
+  '/auditoria',
+  authorize('RECTOR', 'COORDINADOR', 'ADMIN'),
+  (req: any, res: Response, next: NextFunction) => {
+    mensajeController.auditoriaDocente(req, res, next);
+  },
+);
+
 router.get('/:id', (req: any, res: Response, next: NextFunction) => {
   mensajeController.obtenerPorId(req, res, next);
 });
