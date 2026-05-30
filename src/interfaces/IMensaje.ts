@@ -68,6 +68,8 @@ export interface IMensajeBase {
   lecturas?: ILectura[];
   eliminadoPorRemitente?: boolean;
   fechaEliminacion?: Date; // Fecha de eliminación (para compatibilidad)
+  esCopiaAcudiente?: boolean;
+  cursoIds?: Types.ObjectId[];
 }
 
 // Interfaz para documentos de Mongoose

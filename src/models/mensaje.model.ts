@@ -141,6 +141,16 @@ const MensajeSchema = new Schema(
       type: Date,
       default: null,
     },
+    esCopiaAcudiente: {
+      type: Boolean,
+      default: false,
+    },
+    cursoIds: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: 'Curso',
+      },
+    ],
   },
   {
     timestamps: true,
