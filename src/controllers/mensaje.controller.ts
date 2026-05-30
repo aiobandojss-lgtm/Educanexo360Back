@@ -3238,6 +3238,84 @@ export class MensajeController {
       next(error);
     }
   }
+
+  async estadisticasDocentes(
+    req: RequestWithUser,
+    res: Response,
+    next: NextFunction,
+  ): Promise<any> {
+    try {
+      if (!req.user) throw new ApiError(401, 'No autorizado');
+
+      const { desde, hasta, cursoId, docenteId } = req.query as {
+        desde?: string;
+        hasta?: string;
+        cursoId?: string;
+        docenteId?: string;
+      };
+
+      if (!desde || !hasta) {
+        throw new ApiError(400, 'Los parámetros desde y hasta son requeridos');
+      }
+
+      if (cursoId && !mongoose.isValidObjectId(cursoId)) {
+        throw new ApiError(400, 'cursoId inválido');
+      }
+
+      if (docenteId && !mongoose.isValidObjectId(docenteId)) {
+        throw new ApiError(400, 'docenteId inválido');
+      }
+
+      const result = await mensajeService.obtenerEstadisticasDocentes(req.user.escuelaId, {
+        desde,
+        hasta,
+        cursoId,
+        docenteId,
+      });
+
+      res.status(200).json({ success: true, ...result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async auditoriaDocente(
+    req: RequestWithUser,
+    res: Response,
+    next: NextFunction,
+  ): Promise<any> {
+    try {
+      if (!req.user) throw new ApiError(401, 'No autorizado');
+
+      const { remitenteId, desde, hasta, pagina, limite } = req.query as {
+        remitenteId?: string;
+        desde?: string;
+        hasta?: string;
+        pagina?: string;
+        limite?: string;
+      };
+
+      if (!remitenteId || !desde || !hasta) {
+        throw new ApiError(400, 'Los parámetros remitenteId, desde y hasta son requeridos');
+      }
+
+      if (!mongoose.isValidObjectId(remitenteId)) {
+        throw new ApiError(400, 'remitenteId inválido');
+      }
+
+      const result = await mensajeService.obtenerMensajesAuditoria(req.user.escuelaId, {
+        remitenteId,
+        desde,
+        hasta,
+        pagina: pagina ? parseInt(pagina, 10) : 1,
+        limite: limite ? parseInt(limite, 10) : 20,
+      });
+
+      res.status(200).json({ success: true, ...result });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 // Exportar una instancia de la clase
