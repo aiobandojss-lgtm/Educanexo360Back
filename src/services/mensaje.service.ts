@@ -699,6 +699,7 @@ class MensajeService {
           $addFields: {
             cursosIds: {
               $setUnion: [
+                { $ifNull: ['$info_academica.cursos', []] },
                 {
                   $map: {
                     input: { $ifNull: ['$info_academica.asignaturas_asignadas', []] },
@@ -706,7 +707,6 @@ class MensajeService {
                     in: '$$a.cursoId',
                   },
                 },
-                [],
               ],
             },
           },
