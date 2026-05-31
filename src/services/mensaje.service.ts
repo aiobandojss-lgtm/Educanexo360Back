@@ -851,6 +851,7 @@ class MensajeService {
         {
           $project: {
             asunto: 1,
+            contenido: 1,
             createdAt: 1,
             tipo: 1,
             destinatario: {
