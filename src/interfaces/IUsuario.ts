@@ -39,9 +39,13 @@ export interface IUsuarioBase {
       cursoId: Types.ObjectId;
     }[];
   };
+  // Campos para RBAC — perfil de rol personalizado por escuela (opcional)
+  rolBase?: string;
+  perfilRolId?: Types.ObjectId;
+
   resetPasswordToken?: string;
   resetPasswordExpires?: Date;
-  
+
   // 🔥 CAMPOS FCM AGREGADOS AQUÍ
   fcmToken?: string;
   platform?: 'ios' | 'android';

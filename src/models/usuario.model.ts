@@ -93,6 +93,16 @@ const UsuarioSchema = new Schema(
       default: null
     },
     
+    // Campos para RBAC — perfil de rol personalizado por escuela (opcional)
+    rolBase: {
+      type: String,
+      enum: ['DOCENTE', 'COORDINADOR', 'RECTOR', 'ADMINISTRATIVO', 'ACUDIENTE', 'ESTUDIANTE'],
+    },
+    perfilRolId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'PerfilRol',
+    },
+
     // Campos para recuperación de contraseña
     resetPasswordToken: String,
     resetPasswordExpires: Date,

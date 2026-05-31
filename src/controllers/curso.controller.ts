@@ -12,6 +12,8 @@ interface RequestWithUser extends Request {
     nombre: string;
     apellidos: string;
     estado: string;
+    permisos: string[];
+    perfilRolId?: string;
   };
 }
 
@@ -62,7 +64,7 @@ class CursoController {
       let cursos;
 
       // Si es ADMIN o RECTOR o COORDINADOR, puede ver todos los cursos
-      if (['ADMIN', 'RECTOR', 'COORDINADOR'].includes(req.user.tipo)) {
+      if (['ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'].includes(req.user.tipo)) {
         cursos = await Curso.find(query)
           .populate(['director_grupo', 'estudiantes'])
           .sort({ nombre: 1 });

@@ -16,6 +16,8 @@ interface RequestWithUser extends Request {
     nombre: string;
     apellidos: string;
     estado: string;
+    permisos: string[];
+    perfilRolId?: string;
   };
 }
 
@@ -201,6 +203,8 @@ export const authController = {
         tipo: req.user.tipo,
         escuelaId: req.user.escuelaId,
         estado: req.user.estado,
+        permisos: req.user.permisos,
+        perfilRolId: req.user.perfilRolId,
       };
 
       // Registrar éxito de verificación para debugging

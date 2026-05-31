@@ -20,6 +20,8 @@ interface IUserInfo {
   nombre: string;
   apellidos: string;
   estado: string;
+  permisos: string[];
+  perfilRolId?: string;
 }
 
 interface RequestWithUser<P = ParamsDictionary, ResBody = any, ReqBody = any, ReqQuery = ParsedQs>

@@ -29,6 +29,23 @@ router.get(
   usuarioController.buscarUsuarios,
 );
 
+// Rutas de listado por tipo — deben ir ANTES de /:id para que Express no las interprete como IDs
+router.get(
+  '/estudiantes',
+  authMiddleware.authorize('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'),
+  cacheMiddleware('usuarios-estudiantes'),
+  (req, _res, next) => { req.query.tipo = 'ESTUDIANTE'; next(); },
+  usuarioController.obtenerUsuarios,
+);
+
+router.get(
+  '/docentes',
+  authMiddleware.authorize('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'),
+  cacheMiddleware('usuarios-docentes'),
+  (req, _res, next) => { req.query.tipo = 'DOCENTE'; next(); },
+  usuarioController.obtenerUsuarios,
+);
+
 // Para obtener un usuario específico, no usamos authorize sino el controlador,
 // que ya verifica si es el propio perfil o si tiene rol administrativo
 router.get('/:id', usuarioController.obtenerUsuario);

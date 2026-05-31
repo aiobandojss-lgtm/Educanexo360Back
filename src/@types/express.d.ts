@@ -8,6 +8,8 @@ declare namespace Express {
       nombre: string;
       apellidos: string;
       estado: string;
+      permisos: string[];
+      perfilRolId?: string;
     };
   }
 }

@@ -8,18 +8,13 @@ interface AuthenticatedRequest extends Request {
   user?: {
     _id: string;
     escuelaId: string;
-    tipo:
-      | 'ADMIN'
-      | 'DOCENTE'
-      | 'ESTUDIANTE'
-      | 'PADRE'
-      | 'RECTOR'
-      | 'COORDINADOR'
-      | 'ADMINISTRATIVO';
+    tipo: string;
     email: string;
     nombre: string;
     apellidos: string;
     estado: string;
+    permisos: string[];
+    perfilRolId?: string;
     [key: string]: any;
   };
 }

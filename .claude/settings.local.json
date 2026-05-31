@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc -l /c/Proyectos_personales/EducaNexo360/educanexo360-backend/src/models/*.ts)"
+    ]
+  }
+}

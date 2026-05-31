@@ -14,6 +14,8 @@ interface RequestWithUser extends Request {
     nombre: string;
     apellidos: string;
     estado: string;
+    permisos: string[];
+    perfilRolId?: string;
   };
 }
 

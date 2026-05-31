@@ -14,6 +14,8 @@ interface RequestWithUser extends Request {
     nombre: string;
     apellidos: string;
     estado: string;
+    permisos: string[];
+    perfilRolId?: string;
   };
 }
 
@@ -26,12 +28,14 @@ interface JwtPayload {
 
 interface MongooseUser extends mongoose.Document {
   _id: mongoose.Types.ObjectId;
-  escuelaId?: mongoose.Types.ObjectId; // Hecho opcional para SUPER_ADMIN
+  escuelaId?: mongoose.Types.ObjectId;
   email: string;
   tipo: string;
   nombre: string;
   apellidos: string;
   estado: string;
+  permisos: string[];
+  perfilRolId?: mongoose.Types.ObjectId;
 }
 
 export const authenticate = async (req: RequestWithUser, _res: Response, next: NextFunction) => {
@@ -66,22 +70,26 @@ export const authenticate = async (req: RequestWithUser, _res: Response, next: N
     if (user.tipo === 'SUPER_ADMIN' && !user.escuelaId) {
       req.user = {
         _id: user._id.toString(),
-        escuelaId: '', // String vacío para mantener la compatibilidad con la interfaz
+        escuelaId: '',
         tipo: user.tipo,
         email: user.email,
         nombre: user.nombre,
         apellidos: user.apellidos,
         estado: user.estado,
+        permisos: user.permisos ?? [],
+        perfilRolId: user.perfilRolId?.toString(),
       };
     } else {
       req.user = {
         _id: user._id.toString(),
-        escuelaId: user.escuelaId ? user.escuelaId.toString() : '', // Protección adicional
+        escuelaId: user.escuelaId ? user.escuelaId.toString() : '',
         tipo: user.tipo,
         email: user.email,
         nombre: user.nombre,
         apellidos: user.apellidos,
         estado: user.estado,
+        permisos: user.permisos ?? [],
+        perfilRolId: user.perfilRolId?.toString(),
       };
     }
 
@@ -163,26 +171,29 @@ export const authenticateDownload = async (
     }
 
     // Asignar el usuario al request
-    // Manejar caso especial para SUPER_ADMIN que puede no tener escuelaId
     if (user.tipo === 'SUPER_ADMIN' && !user.escuelaId) {
       req.user = {
         _id: user._id.toString(),
-        escuelaId: '', // String vacío para mantener la compatibilidad con la interfaz
+        escuelaId: '',
         tipo: user.tipo,
         email: user.email,
         nombre: user.nombre,
         apellidos: user.apellidos,
         estado: user.estado,
+        permisos: user.permisos ?? [],
+        perfilRolId: user.perfilRolId?.toString(),
       };
     } else {
       req.user = {
         _id: user._id.toString(),
-        escuelaId: user.escuelaId ? user.escuelaId.toString() : '', // Protección adicional
+        escuelaId: user.escuelaId ? user.escuelaId.toString() : '',
         tipo: user.tipo,
         email: user.email,
         nombre: user.nombre,
         apellidos: user.apellidos,
         estado: user.estado,
+        permisos: user.permisos ?? [],
+        perfilRolId: user.perfilRolId?.toString(),
       };
     }
 
@@ -191,6 +202,36 @@ export const authenticateDownload = async (
     // Si el token es inválido o ha expirado
     next(new ApiError(401, 'No autorizado: Token inválido o expirado'));
   }
+};
+
+/**
+ * Middleware de enforcement de permisos granulares (RBAC Fase 1).
+ *
+ * Comportamiento:
+ * - Si el usuario NO tiene perfilRolId → pasa sin restricción (rol base puro, authorize() ya lo controló)
+ * - Si el usuario SÍ tiene perfilRolId → verifica que su array permisos[] contenga el permiso requerido
+ *
+ * Uso (se agrega DESPUÉS de authorize(), no lo reemplaza):
+ *   router.get('/ruta', authorize('DOCENTE', 'ADMIN'), requirePermission('calificaciones.ver'), handler)
+ */
+export const requirePermission = (permiso: string) => {
+  return (req: RequestWithUser, _res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return next(new ApiError(401, 'No autorizado - Usuario no autenticado'));
+    }
+
+    // Si no tiene perfil personalizado, el authorize() ya validó — dejar pasar
+    if (!req.user.perfilRolId) {
+      return next();
+    }
+
+    // Tiene perfil personalizado: verificar permiso específico
+    if (!req.user.permisos.includes(permiso)) {
+      return next(new ApiError(403, `Prohibido - Permiso requerido: ${permiso}`));
+    }
+
+    next();
+  };
 };
 
 // Middleware específico para verificar si un usuario puede ver cualquier perfil

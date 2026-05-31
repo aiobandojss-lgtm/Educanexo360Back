@@ -25,6 +25,7 @@ import {
 import calendarioRoutes from './routes/calendario.routes';
 import anuncioRoutes from './routes/anuncio.routes';
 import asistenciaRoutes from './routes/asistencia.routes';
+import asistenciaInformesRoutes from './routes/asistenciaInformes.routes';
 import systemRoutes from './routes/system.routes';
 import superadminRoutes from './routes/superadmin.routes';
 
@@ -34,8 +35,9 @@ import registroRoutes from './routes/registro.routes';
 import publicRoutes from './routes/public.routes';
 import estudianteRoutes from './routes/estudiante.routes';
 import cacheRoutes from './routes/cache.routes';
-import dashboardRoutes from './routes/dashboard.routes'; 
+import dashboardRoutes from './routes/dashboard.routes';
 import tareaRoutes from './routes/tarea.routes';
+import perfilRolRoutes from './routes/perfilRol.routes';
 
 // Configuración de variables de entorno
 dotenv.config();
@@ -120,6 +122,7 @@ apiRouter.use('/notificaciones', notificacionRoutes);
 apiRouter.use('/calendario', calendarioRoutes);
 apiRouter.use('/anuncios', anuncioRoutes);
 apiRouter.use('/asistencia', asistenciaRoutes);
+apiRouter.use('/asistencia/informes', asistenciaInformesRoutes);
 apiRouter.use('/system', systemRoutes);
 apiRouter.use('/superadmin', superadminRoutes);
 
@@ -129,6 +132,7 @@ apiRouter.use('/registro', rateLimiter(60000, 10), registroRoutes);       // 10 
 apiRouter.use('/public', publicRoutes);
 apiRouter.use('/estudiantes', estudianteRoutes);
 apiRouter.use('/cache', cacheRoutes);
+apiRouter.use('/perfiles-rol', perfilRolRoutes);
 
 app.use(`${basePath}/api/tareas`, rateLimiter(60000, 60), tareaRoutes); // 60 req/min — tiene uploads
 
