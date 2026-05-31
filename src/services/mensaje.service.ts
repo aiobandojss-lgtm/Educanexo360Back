@@ -734,6 +734,7 @@ class MensajeService {
                       { $lte: ['$createdAt', hastaDate] },
                       { $ne: ['$esCopiaAcudiente', true] },
                       { $ne: ['$tipo', TipoMensaje.BORRADOR] },
+                      { $not: [{ $regexMatch: { input: '$asunto', regex: /^\[COPIA\]/i } }] },
                     ],
                   },
                 },
@@ -817,6 +818,7 @@ class MensajeService {
             createdAt: { $gte: desdeDate, $lte: hastaDate },
             esCopiaAcudiente: { $ne: true },
             tipo: { $ne: TipoMensaje.BORRADOR },
+            asunto: { $not: /^\[COPIA\]/i },
           },
         },
         {
