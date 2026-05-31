@@ -849,6 +849,22 @@ class MensajeService {
           },
         },
         {
+          $lookup: {
+            from: 'cursos',
+            let: { estudianteId: { $arrayElemAt: ['$destinatariosEstudiantes._id', 0] } },
+            pipeline: [
+              {
+                $match: {
+                  $expr: { $in: ['$$estudianteId', '$estudiantes'] },
+                },
+              },
+              { $project: { _id: 1, nombre: 1 } },
+              { $limit: 1 },
+            ],
+            as: 'cursoEstudianteInfo',
+          },
+        },
+        {
           $project: {
             asunto: 1,
             contenido: 1,
@@ -859,6 +875,13 @@ class MensajeService {
                 if: { $eq: ['$tipo', TipoMensaje.INDIVIDUAL] },
                 then: { $arrayElemAt: ['$destinatariosEstudiantes', 0] },
                 else: '$$REMOVE',
+              },
+            },
+            cursoEstudiante: {
+              $cond: {
+                if: { $eq: ['$tipo', TipoMensaje.INDIVIDUAL] },
+                then: { $arrayElemAt: ['$cursoEstudianteInfo', 0] },
+                else: null,
               },
             },
             cursoNombre: {
