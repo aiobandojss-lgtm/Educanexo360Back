@@ -696,6 +696,17 @@ class MensajeService {
       const pipeline: any[] = [
         { $match: matchDocentes },
         {
+          $lookup: {
+            from: 'asignaturas',
+            let: { docenteId: '$_id' },
+            pipeline: [
+              { $match: { $expr: { $eq: ['$docenteId', '$$docenteId'] } } },
+              { $project: { cursoId: 1, _id: 0 } },
+            ],
+            as: 'asignaturasDocente',
+          },
+        },
+        {
           $addFields: {
             cursosIds: {
               $setUnion: [
@@ -703,6 +714,13 @@ class MensajeService {
                 {
                   $map: {
                     input: { $ifNull: ['$info_academica.asignaturas_asignadas', []] },
+                    as: 'a',
+                    in: '$$a.cursoId',
+                  },
+                },
+                {
+                  $map: {
+                    input: { $ifNull: ['$asignaturasDocente', []] },
                     as: 'a',
                     in: '$$a.cursoId',
                   },
