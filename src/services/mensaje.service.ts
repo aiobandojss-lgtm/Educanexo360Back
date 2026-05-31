@@ -905,7 +905,18 @@ class MensajeService {
             },
           },
         },
-        { $sort: { createdAt: -1 } },
+        {
+          $addFields: {
+            cursoParaOrden: {
+              $cond: {
+                if: { $eq: ['$tipo', TipoMensaje.INDIVIDUAL] },
+                then: { $ifNull: [{ $arrayElemAt: ['$cursoEstudianteInfo.nombre', 0] }, 'ZZZ'] },
+                else: { $ifNull: ['$cursoNombre', 'ZZZ'] },
+              },
+            },
+          },
+        },
+        { $sort: { cursoParaOrden: 1, createdAt: -1 } },
         {
           $facet: {
             data: [{ $skip: skip }, { $limit: limite }],
