@@ -611,6 +611,57 @@ class MensajeService {
                     },
                 },
                 {
+                    $lookup: {
+                        from: 'mensajes',
+                        let: { docenteId: '$_id' },
+                        pipeline: [
+                            {
+                                $match: {
+                                    $expr: {
+                                        $and: [
+                                            { $eq: ['$remitente', '$$docenteId'] },
+                                            { $gte: ['$createdAt', desdeDate] },
+                                            { $lte: ['$createdAt', hastaDate] },
+                                            { $eq: ['$tipo', IMensaje_1.TipoMensaje.INDIVIDUAL] },
+                                            { $ne: ['$esCopiaAcudiente', true] },
+                                        ],
+                                    },
+                                },
+                            },
+                            { $unwind: '$destinatarios' },
+                            { $group: { _id: '$destinatarios' } },
+                        ],
+                        as: 'estudiantesContactados',
+                    },
+                },
+                {
+                    $lookup: {
+                        from: 'cursos',
+                        let: { studentIds: '$estudiantesContactados._id' },
+                        pipeline: [
+                            {
+                                $match: {
+                                    $expr: {
+                                        $gt: [
+                                            {
+                                                $size: {
+                                                    $ifNull: [
+                                                        { $setIntersection: ['$estudiantes', '$$studentIds'] },
+                                                        [],
+                                                    ],
+                                                },
+                                            },
+                                            0,
+                                        ],
+                                    },
+                                },
+                            },
+                            { $project: { _id: 1 } },
+                        ],
+                        as: 'cursosDeEstudiantesContactados',
+                    },
+                },
+                {
                     $addFields: {
                         cursosIds: {
                             $setUnion: [
@@ -639,6 +690,13 @@ class MensajeService {
                                                 { $ifNull: ['$$this.cursoIds', []] },
                                             ],
                                         },
+                                    },
+                                },
+                                {
+                                    $map: {
+                                        input: { $ifNull: ['$cursosDeEstudiantesContactados', []] },
+                                        as: 'c',
+                                        in: '$$c._id',
                                     },
                                 },
                             ],
