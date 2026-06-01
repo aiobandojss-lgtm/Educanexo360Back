@@ -708,7 +708,14 @@ class MensajeService {
                         from: 'cursos',
                         localField: 'cursosIds',
                         foreignField: '_id',
-                        pipeline: [{ $project: { _id: 1, nombre: 1 } }],
+                        pipeline: [
+                            {
+                                $match: {
+                                    $expr: { $gt: [{ $size: { $ifNull: ['$estudiantes', []] } }, 0] },
+                                },
+                            },
+                            { $project: { _id: 1, nombre: 1, grupo: 1 } },
+                        ],
                         as: 'cursosInfo',
                     },
                 },
@@ -753,7 +760,7 @@ class MensajeService {
                             $map: {
                                 input: '$cursosInfo',
                                 as: 'c',
-                                in: { _id: '$$c._id', nombre: '$$c.nombre' },
+                                in: { _id: '$$c._id', nombre: '$$c.nombre', grupo: '$$c.grupo' },
                             },
                         },
                     },
