@@ -707,6 +707,30 @@ class MensajeService {
           },
         },
         {
+          $lookup: {
+            from: 'mensajes',
+            let: { docenteId: '$_id' },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $and: [
+                      { $eq: ['$remitente', '$$docenteId'] },
+                      { $gte: ['$createdAt', desdeDate] },
+                      { $lte: ['$createdAt', hastaDate] },
+                      { $ne: ['$tipo', TipoMensaje.INDIVIDUAL] },
+                      { $ne: ['$tipo', TipoMensaje.BORRADOR] },
+                      { $ne: ['$esCopiaAcudiente', true] },
+                    ],
+                  },
+                },
+              },
+              { $project: { cursoIds: 1, _id: 0 } },
+            ],
+            as: 'mensajesMasivosEnPeriodo',
+          },
+        },
+        {
           $addFields: {
             cursosIds: {
               $setUnion: [
@@ -723,6 +747,18 @@ class MensajeService {
                     input: { $ifNull: ['$asignaturasDocente', []] },
                     as: 'a',
                     in: '$$a.cursoId',
+                  },
+                },
+                {
+                  $reduce: {
+                    input: { $ifNull: ['$mensajesMasivosEnPeriodo', []] },
+                    initialValue: [],
+                    in: {
+                      $concatArrays: [
+                        '$$value',
+                        { $ifNull: ['$$this.cursoIds', []] },
+                      ],
+                    },
                   },
                 },
               ],
@@ -909,7 +945,14 @@ class MensajeService {
                 if: { $ne: ['$tipo', TipoMensaje.INDIVIDUAL] },
                 then: {
                   $let: {
-                    vars: { curso: { $arrayElemAt: ['$cursosInfo', 0] } },
+                    vars: {
+                      curso: {
+                        $ifNull: [
+                          { $arrayElemAt: ['$cursosInfo', 0] },
+                          { $arrayElemAt: ['$cursoEstudianteInfo', 0] },
+                        ],
+                      },
+                    },
                     in: '$$curso.nombre',
                   },
                 },
