@@ -10,6 +10,7 @@ import gridfsManager from '../config/gridfs';
 import fs from 'fs';
 import path from 'path';
 import { EstadoEvento } from '../interfaces/ICalendario';
+import pushNotificationService from '../services/pushNotification.service';
 
 interface RequestWithUser extends Request {
   user?: {
@@ -120,6 +121,28 @@ class CalendarioController {
         success: true,
         data: eventoPopulado,
       });
+
+      // Notificar a todos los usuarios de la escuela (fire-and-forget)
+      const escuelaId = req.user!.escuelaId;
+      const titulo = (eventoData as any).titulo || 'Nuevo evento';
+      const fechaStr = eventoData.fechaInicio
+        ? new Date(eventoData.fechaInicio).toLocaleDateString('es-CO')
+        : '';
+
+      Usuario.find(
+        { escuelaId, fcmToken: { $exists: true, $ne: null } },
+        { fcmToken: 1 }
+      ).then((usuarios: any[]) => {
+        const tokens = usuarios.map((u) => u.fcmToken).filter(Boolean);
+        if (tokens.length > 0) {
+          pushNotificationService.enviarNotificacionMasiva({
+            tokens,
+            titulo: `Nuevo evento: ${titulo}`,
+            mensaje: fechaStr ? `Fecha: ${fechaStr}` : 'Se ha creado un nuevo evento en el calendario',
+            data: { tipo: 'evento', eventoId: (evento._id as any).toString() },
+          }).catch(() => {/* silencioso */});
+        }
+      }).catch(() => {/* silencioso */});
     } catch (error) {
       next(error);
     }

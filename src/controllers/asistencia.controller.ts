@@ -6,6 +6,7 @@ import Asistencia from '../models/asistencia.model';
 import Usuario from '../models/usuario.model';
 import Curso from '../models/curso.model';
 import ApiError from '../utils/ApiError';
+import pushNotificationService from '../services/pushNotification.service';
 import {
   IEstadisticasAsistencia,
   IEstadisticasEstudiante,
@@ -343,6 +344,38 @@ export const actualizarAsistencia = async (
 
     // Guardar los cambios
     await asistencia.save();
+
+    // Notificar acudientes de ausentes (fire-and-forget, antes del return para que ejecute)
+    if (estudiantes && Array.isArray(estudiantes)) {
+      const ausentes = estudiantes.filter((est: any) => est.estado === 'AUSENTE');
+      if (ausentes.length > 0) {
+        const ausentesIds = ausentes.map((est: any) => est.estudianteId);
+        const asignaturaNombre = (asistencia.asignaturaId as any)?.nombre || 'clase';
+
+        (async () => {
+          for (const estudianteId of ausentesIds) {
+            try {
+              const estudiante = await Usuario.findById(estudianteId).select('nombre apellidos').lean() as any;
+              if (!estudiante) continue;
+
+              const acudientes = await Usuario.find(
+                { estudiantesAsociados: estudianteId, fcmToken: { $exists: true, $ne: null } },
+                { fcmToken: 1 }
+              ).lean() as any[];
+
+              for (const acudiente of acudientes) {
+                pushNotificationService.enviarNotificacion({
+                  token: acudiente.fcmToken,
+                  titulo: 'Ausencia registrada',
+                  mensaje: `${estudiante.nombre} ${estudiante.apellidos} fue marcado ausente en ${asignaturaNombre}`,
+                  data: { tipo: 'ausencia', estudianteId: estudianteId.toString() },
+                }).catch(() => {});
+              }
+            } catch {/* silencioso */}
+          }
+        })();
+      }
+    }
 
     return res.status(200).json({
       success: true,

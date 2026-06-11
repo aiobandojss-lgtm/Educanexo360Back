@@ -8,6 +8,7 @@ import ApiError from '../utils/ApiError';
 import { GridFSBucket } from 'mongodb';
 import * as fs from 'fs';
 import { escapeRegex } from '../utils/escapeRegex';
+import pushNotificationService from '../services/pushNotification.service';
 
 interface RequestWithUser extends Request {
   user?: {
@@ -116,6 +117,27 @@ class TareaController {
         data: nuevaTarea,
         message: 'Tarea creada exitosamente',
       });
+
+      // Notificar a los estudiantes asignados (fire-and-forget, no bloquea la respuesta)
+      if (estudiantesParaAsignar.length > 0) {
+        Usuario.find(
+          { _id: { $in: estudiantesParaAsignar }, fcmToken: { $exists: true, $ne: null } },
+          { fcmToken: 1 }
+        ).then((estudiantes: any[]) => {
+          const tokens = estudiantes.map((e) => e.fcmToken).filter(Boolean);
+          if (tokens.length > 0) {
+            const fechaStr = nuevaTarea.fechaLimite
+              ? new Date(nuevaTarea.fechaLimite).toLocaleDateString('es-CO')
+              : '';
+            pushNotificationService.enviarNotificacionMasiva({
+              tokens,
+              titulo: `Nueva tarea: ${nuevaTarea.titulo}`,
+              mensaje: `${req.user!.nombre} asignó una nueva tarea${fechaStr ? `. Vence: ${fechaStr}` : ''}`,
+              data: { tipo: 'tarea', tareaId: (nuevaTarea._id as any).toString() },
+            }).catch(() => {/* silencioso */});
+          }
+        }).catch(() => {/* silencioso */});
+      }
     } catch (error) {
       next(error);
     }

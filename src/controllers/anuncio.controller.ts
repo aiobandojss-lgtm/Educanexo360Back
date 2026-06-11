@@ -1,10 +1,12 @@
 import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import Anuncio from '../models/anuncio.model';
+import Usuario from '../models/usuario.model';
 import ApiError from '../utils/ApiError';
 import { GridFSBucket } from 'mongodb';
 import * as fs from 'fs';
 import { escapeRegex } from '../utils/escapeRegex';
+import pushNotificationService from '../services/pushNotification.service';
 
 interface RequestWithUser extends Request {
   user?: {
@@ -263,6 +265,28 @@ class AnuncioController {
         data: anuncio,
         message: 'Anuncio publicado exitosamente',
       });
+
+      // Notificar destinatarios (fire-and-forget)
+      const rolesDestino: string[] = [];
+      if ((anuncio as any).paraPadres) rolesDestino.push('ACUDIENTE');
+      if ((anuncio as any).paraDocentes) rolesDestino.push('DOCENTE');
+      if ((anuncio as any).paraEstudiantes) rolesDestino.push('ESTUDIANTE');
+      if (rolesDestino.length === 0) rolesDestino.push('ACUDIENTE', 'DOCENTE', 'ESTUDIANTE');
+
+      Usuario.find(
+        { escuelaId: req.user.escuelaId, tipo: { $in: rolesDestino }, fcmToken: { $exists: true, $ne: null } },
+        { fcmToken: 1 }
+      ).then((usuarios: any[]) => {
+        const tokens = usuarios.map((u) => u.fcmToken).filter(Boolean);
+        if (tokens.length > 0) {
+          pushNotificationService.enviarNotificacionMasiva({
+            tokens,
+            titulo: `Nuevo comunicado: ${anuncio.titulo}`,
+            mensaje: 'Se ha publicado un nuevo comunicado en EducaNexo360',
+            data: { tipo: 'anuncio', anuncioId: (anuncio._id as any).toString() },
+          }).catch(() => {/* silencioso */});
+        }
+      }).catch(() => {/* silencioso */});
     } catch (error) {
       next(error);
     }
