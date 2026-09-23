@@ -3,6 +3,8 @@ import Usuario from '../models/usuario.model';
 import Curso from '../models/curso.model';
 import ApiError from '../utils/ApiError';
 import { escapeRegex } from '../utils/escapeRegex';
+import notificacionService from '../services/notificacion.service';
+import { TipoNotificacion } from '../interfaces/INotificacion';
 
 // Extender el tipo Request para incluir el usuario
 interface RequestWithUser extends Request {
@@ -282,6 +284,91 @@ class UsuarioController {
       res.json({
         success: true,
         message: 'Contraseña actualizada exitosamente',
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Solicitud de eliminación de cuenta (autoservicio desde la app móvil).
+   * Requisito de Apple/Google: el usuario debe poder iniciar la eliminación
+   * de su propia cuenta desde dentro de la app.
+   *
+   * Flujo: confirma identidad con la contraseña, desactiva la cuenta de
+   * inmediato (bloquea el login), registra la solicitud y notifica a los
+   * administradores de la escuela para que procesen el borrado definitivo
+   * (los registros académicos pertenecen a la institución).
+   */
+  async solicitarEliminacionCuenta(req: RequestWithUser, res: Response, next: NextFunction) {
+    try {
+      if (!req.user) {
+        throw new ApiError(401, 'No autorizado');
+      }
+
+      const { password, motivo } = req.body;
+
+      if (!password) {
+        throw new ApiError(400, 'La contraseña es requerida para eliminar la cuenta');
+      }
+
+      // El usuario solo puede eliminar su PROPIA cuenta
+      const usuario = await Usuario.findOne({
+        _id: req.user._id,
+        escuelaId: req.user.escuelaId,
+      });
+
+      if (!usuario) {
+        throw new ApiError(404, 'Usuario no encontrado');
+      }
+
+      // Confirmar identidad con la contraseña
+      const isPasswordMatch = await usuario.compararPassword(password);
+      if (!isPasswordMatch) {
+        throw new ApiError(400, 'La contraseña es incorrecta');
+      }
+
+      // Desactivar de inmediato (bloquea el login), limpiar token push
+      // y registrar la solicitud de eliminación
+      usuario.estado = 'INACTIVO';
+      usuario.set('fcmToken', null);
+      usuario.set('eliminacionCuenta', {
+        solicitada: true,
+        fecha: new Date(),
+        motivo: motivo || undefined,
+      });
+      await usuario.save();
+
+      // Notificar a los administradores de la escuela (no bloquea la solicitud)
+      try {
+        const admins = await Usuario.find({
+          escuelaId: req.user.escuelaId,
+          tipo: { $in: ['ADMIN', 'RECTOR', 'COORDINADOR'] },
+          estado: 'ACTIVO',
+        }).select('_id');
+
+        if (admins.length > 0) {
+          await notificacionService.crearNotificacionMasiva({
+            usuarioIds: admins.map((a) => String(a._id)),
+            titulo: 'Solicitud de eliminación de cuenta',
+            mensaje: `${usuario.nombre} ${usuario.apellidos} (${usuario.email}) solicitó eliminar su cuenta y fue desactivado.${
+              motivo ? ` Motivo: ${motivo}` : ''
+            }`,
+            tipo: TipoNotificacion.SISTEMA,
+            escuelaId: req.user.escuelaId,
+            entidadId: String(usuario._id),
+            entidadTipo: 'Usuario',
+            enviarEmail: true,
+          });
+        }
+      } catch (notifError) {
+        console.error('Error notificando solicitud de eliminación a admins:', notifError);
+      }
+
+      res.json({
+        success: true,
+        message:
+          'Solicitud de eliminación registrada. Tu cuenta ha sido desactivada y será eliminada por el colegio.',
       });
     } catch (error) {
       next(error);

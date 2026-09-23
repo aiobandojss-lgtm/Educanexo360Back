@@ -10,3 +10,7 @@ yarn-error.log*
 coverage/
 .vscode/
 .idea/.worktrees/
+
+# Scripts seed con credenciales demo (no versionar)
+src/scripts/seed-reviewers*.ts
+src/scripts/seed-reviewers*.js

@@ -15,6 +15,7 @@
     "lint:fix": "eslint \"src/**/*.ts\" --fix",
     "format": "prettier --write \"src/**/*.ts\"",
     "check-types": "tsc --noEmit",
+    "seed:reviewers": "ts-node --transpile-only src/scripts/seed-reviewers.ts",
     "test:mensajeria": "node src/tests/mensajeria/test-mensajes-endpoints.mjs",
     "type": "commonjs",
     "postinstall": "npm run build"

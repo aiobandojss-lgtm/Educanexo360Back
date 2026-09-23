@@ -14,6 +14,11 @@ const router = express.Router();
 // Rutas protegidas - requieren autenticación
 router.use(authMiddleware.authenticate);
 
+// Autoservicio: cualquier usuario autenticado puede solicitar la eliminación
+// de su PROPIA cuenta (requisito de Play Store / App Store).
+// Debe ir ANTES de las rutas con /:id para no interpretarse como un ID.
+router.post('/eliminar-cuenta', usuarioController.solicitarEliminacionCuenta);
+
 // Rutas para administradores y roles administrativos (RECTOR y COORDINADOR incluidos)
 router.get(
   '/',

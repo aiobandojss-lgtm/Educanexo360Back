@@ -46,6 +46,13 @@ export interface IUsuarioBase {
   resetPasswordToken?: string;
   resetPasswordExpires?: Date;
 
+  // Solicitud de eliminación de cuenta (autoservicio desde la app móvil)
+  eliminacionCuenta?: {
+    solicitada: boolean;
+    fecha?: Date;
+    motivo?: string;
+  };
+
   // 🔥 CAMPOS FCM AGREGADOS AQUÍ
   fcmToken?: string;
   platform?: 'ios' | 'android';

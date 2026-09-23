@@ -106,6 +106,13 @@ const UsuarioSchema = new Schema(
     // Campos para recuperación de contraseña
     resetPasswordToken: String,
     resetPasswordExpires: Date,
+
+    // Solicitud de eliminación de cuenta (autoservicio desde la app móvil)
+    eliminacionCuenta: {
+      solicitada: { type: Boolean, default: false },
+      fecha: Date,
+      motivo: String,
+    },
   },
   { timestamps: true },
 );
