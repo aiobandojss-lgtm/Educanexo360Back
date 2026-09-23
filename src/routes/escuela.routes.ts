@@ -21,12 +21,13 @@ const obtenerEscuelaPorId: RequestHandler = (req, res, next) => {
 router.use(authenticate);
 
 // Rutas básicas CRUD
-router.post('/', authorize('ADMIN'), validate(crearEscuelaValidation), escuelaController.crear);
+// Crear escuelas: solo SUPER_ADMIN
+router.post('/', authorize('SUPER_ADMIN'), validate(crearEscuelaValidation), escuelaController.crear);
 
-// Permitir acceso a roles administrativos para obtener lista de escuelas
+// Listar escuelas: SUPER_ADMIN ve todas; los roles administrativos solo reciben la suya
 router.get(
   '/',
-  authorize('ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'),
+  authorize('ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO', 'SUPER_ADMIN'),
   escuelaController.obtener,
 );
 
@@ -42,30 +43,33 @@ router.get(
     'RECTOR',
     'COORDINADOR',
     'ADMINISTRATIVO',
+    'SUPER_ADMIN',
   ),
   obtenerEscuelaPorId,
 );
 
+// Actualizar: el controlador verifica que sea la escuela del usuario (o SUPER_ADMIN)
 router.put(
   '/:id',
-  authorize('ADMIN', 'RECTOR'),
+  authorize('ADMIN', 'RECTOR', 'SUPER_ADMIN'),
   validate(actualizarEscuelaValidation),
   escuelaController.actualizar,
 );
 
-router.delete('/:id', authorize('ADMIN'), escuelaController.eliminar);
+// Desactivar escuelas: solo SUPER_ADMIN
+router.delete('/:id', authorize('SUPER_ADMIN'), escuelaController.eliminar);
 
-// Rutas para configuración y períodos
+// Rutas para configuración y períodos (solo sobre la escuela propia, o SUPER_ADMIN)
 router.put(
   '/:id/configuracion',
-  authorize('ADMIN', 'RECTOR'),
+  authorize('ADMIN', 'RECTOR', 'SUPER_ADMIN'),
   validate(actualizarConfiguracionValidation),
   escuelaController.actualizarConfiguracion,
 );
 
 router.put(
   '/:id/periodos',
-  authorize('ADMIN', 'RECTOR', 'COORDINADOR'),
+  authorize('ADMIN', 'RECTOR', 'COORDINADOR', 'SUPER_ADMIN'),
   validate(actualizarPeriodosValidation),
   escuelaController.actualizarPeriodosAcademicos,
 );

@@ -31,6 +31,20 @@ interface EscuelaDocument {
   [key: string]: any; // Para otras propiedades que pueda tener
 }
 
+// Verifica que el usuario opere sobre su propia escuela (SUPER_ADMIN puede operar sobre cualquiera)
+const verificarAccesoEscuela = (req: Request, escuelaId: string): void => {
+  const currentUser = (req as RequestWithUser).user;
+  if (!currentUser) {
+    throw new ApiError(401, 'No autorizado');
+  }
+  if (currentUser.tipo === 'SUPER_ADMIN') {
+    return;
+  }
+  if (!currentUser.escuelaId || String(currentUser.escuelaId) !== String(escuelaId)) {
+    throw new ApiError(403, 'No tienes permiso sobre esta escuela');
+  }
+};
+
 class EscuelaController {
   async crear(req: Request, res: Response, next: NextFunction) {
     try {
@@ -46,7 +60,19 @@ class EscuelaController {
 
   async obtener(req: Request, res: Response, next: NextFunction) {
     try {
-      const escuelas = await Escuela.find();
+      const currentUser = (req as RequestWithUser).user;
+      if (!currentUser) {
+        throw new ApiError(401, 'No autorizado');
+      }
+
+      // SUPER_ADMIN ve todas; los demás solo su propia escuela (se mantiene la forma de lista)
+      let escuelas: unknown[] = [];
+      if (currentUser.tipo === 'SUPER_ADMIN') {
+        escuelas = await Escuela.find();
+      } else if (currentUser.escuelaId) {
+        escuelas = await Escuela.find({ _id: currentUser.escuelaId });
+      }
+
       res.json({
         success: true,
         data: escuelas,
@@ -78,14 +104,14 @@ class EscuelaController {
       const escuelaIdStr = String(escuela._id);
       const userEscuelaIdStr = String(currentUser.escuelaId);
 
-      // Verificar que el usuario solo pueda ver su propia escuela
-      if (userEscuelaIdStr !== escuelaIdStr && currentUser.tipo !== 'ADMIN') {
+      // Verificar que el usuario solo pueda ver su propia escuela (SUPER_ADMIN puede ver cualquiera)
+      if (userEscuelaIdStr !== escuelaIdStr && currentUser.tipo !== 'SUPER_ADMIN') {
         throw new ApiError(403, 'No tienes permiso para ver esta escuela');
         return;
       }
 
       // Para administradores, devolver la información completa
-      if (currentUser.tipo === 'ADMIN') {
+      if (currentUser.tipo === 'ADMIN' || currentUser.tipo === 'SUPER_ADMIN') {
         res.json({
           success: true,
           data: escuela,
@@ -120,7 +146,18 @@ class EscuelaController {
 
   async actualizar(req: Request, res: Response, next: NextFunction) {
     try {
-      const escuela = await Escuela.findByIdAndUpdate(req.params.id, req.body, {
+      verificarAccesoEscuela(req, req.params.id);
+
+      // Lista blanca de campos editables; estado y codigo solo los cambia SUPER_ADMIN
+      const esSuperAdmin = (req as RequestWithUser).user?.tipo === 'SUPER_ADMIN';
+      const { nombre, direccion, telefono, email, estado, codigo } = req.body;
+      const datos: Record<string, unknown> = { nombre, direccion, telefono, email };
+      if (esSuperAdmin) {
+        datos.estado = estado;
+        datos.codigo = codigo;
+      }
+
+      const escuela = await Escuela.findByIdAndUpdate(req.params.id, datos, {
         new: true,
         runValidators: true,
       });
@@ -161,6 +198,8 @@ class EscuelaController {
 
   async actualizarConfiguracion(req: Request, res: Response, next: NextFunction) {
     try {
+      verificarAccesoEscuela(req, req.params.id);
+
       const escuela = await Escuela.findByIdAndUpdate(
         req.params.id,
         { configuracion: req.body },
@@ -182,6 +221,8 @@ class EscuelaController {
 
   async actualizarPeriodosAcademicos(req: Request, res: Response, next: NextFunction) {
     try {
+      verificarAccesoEscuela(req, req.params.id);
+
       const escuela = await Escuela.findByIdAndUpdate(
         req.params.id,
         { periodos_academicos: req.body.periodos_academicos },
