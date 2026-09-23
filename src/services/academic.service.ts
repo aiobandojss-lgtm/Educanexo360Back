@@ -5,7 +5,12 @@ import Logro from '../models/logro.model';
 import Usuario from '../models/usuario.model';
 import Curso from '../models/curso.model';
 import ApiError from '../utils/ApiError';
-import { cache, invalidateCache, invalidateRelatedCache } from '../cache/simpleCache';
+import {
+  cache,
+  invalidateCache,
+  invalidateRelatedCache,
+  safeCacheSet,
+} from '../cache/simpleCache';
 import mongoose from 'mongoose';
 
 // Interfaces para tipado fuerte
@@ -64,8 +69,9 @@ class AcademicService {
 
     // Si no está en cache, ejecutar función y cachear resultado
     const result = await fetchFunction();
-    cache.set(cacheKey, result, ttl);
-    console.log(`💾 CACHE SET: ${cacheKey} (${ttl}s)`);
+    if (safeCacheSet(cacheKey, result, ttl)) {
+      console.log(`💾 CACHE SET: ${cacheKey} (${ttl}s)`);
+    }
 
     return result;
   }

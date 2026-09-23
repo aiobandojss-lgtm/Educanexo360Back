@@ -11,7 +11,12 @@ import { TipoNotificacion } from '../interfaces/INotificacion';
 import { escapeRegex } from '../utils/escapeRegex';
 import emailService, { esEmailFicticio } from './email.service';
 import notificacionService from './notificacion.service';
-import { cache, invalidateCache, invalidateRelatedCache } from '../cache/simpleCache';
+import {
+  cache,
+  invalidateCache,
+  invalidateRelatedCache,
+  safeCacheSet,
+} from '../cache/simpleCache';
 import config from '../config/config';
 
 class MensajeService {
@@ -33,8 +38,9 @@ class MensajeService {
     }
 
     const result = await fetchFunction();
-    cache.set(cacheKey, result, ttl);
-    console.log(`💾 CACHE SET: ${cacheKey} (${ttl}s)`);
+    if (safeCacheSet(cacheKey, result, ttl)) {
+      console.log(`💾 CACHE SET: ${cacheKey} (${ttl}s)`);
+    }
 
     return result;
   }
@@ -600,8 +606,9 @@ class MensajeService {
         ]);
         // Solo cachear si hay resultados
         if (acudientes.length > 0) {
-          cache.set(cacheKey, acudientes, 300);
-          console.log(`💾 CACHE SET: ${cacheKey} (300s)`);
+          if (safeCacheSet(cacheKey, acudientes, 300)) {
+            console.log(`💾 CACHE SET: ${cacheKey} (300s)`);
+          }
         }
       }
 

@@ -5,8 +5,18 @@ const cache = new NodeCache({
   stdTTL: 300, // 5 minutos por defecto
   checkperiod: 60, // Verificar expiración cada minuto
   useClones: false, // Mejor performance
-  maxKeys: 500, // Máximo 500 keys en memoria
+  maxKeys: 5000, // Límite de keys en memoria (al llenarse, set() lanza ECACHEFULL)
 });
+
+// set() tolerante a fallos: si el caché está lleno (ECACHEFULL) solo se omite el cacheo
+export function safeCacheSet(key: string, value: unknown, ttl: number): boolean {
+  try {
+    return cache.set(key, value, ttl);
+  } catch (error) {
+    console.warn(`⚠️ CACHE SET falló (${key}):`, (error as Error).message);
+    return false;
+  }
+}
 
 // Configuración de cache por tipo de datos
 interface CacheConfig {
@@ -89,8 +99,10 @@ export function cacheMiddleware(cacheType: string) {
     const originalJson = res.json;
     res.json = function (data: any) {
       if (res.statusCode === 200 && data) {
-        cache.set(cacheKey, data, config.ttl);
-        console.log(`💾 CACHE SET: ${cacheType} (${config.ttl}s) - Key: ${cacheKey}`);
+        // Un fallo del caché (p. ej. ECACHEFULL) nunca debe tumbar la respuesta: solo no se cachea
+        if (safeCacheSet(cacheKey, data, config.ttl)) {
+          console.log(`💾 CACHE SET: ${cacheType} (${config.ttl}s) - Key: ${cacheKey}`);
+        }
       }
       originalJson.call(this, data);
     };
