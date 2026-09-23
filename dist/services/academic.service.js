@@ -17,8 +17,9 @@ class AcademicService {
             return cached;
         }
         const result = await fetchFunction();
-        simpleCache_1.cache.set(cacheKey, result, ttl);
-        console.log(`💾 CACHE SET: ${cacheKey} (${ttl}s)`);
+        if ((0, simpleCache_1.safeCacheSet)(cacheKey, result, ttl)) {
+            console.log(`💾 CACHE SET: ${cacheKey} (${ttl}s)`);
+        }
         return result;
     }
     async calcularPromedioPeriodo(estudianteId, asignaturaId, periodo, año_academico) {

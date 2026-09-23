@@ -3,10 +3,13 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+const mongoose_1 = __importDefault(require("mongoose"));
 const usuario_model_1 = __importDefault(require("../models/usuario.model"));
 const curso_model_1 = __importDefault(require("../models/curso.model"));
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
 const escapeRegex_1 = require("../utils/escapeRegex");
+const notificacion_service_1 = __importDefault(require("../services/notificacion.service"));
+const INotificacion_1 = require("../interfaces/INotificacion");
 class UsuarioController {
     async obtenerUsuarios(req, res, next) {
         try {
@@ -125,7 +128,56 @@ class UsuarioController {
             }
             let datosPermitidos = {};
             if (tieneRolAdministrativo) {
-                datosPermitidos = req.body;
+                const usuarioObjetivo = await usuario_model_1.default.findOne({
+                    _id: req.params.id,
+                    escuelaId: req.user.escuelaId,
+                }).select('tipo');
+                if (!usuarioObjetivo) {
+                    throw new ApiError_1.default(404, 'Usuario no encontrado');
+                }
+                const esAdmin = req.user.tipo === 'ADMIN';
+                if (usuarioObjetivo.tipo === 'ADMIN' && !esAdmin) {
+                    throw new ApiError_1.default(403, 'No tienes permiso para modificar este perfil');
+                }
+                const { nombre, apellidos, email, estado, perfil, tipo, info_academica } = req.body;
+                datosPermitidos = { nombre, apellidos, email, estado };
+                if (perfil && typeof perfil === 'object') {
+                    datosPermitidos.perfil = {
+                        telefono: perfil.telefono,
+                        direccion: perfil.direccion,
+                        foto: perfil.foto,
+                    };
+                }
+                if (tipo !== undefined && tipo !== usuarioObjetivo.tipo) {
+                    if (!esAdmin) {
+                        throw new ApiError_1.default(403, 'No tienes permiso para cambiar el tipo de usuario');
+                    }
+                    datosPermitidos.tipo = tipo;
+                }
+                if (info_academica && typeof info_academica === 'object') {
+                    ['grado', 'grupo', 'codigo_estudiante'].forEach((campo) => {
+                        if (info_academica[campo] !== undefined) {
+                            datosPermitidos[`info_academica.${campo}`] = info_academica[campo];
+                        }
+                    });
+                    if (Array.isArray(info_academica.estudiantes_asociados)) {
+                        const idsUnicos = [
+                            ...new Set(info_academica.estudiantes_asociados.map((item) => String(item && typeof item === 'object' ? item._id : item))),
+                        ];
+                        if (idsUnicos.some((id) => !mongoose_1.default.isValidObjectId(id))) {
+                            throw new ApiError_1.default(400, 'ID de estudiante asociado no válido');
+                        }
+                        const validos = await usuario_model_1.default.countDocuments({
+                            _id: { $in: idsUnicos },
+                            tipo: 'ESTUDIANTE',
+                            escuelaId: req.user.escuelaId,
+                        });
+                        if (validos !== idsUnicos.length) {
+                            throw new ApiError_1.default(400, 'Hay estudiantes asociados que no son válidos para esta escuela');
+                        }
+                        datosPermitidos['info_academica.estudiantes_asociados'] = idsUnicos;
+                    }
+                }
             }
             else {
                 datosPermitidos = {
@@ -196,6 +248,65 @@ class UsuarioController {
             res.json({
                 success: true,
                 message: 'Contraseña actualizada exitosamente',
+            });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    async solicitarEliminacionCuenta(req, res, next) {
+        try {
+            if (!req.user) {
+                throw new ApiError_1.default(401, 'No autorizado');
+            }
+            const { password, motivo } = req.body;
+            if (!password) {
+                throw new ApiError_1.default(400, 'La contraseña es requerida para eliminar la cuenta');
+            }
+            const usuario = await usuario_model_1.default.findOne({
+                _id: req.user._id,
+                escuelaId: req.user.escuelaId,
+            });
+            if (!usuario) {
+                throw new ApiError_1.default(404, 'Usuario no encontrado');
+            }
+            const isPasswordMatch = await usuario.compararPassword(password);
+            if (!isPasswordMatch) {
+                throw new ApiError_1.default(400, 'La contraseña es incorrecta');
+            }
+            usuario.estado = 'INACTIVO';
+            usuario.set('fcmToken', null);
+            usuario.set('eliminacionCuenta', {
+                solicitada: true,
+                fecha: new Date(),
+                motivo: motivo || undefined,
+            });
+            await usuario.save();
+            try {
+                const admins = await usuario_model_1.default.find({
+                    escuelaId: req.user.escuelaId,
+                    tipo: { $in: ['ADMIN', 'RECTOR', 'COORDINADOR'] },
+                    estado: 'ACTIVO',
+                }).select('_id');
+                if (admins.length > 0) {
+                    await notificacion_service_1.default.crearNotificacionMasiva({
+                        usuarioIds: admins.map((a) => String(a._id)),
+                        titulo: 'Solicitud de eliminación de cuenta',
+                        mensaje: `${usuario.nombre} ${usuario.apellidos} (${usuario.email}) solicitó eliminar su cuenta y fue desactivado.${motivo ? ` Motivo: ${motivo}` : ''}`,
+                        tipo: INotificacion_1.TipoNotificacion.SISTEMA,
+                        escuelaId: req.user.escuelaId,
+                        entidadId: String(usuario._id),
+                        entidadTipo: 'Usuario',
+                        enviarEmail: true,
+                    });
+                }
+            }
+            catch (notifError) {
+                console.error('Error notificando solicitud de eliminación a admins:', notifError);
+            }
+            res.json({
+                success: true,
+                message: 'Solicitud de eliminación registrada. Tu cuenta ha sido desactivada y será eliminada por el colegio.',
             });
         }
         catch (error) {
@@ -289,10 +400,10 @@ class UsuarioController {
             }
             let actualizacion;
             if (acudiente.info_academica) {
-                actualizacion = await usuario_model_1.default.findOneAndUpdate({ _id: req.params.id }, { $push: { 'info_academica.estudiantes_asociados': estudianteId } }, { new: true });
+                actualizacion = await usuario_model_1.default.findOneAndUpdate({ _id: req.params.id, escuelaId: req.user.escuelaId }, { $push: { 'info_academica.estudiantes_asociados': estudianteId } }, { new: true });
             }
             else {
-                actualizacion = await usuario_model_1.default.findOneAndUpdate({ _id: req.params.id }, {
+                actualizacion = await usuario_model_1.default.findOneAndUpdate({ _id: req.params.id, escuelaId: req.user.escuelaId }, {
                     $set: {
                         info_academica: {
                             estudiantes_asociados: [estudianteId],
@@ -330,7 +441,7 @@ class UsuarioController {
             if (!acudiente.info_academica?.estudiantes_asociados?.some((id) => id.toString() === estudianteId)) {
                 throw new ApiError_1.default(404, 'El estudiante no está asociado a este acudiente');
             }
-            await usuario_model_1.default.findOneAndUpdate({ _id: acudienteId }, { $pull: { 'info_academica.estudiantes_asociados': estudianteId } });
+            await usuario_model_1.default.findOneAndUpdate({ _id: acudienteId, escuelaId: req.user.escuelaId }, { $pull: { 'info_academica.estudiantes_asociados': estudianteId } });
             res.json({
                 success: true,
                 message: 'Asociación eliminada exitosamente',

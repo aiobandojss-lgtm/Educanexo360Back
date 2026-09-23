@@ -40,6 +40,13 @@ dotenv_1.default.config();
 const basePath = process.env.BASE_PATH || '';
 console.log(`Inicializando aplicación con BASE_PATH: "${basePath}"`);
 const app = (0, express_1.default)();
+app.set('trust proxy', 1);
+if (process.env.LOG_CLIENT_IP === 'true') {
+    app.use((req, _res, next) => {
+        console.log(`[trust-proxy] req.ip=${req.ip} x-forwarded-for=${req.headers['x-forwarded-for']}`);
+        next();
+    });
+}
 const corsOptions = {
     origin: function (origin, callback) {
         const allowedOrigins = process.env.ALLOWED_ORIGINS

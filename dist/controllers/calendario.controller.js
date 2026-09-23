@@ -12,6 +12,7 @@ const gridfs_1 = __importDefault(require("../config/gridfs"));
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const ICalendario_1 = require("../interfaces/ICalendario");
+const pushNotification_service_1 = __importDefault(require("../services/pushNotification.service"));
 class CalendarioController {
     async crearEvento(req, res, next) {
         try {
@@ -88,6 +89,22 @@ class CalendarioController {
                 success: true,
                 data: eventoPopulado,
             });
+            const escuelaId = req.user.escuelaId;
+            const titulo = eventoData.titulo || 'Nuevo evento';
+            const fechaStr = eventoData.fechaInicio
+                ? new Date(eventoData.fechaInicio).toLocaleDateString('es-CO')
+                : '';
+            usuario_model_1.default.find({ escuelaId, fcmToken: { $exists: true, $ne: null } }, { fcmToken: 1 }).then((usuarios) => {
+                const tokens = usuarios.map((u) => u.fcmToken).filter(Boolean);
+                if (tokens.length > 0) {
+                    pushNotification_service_1.default.enviarNotificacionMasiva({
+                        tokens,
+                        titulo: `Nuevo evento: ${titulo}`,
+                        mensaje: fechaStr ? `Fecha: ${fechaStr}` : 'Se ha creado un nuevo evento en el calendario',
+                        data: { tipo: 'evento', eventoId: evento._id.toString() },
+                    }).catch(() => { });
+                }
+            }).catch(() => { });
         }
         catch (error) {
             next(error);

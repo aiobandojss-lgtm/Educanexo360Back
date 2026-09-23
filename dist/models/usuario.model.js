@@ -135,7 +135,26 @@ const UsuarioSchema = new mongoose_1.Schema({
     },
     resetPasswordToken: String,
     resetPasswordExpires: Date,
+    eliminacionCuenta: {
+        solicitada: { type: Boolean, default: false },
+        fecha: Date,
+        motivo: String,
+    },
 }, { timestamps: true });
+const CAMPOS_SENSIBLES = [
+    'password',
+    'resetPasswordToken',
+    'resetPasswordExpires',
+    'fcmToken',
+    'fcmTokenUpdatedAt',
+    'deviceInfo',
+];
+const ocultarCamposSensibles = (_doc, ret) => {
+    CAMPOS_SENSIBLES.forEach((campo) => delete ret[campo]);
+    return ret;
+};
+UsuarioSchema.set('toJSON', { transform: ocultarCamposSensibles });
+UsuarioSchema.set('toObject', { transform: ocultarCamposSensibles });
 UsuarioSchema.pre('save', async function (next) {
     const user = this;
     if (!user.isModified('password'))

@@ -93,11 +93,13 @@ class AuthService {
         if (existingUser) {
             throw new ApiError_1.default(400, 'El email ya está registrado');
         }
-        const user = await usuario_model_1.default.create(userData);
-        const tokens = this.generateTokens(user);
+        const { telefono, ...datos } = userData;
+        const user = await usuario_model_1.default.create({
+            ...datos,
+            ...(telefono ? { perfil: { telefono } } : {}),
+        });
         return {
             user,
-            tokens,
         };
     }
     async requestPasswordReset(email) {

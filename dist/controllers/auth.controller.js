@@ -29,9 +29,23 @@ exports.authController = {
     },
     async register(req, res, next) {
         try {
-            const { email, password, nombre, apellidos, tipo, escuelaId } = req.body;
-            if (!email || !password || !nombre || !apellidos || !tipo || !escuelaId) {
+            if (!req.user) {
+                throw new ApiError_1.default(401, 'No autorizado');
+            }
+            const { email, password, nombre, apellidos, tipo, estado, perfil } = req.body;
+            const esSuperAdmin = req.user.tipo === 'SUPER_ADMIN';
+            if (!email || !password || !nombre || !apellidos || !tipo) {
                 throw new ApiError_1.default(400, 'Todos los campos son requeridos');
+            }
+            if (tipo === 'SUPER_ADMIN' && !esSuperAdmin) {
+                throw new ApiError_1.default(403, 'No tiene permisos para crear este tipo de usuario');
+            }
+            if (tipo === 'ADMIN' && !['ADMIN', 'SUPER_ADMIN'].includes(req.user.tipo)) {
+                throw new ApiError_1.default(403, 'No tiene permisos para crear este tipo de usuario');
+            }
+            const escuelaId = esSuperAdmin ? req.body.escuelaId : req.user.escuelaId;
+            if (!escuelaId && tipo !== 'SUPER_ADMIN') {
+                throw new ApiError_1.default(400, 'La escuela es requerida');
             }
             const result = await auth_service_1.default.register({
                 email,
@@ -40,6 +54,8 @@ exports.authController = {
                 apellidos,
                 tipo,
                 escuelaId,
+                estado,
+                telefono: typeof perfil?.telefono === 'string' ? perfil.telefono : undefined,
             });
             res.status(201).json({
                 success: true,

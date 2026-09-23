@@ -44,6 +44,7 @@ const usuario_validation_1 = require("../validations/usuario.validation");
 const simpleCache_1 = require("../cache/simpleCache");
 const router = express_1.default.Router();
 router.use(authMiddleware.authenticate);
+router.post('/eliminar-cuenta', usuario_controller_1.default.solicitarEliminacionCuenta);
 router.get('/', authMiddleware.authorize('ADMIN', 'RECTOR', 'COORDINADOR'), (0, simpleCache_1.cacheMiddleware)('usuarios'), usuario_controller_1.default.obtenerUsuarios);
 router.get('/buscar', authMiddleware.authorize('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'), usuario_controller_1.default.buscarUsuarios);
 router.get('/estudiantes', authMiddleware.authorize('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'), (0, simpleCache_1.cacheMiddleware)('usuarios-estudiantes'), (req, _res, next) => { req.query.tipo = 'ESTUDIANTE'; next(); }, usuario_controller_1.default.obtenerUsuarios);
@@ -53,7 +54,7 @@ router.put('/:id', (0, validate_middleware_1.validate)(usuario_validation_1.actu
 router.delete('/:id', authMiddleware.authorize('ADMIN', 'RECTOR', 'COORDINADOR'), usuario_controller_1.default.eliminarUsuario);
 router.post('/:id/cambiar-password', (0, validate_middleware_1.validate)(usuario_validation_1.cambiarPasswordValidation), usuario_controller_1.default.cambiarPassword);
 router.get('/:id/estudiantes-asociados', authMiddleware.authorize('ADMIN', 'DOCENTE', 'ACUDIENTE', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'), usuario_controller_1.default.obtenerEstudiantesAsociados);
-router.post('/:id/estudiantes-asociados', authMiddleware.authorize('ADMIN', 'ACUDIENTE', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'), (0, validate_middleware_1.validate)(usuario_validation_1.asociarEstudianteValidation), usuario_controller_1.default.asociarEstudiante);
-router.delete('/:id/estudiantes-asociados/:estudianteId', authMiddleware.authorize('ADMIN', 'ACUDIENTE', 'RECTOR', 'COORDINADOR'), usuario_controller_1.default.eliminarAsociacionEstudiante);
+router.post('/:id/estudiantes-asociados', authMiddleware.authorize('ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'), (0, validate_middleware_1.validate)(usuario_validation_1.asociarEstudianteValidation), usuario_controller_1.default.asociarEstudiante);
+router.delete('/:id/estudiantes-asociados/:estudianteId', authMiddleware.authorize('ADMIN', 'RECTOR', 'COORDINADOR'), usuario_controller_1.default.eliminarAsociacionEstudiante);
 exports.default = router;
 //# sourceMappingURL=usuario.routes.js.map

@@ -59,8 +59,9 @@ class MensajeService {
             return cached;
         }
         const result = await fetchFunction();
-        simpleCache_1.cache.set(cacheKey, result, ttl);
-        console.log(`💾 CACHE SET: ${cacheKey} (${ttl}s)`);
+        if ((0, simpleCache_1.safeCacheSet)(cacheKey, result, ttl)) {
+            console.log(`💾 CACHE SET: ${cacheKey} (${ttl}s)`);
+        }
         return result;
     }
     safeObjectId(id) {
@@ -513,8 +514,9 @@ class MensajeService {
                     },
                 ]);
                 if (acudientes.length > 0) {
-                    simpleCache_1.cache.set(cacheKey, acudientes, 300);
-                    console.log(`💾 CACHE SET: ${cacheKey} (300s)`);
+                    if ((0, simpleCache_1.safeCacheSet)(cacheKey, acudientes, 300)) {
+                        console.log(`💾 CACHE SET: ${cacheKey} (300s)`);
+                    }
                 }
             }
             if (acudientes.length === 0) {

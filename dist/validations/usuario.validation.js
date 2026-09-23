@@ -8,7 +8,6 @@ exports.actualizarUsuarioValidation = [
     (0, express_validator_1.body)('tipo')
         .optional()
         .isIn([
-        'SUPER_ADMIN',
         'ADMIN',
         'DOCENTE',
         'ACUDIENTE',

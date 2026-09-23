@@ -10,7 +10,7 @@ const auth_validation_1 = require("../validations/auth.validation");
 const auth_middleware_1 = require("../middleware/auth.middleware");
 const router = express_1.default.Router();
 router.post('/login', (0, validate_middleware_1.validate)(auth_validation_1.loginValidation), auth_controller_1.authController.login);
-router.post('/register', (0, validate_middleware_1.validate)(auth_validation_1.registerValidation), auth_controller_1.authController.register);
+router.post('/register', auth_middleware_1.authenticate, (0, auth_middleware_1.authorize)('ADMIN', 'SUPER_ADMIN'), (0, validate_middleware_1.validate)(auth_validation_1.registerValidation), auth_controller_1.authController.register);
 router.post('/refresh-token', (0, validate_middleware_1.validate)(auth_validation_1.refreshTokenValidation), auth_controller_1.authController.refreshToken);
 router.post('/logout', auth_controller_1.authController.logout);
 router.post('/forgot-password', (0, validate_middleware_1.validate)(auth_validation_1.forgotPasswordValidation), auth_controller_1.authController.forgotPassword);

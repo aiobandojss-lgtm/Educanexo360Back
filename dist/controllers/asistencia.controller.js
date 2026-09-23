@@ -9,6 +9,7 @@ const asistencia_model_1 = __importDefault(require("../models/asistencia.model")
 const usuario_model_1 = __importDefault(require("../models/usuario.model"));
 const curso_model_1 = __importDefault(require("../models/curso.model"));
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
+const pushNotification_service_1 = __importDefault(require("../services/pushNotification.service"));
 const IAsistencia_1 = require("../interfaces/IAsistencia");
 const alertaAsistencia_model_1 = __importDefault(require("../models/alertaAsistencia.model"));
 const alertaAsistencia_service_1 = require("../services/alertaAsistencia.service");
@@ -210,6 +211,32 @@ const actualizarAsistencia = async (req, res, next) => {
             asistencia.horaFin = horaFin;
         }
         await asistencia.save();
+        if (estudiantes && Array.isArray(estudiantes)) {
+            const ausentes = estudiantes.filter((est) => est.estado === 'AUSENTE');
+            if (ausentes.length > 0) {
+                const ausentesIds = ausentes.map((est) => est.estudianteId);
+                const asignaturaNombre = asistencia.asignaturaId?.nombre || 'clase';
+                (async () => {
+                    for (const estudianteId of ausentesIds) {
+                        try {
+                            const estudiante = await usuario_model_1.default.findById(estudianteId).select('nombre apellidos').lean();
+                            if (!estudiante)
+                                continue;
+                            const acudientes = await usuario_model_1.default.find({ estudiantesAsociados: estudianteId, fcmToken: { $exists: true, $ne: null } }, { fcmToken: 1 }).lean();
+                            for (const acudiente of acudientes) {
+                                pushNotification_service_1.default.enviarNotificacion({
+                                    token: acudiente.fcmToken,
+                                    titulo: 'Ausencia registrada',
+                                    mensaje: `${estudiante.nombre} ${estudiante.apellidos} fue marcado ausente en ${asignaturaNombre}`,
+                                    data: { tipo: 'ausencia', estudianteId: estudianteId.toString() },
+                                }).catch(() => { });
+                            }
+                        }
+                        catch { }
+                    }
+                })();
+            }
+        }
         return res.status(200).json({
             success: true,
             data: asistencia,

@@ -13,8 +13,20 @@ exports.registerValidation = [
         .withMessage('La contraseña debe tener al menos 6 caracteres'),
     (0, express_validator_1.body)('nombre').notEmpty().withMessage('El nombre es requerido'),
     (0, express_validator_1.body)('apellidos').notEmpty().withMessage('Los apellidos son requeridos'),
-    (0, express_validator_1.body)('tipo').notEmpty().withMessage('El tipo de usuario es requerido'),
-    (0, express_validator_1.body)('escuelaId').notEmpty().withMessage('La escuela es requerida'),
+    (0, express_validator_1.body)('tipo')
+        .isIn([
+        'SUPER_ADMIN',
+        'ADMIN',
+        'DOCENTE',
+        'ACUDIENTE',
+        'ESTUDIANTE',
+        'COORDINADOR',
+        'RECTOR',
+        'ADMINISTRATIVO',
+    ])
+        .withMessage('Tipo de usuario no válido'),
+    (0, express_validator_1.body)('escuelaId').optional({ values: 'falsy' }).isMongoId().withMessage('Escuela no válida'),
+    (0, express_validator_1.body)('estado').optional().isIn(['ACTIVO', 'INACTIVO']).withMessage('Estado no válido'),
 ];
 exports.refreshTokenValidation = [
     (0, express_validator_1.body)('refreshToken').notEmpty().withMessage('El token de refresco es requerido'),

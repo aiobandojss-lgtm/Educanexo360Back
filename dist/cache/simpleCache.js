@@ -4,6 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.cacheConfig = exports.cache = void 0;
+exports.safeCacheSet = safeCacheSet;
 exports.cacheMiddleware = cacheMiddleware;
 exports.invalidateRelatedCache = invalidateRelatedCache;
 exports.invalidateCache = invalidateCache;
@@ -15,9 +16,18 @@ const cache = new node_cache_1.default({
     stdTTL: 300,
     checkperiod: 60,
     useClones: false,
-    maxKeys: 500,
+    maxKeys: 5000,
 });
 exports.cache = cache;
+function safeCacheSet(key, value, ttl) {
+    try {
+        return cache.set(key, value, ttl);
+    }
+    catch (error) {
+        console.warn(`⚠️ CACHE SET falló (${key}):`, error.message);
+        return false;
+    }
+}
 const cacheConfig = {
     dashboard: { ttl: 180, desc: 'Dashboard - 3 min' },
     mensajes: { ttl: 120, desc: 'Lista mensajes - 2 min' },
@@ -59,8 +69,9 @@ function cacheMiddleware(cacheType) {
         const originalJson = res.json;
         res.json = function (data) {
             if (res.statusCode === 200 && data) {
-                cache.set(cacheKey, data, config.ttl);
-                console.log(`💾 CACHE SET: ${cacheType} (${config.ttl}s) - Key: ${cacheKey}`);
+                if (safeCacheSet(cacheKey, data, config.ttl)) {
+                    console.log(`💾 CACHE SET: ${cacheType} (${config.ttl}s) - Key: ${cacheKey}`);
+                }
             }
             originalJson.call(this, data);
         };

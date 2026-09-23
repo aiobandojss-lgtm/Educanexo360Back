@@ -38,10 +38,12 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const mongoose_1 = __importDefault(require("mongoose"));
 const anuncio_model_1 = __importDefault(require("../models/anuncio.model"));
+const usuario_model_1 = __importDefault(require("../models/usuario.model"));
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
 const mongodb_1 = require("mongodb");
 const fs = __importStar(require("fs"));
 const escapeRegex_1 = require("../utils/escapeRegex");
+const pushNotification_service_1 = __importDefault(require("../services/pushNotification.service"));
 class AnuncioController {
     async crear(req, res, next) {
         try {
@@ -230,6 +232,26 @@ class AnuncioController {
                 data: anuncio,
                 message: 'Anuncio publicado exitosamente',
             });
+            const rolesDestino = [];
+            if (anuncio.paraPadres)
+                rolesDestino.push('ACUDIENTE');
+            if (anuncio.paraDocentes)
+                rolesDestino.push('DOCENTE');
+            if (anuncio.paraEstudiantes)
+                rolesDestino.push('ESTUDIANTE');
+            if (rolesDestino.length === 0)
+                rolesDestino.push('ACUDIENTE', 'DOCENTE', 'ESTUDIANTE');
+            usuario_model_1.default.find({ escuelaId: req.user.escuelaId, tipo: { $in: rolesDestino }, fcmToken: { $exists: true, $ne: null } }, { fcmToken: 1 }).then((usuarios) => {
+                const tokens = usuarios.map((u) => u.fcmToken).filter(Boolean);
+                if (tokens.length > 0) {
+                    pushNotification_service_1.default.enviarNotificacionMasiva({
+                        tokens,
+                        titulo: `Nuevo comunicado: ${anuncio.titulo}`,
+                        mensaje: 'Se ha publicado un nuevo comunicado en EducaNexo360',
+                        data: { tipo: 'anuncio', anuncioId: anuncio._id.toString() },
+                    }).catch(() => { });
+                }
+            }).catch(() => { });
         }
         catch (error) {
             next(error);

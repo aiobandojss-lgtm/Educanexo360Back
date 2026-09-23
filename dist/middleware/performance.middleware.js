@@ -50,6 +50,18 @@ const responseTimeMiddleware = (req, res, next) => {
 exports.responseTimeMiddleware = responseTimeMiddleware;
 const rateLimiter = (windowMs = 60000, max = 100) => {
     const requests = new Map();
+    setInterval(() => {
+        const now = Date.now();
+        requests.forEach((timestamps, ip) => {
+            const vigentes = timestamps.filter((timestamp) => now - timestamp < windowMs);
+            if (vigentes.length === 0) {
+                requests.delete(ip);
+            }
+            else {
+                requests.set(ip, vigentes);
+            }
+        });
+    }, 5 * 60 * 1000).unref();
     const middleware = (req, res, next) => {
         const ip = req.ip || req.socket.remoteAddress || 'unknown';
         const now = Date.now();

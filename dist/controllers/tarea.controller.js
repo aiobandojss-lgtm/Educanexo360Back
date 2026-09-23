@@ -44,6 +44,7 @@ const ApiError_1 = __importDefault(require("../utils/ApiError"));
 const mongodb_1 = require("mongodb");
 const fs = __importStar(require("fs"));
 const escapeRegex_1 = require("../utils/escapeRegex");
+const pushNotification_service_1 = __importDefault(require("../services/pushNotification.service"));
 class TareaController {
     async crear(req, res, next) {
         try {
@@ -103,6 +104,22 @@ class TareaController {
                 data: nuevaTarea,
                 message: 'Tarea creada exitosamente',
             });
+            if (estudiantesParaAsignar.length > 0) {
+                usuario_model_1.default.find({ _id: { $in: estudiantesParaAsignar }, fcmToken: { $exists: true, $ne: null } }, { fcmToken: 1 }).then((estudiantes) => {
+                    const tokens = estudiantes.map((e) => e.fcmToken).filter(Boolean);
+                    if (tokens.length > 0) {
+                        const fechaStr = nuevaTarea.fechaLimite
+                            ? new Date(nuevaTarea.fechaLimite).toLocaleDateString('es-CO')
+                            : '';
+                        pushNotification_service_1.default.enviarNotificacionMasiva({
+                            tokens,
+                            titulo: `Nueva tarea: ${nuevaTarea.titulo}`,
+                            mensaje: `${req.user.nombre} asignó una nueva tarea${fechaStr ? `. Vence: ${fechaStr}` : ''}`,
+                            data: { tipo: 'tarea', tareaId: nuevaTarea._id.toString() },
+                        }).catch(() => { });
+                    }
+                }).catch(() => { });
+            }
         }
         catch (error) {
             next(error);

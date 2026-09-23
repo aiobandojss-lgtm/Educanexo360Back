@@ -19,3 +19,4 @@ src/scripts/seed-reviewers*.js
 .env.test
 src/.env.test
 reset-passwords.js
+dist/scripts/seed-reviewers*

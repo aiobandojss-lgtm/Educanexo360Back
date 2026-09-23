@@ -6,6 +6,14 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.obtenerHistorialSolicitudes = exports.obtenerSolicitudPorId = exports.obtenerSolicitudesPendientes = exports.rechazarSolicitud = exports.aprobarSolicitud = exports.crearSolicitud = void 0;
 const registro_service_1 = __importDefault(require("../services/registro.service"));
 const catchAsync_1 = require("../utils/catchAsync");
+const ApiError_1 = __importDefault(require("../utils/ApiError"));
+const obtenerEscuelaId = (req) => {
+    const escuelaId = req.user?.escuelaId;
+    if (!escuelaId) {
+        throw new ApiError_1.default(403, 'No tiene una escuela asociada');
+    }
+    return escuelaId;
+};
 exports.crearSolicitud = (0, catchAsync_1.catchAsync)(async (req, res, next) => {
     const { invitacionId, nombre, apellidos, email, telefono, estudiantes } = req.body;
     const resultado = await registro_service_1.default.crearSolicitud({
@@ -30,8 +38,9 @@ exports.crearSolicitud = (0, catchAsync_1.catchAsync)(async (req, res, next) => 
 });
 exports.aprobarSolicitud = (0, catchAsync_1.catchAsync)(async (req, res, next) => {
     const { id } = req.params;
-    const usuarioAdminId = req.usuario?._id;
-    const resultado = await registro_service_1.default.aprobarSolicitud(id, usuarioAdminId);
+    const usuarioAdminId = req.user?._id;
+    const escuelaId = obtenerEscuelaId(req);
+    const resultado = await registro_service_1.default.aprobarSolicitud(id, usuarioAdminId, escuelaId);
     res.status(200).json({
         success: true,
         data: resultado,
@@ -41,15 +50,16 @@ exports.aprobarSolicitud = (0, catchAsync_1.catchAsync)(async (req, res, next) =
 exports.rechazarSolicitud = (0, catchAsync_1.catchAsync)(async (req, res, next) => {
     const { id } = req.params;
     const { motivo } = req.body;
-    const usuarioAdminId = req.usuario?._id;
-    const resultado = await registro_service_1.default.rechazarSolicitud(id, usuarioAdminId, motivo);
+    const usuarioAdminId = req.user?._id;
+    const escuelaId = obtenerEscuelaId(req);
+    const resultado = await registro_service_1.default.rechazarSolicitud(id, usuarioAdminId, motivo, escuelaId);
     res.status(200).json({
         success: true,
         message: 'Solicitud rechazada exitosamente',
     });
 });
 exports.obtenerSolicitudesPendientes = (0, catchAsync_1.catchAsync)(async (req, res, next) => {
-    const escuelaId = req.params.escuelaId || req.usuario?.escuelaId;
+    const escuelaId = obtenerEscuelaId(req);
     const pagina = parseInt(req.query.pagina) || 1;
     const limite = parseInt(req.query.limite) || 10;
     const resultado = await registro_service_1.default.obtenerSolicitudesPendientes(escuelaId, pagina, limite);
@@ -61,7 +71,8 @@ exports.obtenerSolicitudesPendientes = (0, catchAsync_1.catchAsync)(async (req, 
 });
 exports.obtenerSolicitudPorId = (0, catchAsync_1.catchAsync)(async (req, res, next) => {
     const { id } = req.params;
-    const solicitud = await registro_service_1.default.obtenerSolicitudPorId(id);
+    const escuelaId = obtenerEscuelaId(req);
+    const solicitud = await registro_service_1.default.obtenerSolicitudPorId(id, escuelaId);
     res.status(200).json({
         success: true,
         data: solicitud,
@@ -69,7 +80,7 @@ exports.obtenerSolicitudPorId = (0, catchAsync_1.catchAsync)(async (req, res, ne
     });
 });
 exports.obtenerHistorialSolicitudes = (0, catchAsync_1.catchAsync)(async (req, res, next) => {
-    const escuelaId = req.params.escuelaId || req.usuario?.escuelaId;
+    const escuelaId = obtenerEscuelaId(req);
     const { estado } = req.query;
     const pagina = parseInt(req.query.pagina) || 1;
     const limite = parseInt(req.query.limite) || 10;

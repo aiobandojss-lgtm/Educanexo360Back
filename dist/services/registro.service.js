@@ -137,9 +137,9 @@ Por favor, revise la solicitud en el panel de administración.
             advertencias,
         };
     }
-    async aprobarSolicitud(solicitudId, usuarioAdminId) {
+    async aprobarSolicitud(solicitudId, usuarioAdminId, escuelaId) {
         console.log(`Iniciando aprobación de solicitud ${solicitudId} por admin ${usuarioAdminId}`);
-        const solicitud = await solicitud_registro_model_1.default.findById(solicitudId);
+        const solicitud = await solicitud_registro_model_1.default.findOne({ _id: solicitudId, escuelaId });
         if (!solicitud) {
             throw new ApiError_1.default(404, 'Solicitud no encontrada');
         }
@@ -301,8 +301,8 @@ Por favor, revise la solicitud en el panel de administración.
             session.endSession();
         }
     }
-    async rechazarSolicitud(solicitudId, usuarioAdminId, motivo) {
-        const solicitud = await solicitud_registro_model_1.default.findById(solicitudId);
+    async rechazarSolicitud(solicitudId, usuarioAdminId, motivo, escuelaId) {
+        const solicitud = await solicitud_registro_model_1.default.findOne({ _id: solicitudId, escuelaId });
         if (!solicitud) {
             throw new ApiError_1.default(404, 'Solicitud no encontrada');
         }
@@ -340,12 +340,12 @@ El equipo de EducaNexo360`,
                 if (mongoose_2.default.Types.ObjectId.isValid(escuelaId)) {
                     escuelaIdObj = new mongoose_2.default.Types.ObjectId(escuelaId);
                 }
-                else {
-                    console.warn(`escuelaId inválido: ${escuelaId}, no se aplicará filtro de escuela`);
-                }
             }
             catch (err) {
                 console.error('Error al convertir escuelaId a ObjectId:', err);
+            }
+            if (!escuelaIdObj) {
+                throw new ApiError_1.default(403, 'No tiene una escuela asociada');
             }
             const filtro = {
                 estado: solicitud_registro_model_1.EstadoSolicitud.PENDIENTE,
@@ -378,8 +378,8 @@ El equipo de EducaNexo360`,
             };
         }
     }
-    async obtenerSolicitudPorId(id) {
-        const solicitud = await solicitud_registro_model_1.default.findById(id).populate('revisadoPor', 'nombre apellidos');
+    async obtenerSolicitudPorId(id, escuelaId) {
+        const solicitud = await solicitud_registro_model_1.default.findOne({ _id: id, escuelaId }).populate('revisadoPor', 'nombre apellidos');
         if (!solicitud) {
             throw new ApiError_1.default(404, 'Solicitud no encontrada');
         }
