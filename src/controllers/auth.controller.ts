@@ -42,13 +42,33 @@ export const authController = {
     }
   },
 
-  async register(req: Request, res: Response, next: NextFunction): Promise<void> {
+  // Creación de usuarios por un administrador autenticado (ya no es registro público)
+  async register(req: RequestWithUser, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { email, password, nombre, apellidos, tipo, escuelaId } = req.body;
+      if (!req.user) {
+        throw new ApiError(401, 'No autorizado');
+      }
+
+      const { email, password, nombre, apellidos, tipo, estado, perfil } = req.body;
+      const esSuperAdmin = req.user.tipo === 'SUPER_ADMIN';
 
       // Validaciones básicas
-      if (!email || !password || !nombre || !apellidos || !tipo || !escuelaId) {
+      if (!email || !password || !nombre || !apellidos || !tipo) {
         throw new ApiError(400, 'Todos los campos son requeridos');
+      }
+
+      // Solo SUPER_ADMIN puede crear SUPER_ADMIN; solo ADMIN o SUPER_ADMIN pueden crear ADMIN
+      if (tipo === 'SUPER_ADMIN' && !esSuperAdmin) {
+        throw new ApiError(403, 'No tiene permisos para crear este tipo de usuario');
+      }
+      if (tipo === 'ADMIN' && !['ADMIN', 'SUPER_ADMIN'].includes(req.user.tipo)) {
+        throw new ApiError(403, 'No tiene permisos para crear este tipo de usuario');
+      }
+
+      // La escuela SIEMPRE es la del administrador; solo SUPER_ADMIN puede elegir otra
+      const escuelaId = esSuperAdmin ? req.body.escuelaId : req.user.escuelaId;
+      if (!escuelaId && tipo !== 'SUPER_ADMIN') {
+        throw new ApiError(400, 'La escuela es requerida');
       }
 
       const result = await authService.register({
@@ -58,6 +78,8 @@ export const authController = {
         apellidos,
         tipo,
         escuelaId,
+        estado,
+        telefono: typeof perfil?.telefono === 'string' ? perfil.telefono : undefined,
       });
 
       res.status(201).json({

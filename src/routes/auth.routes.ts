@@ -8,7 +8,7 @@ import {
   forgotPasswordValidation,
   resetPasswordValidation,
 } from '../validations/auth.validation';
-import { authenticate } from '../middleware/auth.middleware';
+import { authenticate, authorize } from '../middleware/auth.middleware';
 
 const router = express.Router();
 
@@ -21,10 +21,16 @@ router.post('/login', validate(loginValidation), authController.login);
 
 /**
  * @route POST /api/auth/register
- * @desc Registrar nuevo usuario
- * @access Public
+ * @desc Crear un usuario en la escuela del administrador autenticado
+ * @access Private (ADMIN, RECTOR, COORDINADOR, ADMINISTRATIVO, SUPER_ADMIN)
  */
-router.post('/register', validate(registerValidation), authController.register);
+router.post(
+  '/register',
+  authenticate,
+  authorize('ADMIN', 'SUPER_ADMIN'), // authorize('ADMIN') incluye los roles administrativos
+  validate(registerValidation),
+  authController.register,
+);
 
 /**
  * @route POST /api/auth/refresh-token

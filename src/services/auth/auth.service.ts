@@ -128,19 +128,24 @@ class AuthService {
     nombre: string;
     apellidos: string;
     tipo: string;
-    escuelaId: string;
+    escuelaId?: string;
+    estado?: string;
+    telefono?: string;
   }) {
     const existingUser = await Usuario.findOne({ email: userData.email });
     if (existingUser) {
       throw new ApiError(400, 'El email ya está registrado');
     }
 
-    const user = await Usuario.create(userData);
-    const tokens = this.generateTokens(user);
+    const { telefono, ...datos } = userData;
+    const user = await Usuario.create({
+      ...datos,
+      ...(telefono ? { perfil: { telefono } } : {}),
+    });
 
+    // No se devuelven tokens: el usuario lo crea un administrador, no inicia sesión
     return {
       user,
-      tokens,
     };
   }
 

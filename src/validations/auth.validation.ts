@@ -14,8 +14,21 @@ export const registerValidation = [
     .withMessage('La contraseña debe tener al menos 6 caracteres'),
   body('nombre').notEmpty().withMessage('El nombre es requerido'),
   body('apellidos').notEmpty().withMessage('Los apellidos son requeridos'),
-  body('tipo').notEmpty().withMessage('El tipo de usuario es requerido'),
-  body('escuelaId').notEmpty().withMessage('La escuela es requerida'),
+  body('tipo')
+    .isIn([
+      'SUPER_ADMIN',
+      'ADMIN',
+      'DOCENTE',
+      'ACUDIENTE',
+      'ESTUDIANTE',
+      'COORDINADOR',
+      'RECTOR',
+      'ADMINISTRATIVO',
+    ])
+    .withMessage('Tipo de usuario no válido'),
+  // escuelaId es opcional: se toma del usuario autenticado (solo SUPER_ADMIN puede enviarlo)
+  body('escuelaId').optional({ values: 'falsy' }).isMongoId().withMessage('Escuela no válida'),
+  body('estado').optional().isIn(['ACTIVO', 'INACTIVO']).withMessage('Estado no válido'),
 ];
 
 // Validación para refresh token
