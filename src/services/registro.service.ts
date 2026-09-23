@@ -177,10 +177,11 @@ Por favor, revise la solicitud en el panel de administración.
   /**
    * Aprueba una solicitud de registro - VERSIÓN CORREGIDA
    */
-  async aprobarSolicitud(solicitudId: string, usuarioAdminId: string) {
+  async aprobarSolicitud(solicitudId: string, usuarioAdminId: string, escuelaId: string) {
     console.log(`Iniciando aprobación de solicitud ${solicitudId} por admin ${usuarioAdminId}`);
 
-    const solicitud = await SolicitudRegistro.findById(solicitudId);
+    // Solo solicitudes de la escuela del administrador
+    const solicitud = await SolicitudRegistro.findOne({ _id: solicitudId, escuelaId });
 
     if (!solicitud) {
       throw new ApiError(404, 'Solicitud no encontrada');
@@ -435,8 +436,14 @@ Por favor, revise la solicitud en el panel de administración.
   /**
    * Rechaza una solicitud de registro
    */
-  async rechazarSolicitud(solicitudId: string, usuarioAdminId: string, motivo: string) {
-    const solicitud = await SolicitudRegistro.findById(solicitudId);
+  async rechazarSolicitud(
+    solicitudId: string,
+    usuarioAdminId: string,
+    motivo: string,
+    escuelaId: string,
+  ) {
+    // Solo solicitudes de la escuela del administrador
+    const solicitud = await SolicitudRegistro.findOne({ _id: solicitudId, escuelaId });
 
     if (!solicitud) {
       throw new ApiError(404, 'Solicitud no encontrada');
@@ -487,11 +494,14 @@ El equipo de EducaNexo360`,
       try {
         if (mongoose.Types.ObjectId.isValid(escuelaId)) {
           escuelaIdObj = new mongoose.Types.ObjectId(escuelaId);
-        } else {
-          console.warn(`escuelaId inválido: ${escuelaId}, no se aplicará filtro de escuela`);
         }
       } catch (err) {
         console.error('Error al convertir escuelaId a ObjectId:', err);
+      }
+
+      // El filtro de escuela es obligatorio: nunca listar solicitudes de todos los colegios
+      if (!escuelaIdObj) {
+        throw new ApiError(403, 'No tiene una escuela asociada');
       }
 
       // Construimos el filtro adecuadamente
@@ -537,8 +547,8 @@ El equipo de EducaNexo360`,
   /**
    * Obtiene una solicitud por ID
    */
-  async obtenerSolicitudPorId(id: string) {
-    const solicitud = await SolicitudRegistro.findById(id).populate(
+  async obtenerSolicitudPorId(id: string, escuelaId: string) {
+    const solicitud = await SolicitudRegistro.findOne({ _id: id, escuelaId }).populate(
       'revisadoPor',
       'nombre apellidos',
     );

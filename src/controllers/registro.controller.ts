@@ -2,13 +2,19 @@ import { Request, Response, NextFunction } from 'express';
 import registroService from '../services/registro.service';
 import { EstadoSolicitud } from '../models/solicitud-registro.model';
 import { catchAsync } from '../utils/catchAsync';
+import ApiError from '../utils/ApiError';
 
-interface CustomRequest extends Request {
-  usuario?: {
-    _id: string;
-    escuelaId: string;
-  };
-}
+// El middleware authenticate coloca el usuario en req.user (no en req.usuario)
+type CustomRequest = Request;
+
+// Filtro de escuela obligatorio: sin escuelaId no se puede operar sobre solicitudes
+const obtenerEscuelaId = (req: CustomRequest): string => {
+  const escuelaId = req.user?.escuelaId;
+  if (!escuelaId) {
+    throw new ApiError(403, 'No tiene una escuela asociada');
+  }
+  return escuelaId;
+};
 
 export const crearSolicitud = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
@@ -45,9 +51,10 @@ export const crearSolicitud = catchAsync(
 export const aprobarSolicitud = catchAsync(
   async (req: CustomRequest, res: Response, next: NextFunction) => {
     const { id } = req.params;
-    const usuarioAdminId = req.usuario?._id as string;
+    const usuarioAdminId = req.user?._id as string;
+    const escuelaId = obtenerEscuelaId(req);
 
-    const resultado = await registroService.aprobarSolicitud(id, usuarioAdminId);
+    const resultado = await registroService.aprobarSolicitud(id, usuarioAdminId, escuelaId);
 
     res.status(200).json({
       success: true,
@@ -61,9 +68,15 @@ export const rechazarSolicitud = catchAsync(
   async (req: CustomRequest, res: Response, next: NextFunction) => {
     const { id } = req.params;
     const { motivo } = req.body;
-    const usuarioAdminId = req.usuario?._id as string;
+    const usuarioAdminId = req.user?._id as string;
+    const escuelaId = obtenerEscuelaId(req);
 
-    const resultado = await registroService.rechazarSolicitud(id, usuarioAdminId, motivo);
+    const resultado = await registroService.rechazarSolicitud(
+      id,
+      usuarioAdminId,
+      motivo,
+      escuelaId,
+    );
 
     res.status(200).json({
       success: true,
@@ -74,7 +87,7 @@ export const rechazarSolicitud = catchAsync(
 
 export const obtenerSolicitudesPendientes = catchAsync(
   async (req: CustomRequest, res: Response, next: NextFunction) => {
-    const escuelaId = req.params.escuelaId || (req.usuario?.escuelaId as string);
+    const escuelaId = obtenerEscuelaId(req);
     const pagina = parseInt(req.query.pagina as string) || 1;
     const limite = parseInt(req.query.limite as string) || 10;
 
@@ -89,10 +102,11 @@ export const obtenerSolicitudesPendientes = catchAsync(
 );
 
 export const obtenerSolicitudPorId = catchAsync(
-  async (req: Request, res: Response, next: NextFunction) => {
+  async (req: CustomRequest, res: Response, next: NextFunction) => {
     const { id } = req.params;
+    const escuelaId = obtenerEscuelaId(req);
 
-    const solicitud = await registroService.obtenerSolicitudPorId(id);
+    const solicitud = await registroService.obtenerSolicitudPorId(id, escuelaId);
 
     res.status(200).json({
       success: true,
@@ -104,7 +118,7 @@ export const obtenerSolicitudPorId = catchAsync(
 
 export const obtenerHistorialSolicitudes = catchAsync(
   async (req: CustomRequest, res: Response, next: NextFunction) => {
-    const escuelaId = req.params.escuelaId || (req.usuario?.escuelaId as string);
+    const escuelaId = obtenerEscuelaId(req);
     const { estado } = req.query;
     const pagina = parseInt(req.query.pagina as string) || 1;
     const limite = parseInt(req.query.limite as string) || 10;
