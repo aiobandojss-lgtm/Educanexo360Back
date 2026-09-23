@@ -87,14 +87,15 @@ router.get(
 
 router.post(
   '/:id/estudiantes-asociados',
-  authMiddleware.authorize('ADMIN', 'ACUDIENTE', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'),
+  // Solo roles administrativos (un ACUDIENTE no puede asociarse estudiantes a sí mismo)
+  authMiddleware.authorize('ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'),
   validate(asociarEstudianteValidation),
   usuarioController.asociarEstudiante,
 );
 
 router.delete(
   '/:id/estudiantes-asociados/:estudianteId',
-  authMiddleware.authorize('ADMIN', 'ACUDIENTE', 'RECTOR', 'COORDINADOR'),
+  authMiddleware.authorize('ADMIN', 'RECTOR', 'COORDINADOR'),
   usuarioController.eliminarAsociacionEstudiante,
 );
 

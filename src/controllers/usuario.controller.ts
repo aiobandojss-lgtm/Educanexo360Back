@@ -568,14 +568,14 @@ class UsuarioController {
       if (acudiente.info_academica) {
         // Si info_academica ya existe, usa $push para añadir a la lista existente
         actualizacion = await Usuario.findOneAndUpdate(
-          { _id: req.params.id },
+          { _id: req.params.id, escuelaId: req.user.escuelaId },
           { $push: { 'info_academica.estudiantes_asociados': estudianteId } },
           { new: true },
         );
       } else {
         // Si info_academica no existe, inicialízala con un array que contenga el estudianteId
         actualizacion = await Usuario.findOneAndUpdate(
-          { _id: req.params.id },
+          { _id: req.params.id, escuelaId: req.user.escuelaId },
           {
             $set: {
               info_academica: {
@@ -631,7 +631,7 @@ class UsuarioController {
 
       // Eliminar el estudiante de la lista de asociados
       await Usuario.findOneAndUpdate(
-        { _id: acudienteId },
+        { _id: acudienteId, escuelaId: req.user.escuelaId },
         { $pull: { 'info_academica.estudiantes_asociados': estudianteId } },
       );
 
