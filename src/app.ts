@@ -48,6 +48,18 @@ console.log(`Inicializando aplicación con BASE_PATH: "${basePath}"`);
 
 const app: Express = express();
 
+// Detrás del proxy de cPanel/Passenger: confiar en 1 salto para que req.ip sea la IP real
+// del cliente (X-Forwarded-For). Sin esto todos comparten IP y el rate limiter los bloquea juntos.
+app.set('trust proxy', 1);
+
+// TEMPORAL: verificar en producción que req.ip cambia por cliente (activar con LOG_CLIENT_IP=true)
+if (process.env.LOG_CLIENT_IP === 'true') {
+  app.use((req: Request, _res: Response, next: NextFunction) => {
+    console.log(`[trust-proxy] req.ip=${req.ip} x-forwarded-for=${req.headers['x-forwarded-for']}`);
+    next();
+  });
+}
+
 // ===== CONFIGURACIÓN CORS MEJORADA =====
 const corsOptions = {
   origin: function (

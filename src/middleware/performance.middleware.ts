@@ -68,6 +68,19 @@ export const responseTimeMiddleware = (req: Request, res: Response, next: NextFu
 export const rateLimiter = (windowMs: number = 60000, max: number = 100): RequestHandler => {
   const requests = new Map<string, number[]>();
 
+  // Limpieza periódica: eliminar IPs sin peticiones dentro de la ventana (evita que el Map crezca sin límite)
+  setInterval(() => {
+    const now = Date.now();
+    requests.forEach((timestamps, ip) => {
+      const vigentes = timestamps.filter((timestamp) => now - timestamp < windowMs);
+      if (vigentes.length === 0) {
+        requests.delete(ip);
+      } else {
+        requests.set(ip, vigentes);
+      }
+    });
+  }, 5 * 60 * 1000).unref();
+
   const middleware: RequestHandler = (req: Request, res: Response, next: NextFunction): void => {
     const ip = req.ip || req.socket.remoteAddress || 'unknown';
     const now = Date.now();
