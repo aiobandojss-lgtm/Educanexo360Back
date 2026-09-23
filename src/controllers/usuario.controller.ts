@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import mongoose from 'mongoose';
 import Usuario from '../models/usuario.model';
 import Curso from '../models/curso.model';
 import ApiError from '../utils/ApiError';
@@ -194,11 +195,77 @@ class UsuarioController {
       }
 
       // Permitir campos específicos para usuarios no administrativos
-      let datosPermitidos = {};
+      let datosPermitidos: Record<string, unknown> = {};
 
       if (tieneRolAdministrativo) {
-        // Los roles administrativos pueden actualizar todos los campos
-        datosPermitidos = req.body;
+        const usuarioObjetivo = await Usuario.findOne({
+          _id: req.params.id,
+          escuelaId: req.user.escuelaId,
+        }).select('tipo');
+
+        if (!usuarioObjetivo) {
+          throw new ApiError(404, 'Usuario no encontrado');
+        }
+
+        const esAdmin = req.user.tipo === 'ADMIN';
+
+        // Solo un ADMIN puede modificar la cuenta de otro ADMIN (evita tomar su cuenta cambiando el email)
+        if (usuarioObjetivo.tipo === 'ADMIN' && !esAdmin) {
+          throw new ApiError(403, 'No tienes permiso para modificar este perfil');
+        }
+
+        // Lista blanca: escuelaId, permisos, password, perfilRolId, fcmToken, etc. nunca se aceptan aquí
+        const { nombre, apellidos, email, estado, perfil, tipo, info_academica } = req.body;
+        datosPermitidos = { nombre, apellidos, email, estado };
+
+        if (perfil && typeof perfil === 'object') {
+          datosPermitidos.perfil = {
+            telefono: perfil.telefono,
+            direccion: perfil.direccion,
+            foto: perfil.foto,
+          };
+        }
+
+        // Cambiar el tipo solo lo puede hacer un ADMIN (SUPER_ADMIN ya lo bloquea la validación).
+        // Si llega igual al actual se ignora: el formulario web siempre lo envía.
+        if (tipo !== undefined && tipo !== usuarioObjetivo.tipo) {
+          if (!esAdmin) {
+            throw new ApiError(403, 'No tienes permiso para cambiar el tipo de usuario');
+          }
+          datosPermitidos.tipo = tipo;
+        }
+
+        if (info_academica && typeof info_academica === 'object') {
+          ['grado', 'grupo', 'codigo_estudiante'].forEach((campo) => {
+            if (info_academica[campo] !== undefined) {
+              datosPermitidos[`info_academica.${campo}`] = info_academica[campo];
+            }
+          });
+
+          // Los estudiantes asociados deben ser ESTUDIANTES de la misma escuela
+          if (Array.isArray(info_academica.estudiantes_asociados)) {
+            // Acepta IDs o objetos poblados ({ _id }) según lo que envíe el cliente
+            const idsUnicos = [
+              ...new Set<string>(
+                info_academica.estudiantes_asociados.map((item: any) =>
+                  String(item && typeof item === 'object' ? item._id : item),
+                ),
+              ),
+            ];
+            if (idsUnicos.some((id) => !mongoose.isValidObjectId(id))) {
+              throw new ApiError(400, 'ID de estudiante asociado no válido');
+            }
+            const validos = await Usuario.countDocuments({
+              _id: { $in: idsUnicos },
+              tipo: 'ESTUDIANTE',
+              escuelaId: req.user.escuelaId,
+            });
+            if (validos !== idsUnicos.length) {
+              throw new ApiError(400, 'Hay estudiantes asociados que no son válidos para esta escuela');
+            }
+            datosPermitidos['info_academica.estudiantes_asociados'] = idsUnicos;
+          }
+        }
       } else {
         // Usuarios normales solo pueden actualizar campos específicos
         datosPermitidos = {

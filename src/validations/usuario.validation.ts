@@ -7,7 +7,6 @@ export const actualizarUsuarioValidation = [
   body('tipo')
     .optional()
     .isIn([
-      'SUPER_ADMIN',
       'ADMIN',
       'DOCENTE',
       'ACUDIENTE',
