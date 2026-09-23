@@ -2314,11 +2314,42 @@ export class MensajeController {
           },
         },
         {
+          // $lookup se salta el toJSON del modelo: proyectar solo los datos públicos del usuario
+          $addFields: {
+            remitente: {
+              $cond: [
+                { $ifNull: ['$remitente._id', false] },
+                {
+                  _id: '$remitente._id',
+                  nombre: '$remitente.nombre',
+                  apellidos: '$remitente.apellidos',
+                  email: '$remitente.email',
+                  tipo: '$remitente.tipo',
+                  perfil: { foto: '$remitente.perfil.foto' },
+                },
+                '$$REMOVE',
+              ],
+            },
+            destinatarios: {
+              $map: {
+                input: '$destinatarios',
+                as: 'd',
+                in: {
+                  _id: '$$d._id',
+                  nombre: '$$d.nombre',
+                  apellidos: '$$d.apellidos',
+                  email: '$$d.email',
+                  tipo: '$$d.tipo',
+                  perfil: { foto: '$$d.perfil.foto' },
+                },
+              },
+            },
+          },
+        },
+        {
           $project: {
             remitenteInfo: 0,
             destinatariosInfo: 0,
-            'remitente.password': 0,
-            'destinatarios.password': 0,
           },
         },
       );

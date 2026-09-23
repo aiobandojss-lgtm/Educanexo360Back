@@ -117,6 +117,26 @@ const UsuarioSchema = new Schema(
   { timestamps: true },
 );
 
+// Campos que nunca deben salir en una respuesta HTTP
+const CAMPOS_SENSIBLES = [
+  'password',
+  'resetPasswordToken',
+  'resetPasswordExpires',
+  'fcmToken',
+  'fcmTokenUpdatedAt',
+  'deviceInfo',
+];
+
+// Elimina los campos sensibles al serializar (res.json usa toJSON; también aplica a populate).
+// Nota: .lean() y $lookup NO pasan por aquí; deben proyectar sus campos explícitamente.
+const ocultarCamposSensibles = (_doc: unknown, ret: Record<string, unknown>) => {
+  CAMPOS_SENSIBLES.forEach((campo) => delete ret[campo]);
+  return ret;
+};
+
+UsuarioSchema.set('toJSON', { transform: ocultarCamposSensibles });
+UsuarioSchema.set('toObject', { transform: ocultarCamposSensibles });
+
 // Middleware pre-save para hash de contraseña
 UsuarioSchema.pre('save', async function (next) {
   // Usar casting explícito para la parte del this
