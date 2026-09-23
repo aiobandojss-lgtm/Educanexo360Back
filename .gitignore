@@ -14,3 +14,8 @@ coverage/
 # Scripts seed con credenciales demo (no versionar)
 src/scripts/seed-reviewers*.ts
 src/scripts/seed-reviewers*.js
+
+# Secretos que nunca deben versionarse
+.env.test
+src/.env.test
+reset-passwords.js
