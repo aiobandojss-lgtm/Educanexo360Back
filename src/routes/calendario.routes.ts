@@ -12,6 +12,7 @@ import {
 import gridfsManager from '../config/gridfs';
 import ApiError from '../utils/ApiError';
 import { invalidateOnCalendario } from '../middleware/dashboardCacheInvalidation.middleware';
+import { sanitizeNoSQL } from '../middleware/sanitize.middleware';
 
 const router = express.Router();
 
@@ -34,6 +35,7 @@ const middlewaresActualizar = [
   authorize('ADMIN', 'DOCENTE'),
   invalidateOnCalendario,
   subirAdjunto,
+  sanitizeNoSQL, // multer arma objetos anidados con campo[$ne]
   validate(actualizarEventoValidation),
   calendarioController.actualizarEvento as express.RequestHandler,
 ];
@@ -45,6 +47,7 @@ router.post(
   authorize('ADMIN', 'DOCENTE'),
   invalidateOnCalendario, // ← AGREGAR ESTA LÍNEA
   subirAdjunto,
+  sanitizeNoSQL, // multer arma objetos anidados con campo[$ne]
   validate(crearEventoValidation),
   calendarioController.crearEvento as unknown as express.RequestHandler,
 );

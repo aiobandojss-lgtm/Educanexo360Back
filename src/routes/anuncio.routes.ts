@@ -9,6 +9,7 @@ import fs from 'fs';
 import { sanitizeFilename } from '../utils/sanitizeFilename';
 import { cacheMiddleware } from '../cache/simpleCache';
 import { invalidateOnAnuncio } from '../middleware/dashboardCacheInvalidation.middleware';
+import { sanitizeNoSQL } from '../middleware/sanitize.middleware';
 
 const router = express.Router();
 
@@ -73,6 +74,7 @@ router.post(
   '/:id/adjuntos',
   authorize('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'),
   upload.array('archivos', 5),
+  sanitizeNoSQL, // multer arma objetos anidados con campo[$ne]
   anuncioController.agregarAdjuntos,
 );
 

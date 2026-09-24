@@ -8,6 +8,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { sanitizeFilename } from '../utils/sanitizeFilename';
+import { sanitizeNoSQL } from '../middleware/sanitize.middleware';
 
 const router = express.Router();
 
@@ -92,6 +93,7 @@ router.post(
   '/:id/archivos',
   authorize('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'),
   upload.array('archivos', 5),
+  sanitizeNoSQL, // multer arma objetos anidados con campo[$ne]
   tareaController.subirArchivosReferencia
 );
 
@@ -124,6 +126,7 @@ router.post(
   '/:id/entregar',
   authorize('ESTUDIANTE'),
   upload.array('archivos', 5),
+  sanitizeNoSQL, // multer arma objetos anidados con campo[$ne]
   validate(tareaValidation.entregar),
   tareaController.entregar
 );

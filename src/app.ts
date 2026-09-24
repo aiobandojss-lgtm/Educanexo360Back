@@ -38,6 +38,7 @@ import cacheRoutes from './routes/cache.routes';
 import dashboardRoutes from './routes/dashboard.routes';
 import tareaRoutes from './routes/tarea.routes';
 import perfilRolRoutes from './routes/perfilRol.routes';
+import { sanitizeNoSQL } from './middleware/sanitize.middleware';
 
 // Configuración de variables de entorno
 dotenv.config();
@@ -98,6 +99,8 @@ app.use(cors(corsOptions));
 app.use(helmet());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+// Sanitización NoSQL: elimina claves con $ o . en body/query/params (p. ej. estado[$ne]=x)
+app.use(sanitizeNoSQL);
 setupCompression(app);
 app.use(responseTimeMiddleware);
 

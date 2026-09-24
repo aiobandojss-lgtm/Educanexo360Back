@@ -11,6 +11,7 @@ import { TipoUsuario } from '../interfaces/IUsuario';
 
 import { cacheMiddleware } from '../cache/simpleCache';
 import { invalidateOnMensaje } from '../middleware/dashboardCacheInvalidation.middleware';
+import { sanitizeNoSQL } from '../middleware/sanitize.middleware';
 
 const router = express.Router();
 
@@ -68,6 +69,7 @@ router.use(authenticate);
 router.post(
   '/borradores',
   upload.array('adjuntos', 5),
+  sanitizeNoSQL, // multer arma objetos anidados con campo[$ne]
   verificarPermisoBorradores,
   (req: any, res: Response, next: NextFunction) => {
     mensajeController.guardarBorrador(req, res, next);
@@ -78,6 +80,7 @@ router.post(
 router.post(
   '/borradores/:id',
   upload.array('adjuntos', 5),
+  sanitizeNoSQL, // multer arma objetos anidados con campo[$ne]
   verificarPermisoBorradores,
   (req: any, res: Response, next: NextFunction) => {
     // Añadir ID a req.query para que el controlador sepa que es una actualización
@@ -156,6 +159,7 @@ router.get(
 router.post(
   '/',
   upload.array('adjuntos', 5),
+  sanitizeNoSQL, // multer arma objetos anidados con campo[$ne]
   invalidateOnMensaje,
   (req: any, res: Response, next: NextFunction) => {
     mensajeController.crear(req, res, next);
@@ -316,6 +320,7 @@ router.put('/:id/leer', (req: any, res: Response, next: NextFunction) => {
 router.post(
   '/:mensajeId/responder',
   upload.array('adjuntos', 5),
+  sanitizeNoSQL, // multer arma objetos anidados con campo[$ne]
   (req: any, res: Response, next: NextFunction) => {
     mensajeController.responder(req, res, next);
   },
