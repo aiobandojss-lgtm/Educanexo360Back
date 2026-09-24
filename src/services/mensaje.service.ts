@@ -18,6 +18,7 @@ import {
   safeCacheSet,
 } from '../cache/simpleCache';
 import config from '../config/config';
+import { aArregloDeIds, obtenerCursosDocente } from '../utils/accesoAcademico';
 
 class MensajeService {
   // 🚀 CACHE HELPER: Crear clave de cache consistente
@@ -272,11 +273,17 @@ class MensajeService {
         //throw new ApiError(403, 'Los estudiantes no pueden enviar mensajes');
       //}
 
-      let destinatariosFinales = [...destinatarios];
-      let destinatariosCcFinales = [...destinatariosCc];
+      if (!user.escuelaId) {
+        throw new ApiError(403, 'No tiene una escuela asociada');
+      }
+
+      // Acepta string o array (FormData de Flutter envía un solo valor como string)
+      let destinatariosFinales: string[] = aArregloDeIds(destinatarios);
+      let destinatariosCcFinales: string[] = aArregloDeIds(destinatariosCc);
+      const cursoIdsValidos: string[] = aArregloDeIds(cursoIds);
 
       // 🚀 OPTIMIZACIÓN CRÍTICA: Procesar cursos con UNA SOLA AGREGACIÓN
-      if (cursoIds && cursoIds.length > 0) {
+      if (cursoIdsValidos.length > 0) {
         const rolesMasivos = [
           'ADMIN',
           'SUPER_ADMIN',
@@ -290,8 +297,23 @@ class MensajeService {
           throw new ApiError(403, 'No tiene permisos para enviar mensajes masivos');
         }
 
-        // ✅ UNA SOLA AGREGACIÓN MASIVA para obtener TODOS los destinatarios de TODOS los cursos
-        const cursosDestinatarios = await this.obtenerDestinatariosDeCursos(cursoIds);
+        // Un DOCENTE solo puede enviar a sus cursos (director de grupo o donde dicta asignaturas)
+        if (user.tipo === 'DOCENTE') {
+          const cursosDocente = await obtenerCursosDocente(
+            String(user._id),
+            String(user.escuelaId),
+            false,
+          );
+          if (cursoIdsValidos.some((id) => !cursosDocente.includes(id))) {
+            throw new ApiError(403, 'Solo puede enviar mensajes a sus cursos');
+          }
+        }
+
+        // Estudiantes y acudientes activos de los cursos del colegio del remitente
+        const cursosDestinatarios = await this.obtenerDestinatariosDeCursos(
+          cursoIdsValidos,
+          String(user.escuelaId),
+        );
         destinatariosFinales.push(...cursosDestinatarios);
       }
 
@@ -299,8 +321,20 @@ class MensajeService {
       destinatariosFinales = [...new Set(destinatariosFinales)];
       destinatariosCcFinales = [...new Set(destinatariosCcFinales)];
 
+      // Solo destinatarios ACTIVOS del mismo colegio; los demás se descartan en silencio
+      const validos = await Usuario.find({
+        _id: { $in: [...destinatariosFinales, ...destinatariosCcFinales] },
+        escuelaId: user.escuelaId,
+        estado: 'ACTIVO',
+      })
+        .select('_id')
+        .lean();
+      const idsValidos = new Set(validos.map((u: any) => String(u._id)));
+      destinatariosFinales = destinatariosFinales.filter((id) => idsValidos.has(id));
+      destinatariosCcFinales = destinatariosCcFinales.filter((id) => idsValidos.has(id));
+
       if (destinatariosFinales.length === 0) {
-        throw new ApiError(400, 'Debe especificar al menos un destinatario');
+        throw new ApiError(400, 'Debe especificar al menos un destinatario válido');
       }
 
       // Convertir a ObjectId válidos
@@ -329,7 +363,7 @@ class MensajeService {
         mensajeOriginalId,
         lecturas: [],
         esCopiaAcudiente,
-        cursoIds: cursoIds
+        cursoIds: cursoIdsValidos
           .map((id: string) => this.safeObjectId(id))
           .filter((id: any) => id !== null),
       })) as mongoose.Document & { _id: mongoose.Types.ObjectId };
@@ -364,103 +398,51 @@ class MensajeService {
   /**
    * 🚀 NUEVA FUNCIÓN: Obtener destinatarios de múltiples cursos con UNA SOLA AGREGACIÓN
    */
-  private async obtenerDestinatariosDeCursos(cursoIds: string[]): Promise<string[]> {
+  private async obtenerDestinatariosDeCursos(
+    cursoIds: string[],
+    escuelaId: string,
+  ): Promise<string[]> {
     const validCursoIds = cursoIds.map((id) => this.safeObjectId(id)).filter((id) => id !== null);
 
-    if (validCursoIds.length === 0) {
+    if (validCursoIds.length === 0 || !escuelaId) {
       return [];
     }
 
-    // ✅ UNA SOLA AGREGACIÓN MASIVA para TODOS los cursos
-    const resultado = await Curso.aggregate([
-      {
-        $match: {
-          _id: { $in: validCursoIds },
-        },
-      },
-      {
-        $unwind: {
-          path: '$estudiantes',
-          preserveNullAndEmptyArrays: false,
-        },
-      },
-      {
-        $group: {
-          _id: null,
-          estudiantesIds: { $addToSet: '$estudiantes' },
-        },
-      },
-      {
-        $lookup: {
-          from: 'usuarios',
-          let: { estudiantesIds: '$estudiantesIds' },
-          pipeline: [
-            {
-              $match: {
-                $expr: {
-                  $and: [
-                    { $in: ['$_id', '$$estudiantesIds'] },
-                    { $eq: ['$tipo', 'ESTUDIANTE'] },
-                    { $eq: ['$estado', 'ACTIVO'] },
-                  ],
-                },
-              },
-            },
-            {
-              $project: { _id: 1 },
-            },
-          ],
-          as: 'estudiantes_activos',
-        },
-      },
-      {
-        $lookup: {
-          from: 'usuarios',
-          let: { estudiantesIds: '$estudiantesIds' },
-          pipeline: [
-            {
-              $match: {
-                $expr: {
-                  $and: [
-                    { $eq: ['$tipo', 'ACUDIENTE'] },
-                    {
-                      $ne: [
-                        {
-                          $size: {
-                            $setIntersection: [
-                              '$info_academica.estudiantes_asociados',
-                              '$$estudiantesIds',
-                            ],
-                          },
-                        },
-                        0,
-                      ],
-                    },
-                  ],
-                },
-              },
-            },
-            {
-              $project: { _id: 1 },
-            },
-          ],
-          as: 'acudientes',
-        },
-      },
-      {
-        $project: {
-          _id: 0,
-          todos_destinatarios: {
-            $concatArrays: [
-              { $map: { input: '$estudiantes_activos', as: 'e', in: { $toString: '$$e._id' } } },
-              { $map: { input: '$acudientes', as: 'a', in: { $toString: '$$a._id' } } },
-            ],
-          },
-        },
-      },
-    ]);
+    // Solo cursos del colegio del remitente
+    const cursos = await Curso.find({ _id: { $in: validCursoIds }, escuelaId })
+      .select('estudiantes')
+      .lean();
+    const idsEnCursos = [...new Set(cursos.flatMap((c: any) => (c.estudiantes || []).map(String)))];
+    if (idsEnCursos.length === 0) {
+      return [];
+    }
 
-    const destinatarios = resultado.length > 0 ? resultado[0].todos_destinatarios : [];
+    // Consultas simples por colegio (antes: $lookup con $expr sobre TODOS los usuarios de TODOS los colegios)
+    const estudiantes = await Usuario.find({
+      _id: { $in: idsEnCursos },
+      escuelaId,
+      tipo: 'ESTUDIANTE',
+      estado: 'ACTIVO',
+    })
+      .select('_id')
+      .lean();
+    const estudiantesIds = estudiantes.map((e: any) => e._id);
+
+    const acudientes = estudiantesIds.length
+      ? await Usuario.find({
+          escuelaId,
+          tipo: 'ACUDIENTE',
+          estado: 'ACTIVO',
+          'info_academica.estudiantes_asociados': { $in: estudiantesIds },
+        })
+          .select('_id')
+          .lean()
+      : [];
+
+    const destinatarios = [
+      ...estudiantesIds.map(String),
+      ...acudientes.map((a: any) => String(a._id)),
+    ];
     console.log(`✅ Destinatarios de cursos obtenidos: ${destinatarios.length}`);
 
     return destinatarios;
@@ -486,6 +468,7 @@ class MensajeService {
       // ✅ UNA SOLA QUERY para obtener TODOS los destinatarios
       const usuarios = await Usuario.find({
         _id: { $in: validDestinatariosIds },
+        escuelaId: remitente.escuelaId,
         estado: 'ACTIVO',
       }).select('_id email nombre apellidos');
 
@@ -558,7 +541,12 @@ class MensajeService {
         return null;
       }
 
-      const cacheKey = this.createCacheKey('acudientes', estudianteId);
+      const escuelaId = String(usuarioOrigen?.escuelaId || '');
+      if (!mongoose.isValidObjectId(escuelaId)) {
+        return null;
+      }
+
+      const cacheKey = this.createCacheKey('acudientes', escuelaId, estudianteId);
 
       // No cachear resultados vacíos — podrían contaminar llamadas futuras si la asociación aún no existía
       const cached = cache.get<any[]>(cacheKey);
@@ -567,43 +555,22 @@ class MensajeService {
         console.log(`📋 CACHE HIT: ${cacheKey}`);
         acudientes = cached;
       } else {
-        acudientes = await Usuario.aggregate([
-          {
-            $match: {
-              _id: new mongoose.Types.ObjectId(estudianteId),
-              tipo: 'ESTUDIANTE',
-              estado: 'ACTIVO',
-            },
-          },
-          {
-            $lookup: {
-              from: 'usuarios',
-              let: { estudianteId: '$_id' },
-              pipeline: [
-                {
-                  $match: {
-                    $expr: {
-                      $and: [
-                        { $eq: ['$tipo', 'ACUDIENTE'] },
-                        { $in: ['$$estudianteId', '$info_academica.estudiantes_asociados'] },
-                      ],
-                    },
-                  },
-                },
-                {
-                  $project: { _id: 1 },
-                },
-              ],
-              as: 'acudientes',
-            },
-          },
-          {
-            $unwind: '$acudientes',
-          },
-          {
-            $replaceRoot: { newRoot: '$acudientes' },
-          },
-        ]);
+        // Consultas simples por colegio (antes: $lookup con $expr sobre todos los colegios)
+        const estudiante = await Usuario.exists({
+          _id: estudianteId,
+          escuelaId,
+          tipo: 'ESTUDIANTE',
+          estado: 'ACTIVO',
+        });
+        acudientes = estudiante
+          ? await Usuario.find({
+              escuelaId,
+              tipo: 'ACUDIENTE',
+              'info_academica.estudiantes_asociados': new mongoose.Types.ObjectId(estudianteId),
+            })
+              .select('_id')
+              .lean()
+          : [];
         // Solo cachear si hay resultados
         if (acudientes.length > 0) {
           if (safeCacheSet(cacheKey, acudientes, 300)) {

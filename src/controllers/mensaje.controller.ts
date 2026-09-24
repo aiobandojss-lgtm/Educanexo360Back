@@ -945,6 +945,7 @@ export class MensajeController {
           const estudiantesInfo = await Usuario.find({
             _id: { $in: destinatariosIds },
             tipo: 'ESTUDIANTE',
+            escuelaId: req.user.escuelaId,
           }).select('_id');
 
           const datosMensaje = {
@@ -2056,28 +2057,12 @@ export class MensajeController {
                           asunto.toLowerCase().includes('urgente') ||
                           asunto.toLowerCase().includes('emergencia');
           
-          // Obtener destinatarios finales (incluyendo destinatarios de cursos)
-          let allRecipients = [...destinatariosArray];
-          
-          if (cursoIdsArray && cursoIdsArray.length > 0) {
-            // Si hay cursos, obtener estudiantes y acudientes
-            for (const cursoId of cursoIdsArray) {
-              const curso = await mongoose.model('Curso').findById(cursoId).populate('estudiantes');
-              if (curso && curso.estudiantes) {
-                const estudiantesIds = curso.estudiantes.map((est: any) => est._id.toString());
-                allRecipients.push(...estudiantesIds);
-                
-                // Obtener acudientes de los estudiantes
-                const acudientes = await Usuario.find({
-                  'info_academica.estudiantes_asociados': { $in: estudiantesIds },
-                  tipo: 'ACUDIENTE',
-                }).select('_id');
-                
-                allRecipients.push(...acudientes.map((a: any) => a._id.toString()));
-              }
-            }
-          }
-          
+          // Destinatarios finales YA validados por el servicio (mismo colegio, activos,
+          // incluye estudiantes y acudientes de los cursos). No se usan los arrays crudos del body.
+          let allRecipients: string[] = ((nuevoMensaje as any).destinatarios || []).map(
+            (d: any) => String(d?._id ?? d),
+          );
+
           // Eliminar duplicados
           allRecipients = [...new Set(allRecipients)];
           
@@ -2125,6 +2110,7 @@ export class MensajeController {
           const estudiantesInfo = await Usuario.find({
             _id: { $in: destinatariosArray },
             tipo: 'ESTUDIANTE',
+            escuelaId: req.user.escuelaId,
           }).select('_id');
 
           const estudiantesIds = estudiantesInfo.map((est: any) => est._id.toString());
@@ -3252,6 +3238,7 @@ export class MensajeController {
       const estudiantesInfo = await Usuario.find({
         _id: { $in: destinatarios },
         tipo: 'ESTUDIANTE',
+        escuelaId: req.user.escuelaId,
       }).select('_id');
 
       const estudiantesIds = estudiantesInfo.map((est: any) => est._id.toString());

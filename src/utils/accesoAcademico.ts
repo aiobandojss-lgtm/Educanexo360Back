@@ -56,12 +56,16 @@ export const obtenerHijosIds = async (user: UsuarioAcceso): Promise<string[]> =>
 export const obtenerCursosDocente = async (
   docenteId: string,
   escuelaId: string,
+  soloAsignaturasActivas = true,
 ): Promise<string[]> => {
   if (!escuelaId) return [];
 
+  const filtroAsignaturas: Record<string, unknown> = { escuelaId, docenteId };
+  if (soloAsignaturasActivas) filtroAsignaturas.estado = 'ACTIVO';
+
   const [dirigidos, asignaturas] = await Promise.all([
     Curso.find({ escuelaId, director_grupo: docenteId }).select('_id').lean(),
-    Asignatura.find({ escuelaId, docenteId, estado: 'ACTIVO' }).select('cursoId').lean(),
+    Asignatura.find(filtroAsignaturas).select('cursoId').lean(),
   ]);
 
   const ids = new Set<string>();
