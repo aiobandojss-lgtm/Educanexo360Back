@@ -12,6 +12,34 @@ import path from 'path';
 import { EstadoEvento } from '../interfaces/ICalendario';
 import pushNotificationService from '../services/pushNotification.service';
 
+// Campos editables de un evento (lista blanca: escuelaId, creadorId y archivoAdjunto nunca vienen del cliente)
+const CAMPOS_EVENTO = [
+  'titulo',
+  'descripcion',
+  'fechaInicio',
+  'fechaFin',
+  'todoElDia',
+  'lugar',
+  'tipo',
+  'color',
+  'cursoId',
+  'invitados',
+  'recordatorios',
+  'estado',
+];
+
+const tomarCamposEvento = (body: any): Record<string, any> => {
+  const datos: Record<string, any> = {};
+  CAMPOS_EVENTO.forEach((campo) => {
+    if (body?.[campo] !== undefined) datos[campo] = body[campo];
+  });
+  return datos;
+};
+
+// Multer llena req.file con .single('archivo'); se acepta también req.files por compatibilidad
+const archivoSubido = (req: any): Express.Multer.File | undefined =>
+  req.file || (Array.isArray(req.files) && req.files.length > 0 ? req.files[0] : undefined);
+
 interface RequestWithUser extends Request {
   user?: {
     _id: string;
@@ -36,14 +64,23 @@ class CalendarioController {
       }
 
       const eventoData: any = {
-        ...req.body,
+        ...tomarCamposEvento(req.body),
         escuelaId: req.user.escuelaId,
         creadorId: req.user._id,
       };
 
+      // El curso (si se indica) debe ser del colegio
+      if (eventoData.cursoId) {
+        const cursoValido = await Curso.exists({ _id: eventoData.cursoId, escuelaId: req.user.escuelaId });
+        if (!cursoValido) {
+          throw new ApiError(400, 'Curso no válido');
+        }
+      }
+
       // Verificar si hay un archivo adjunto
-      if (req.files && req.files.length > 0) {
-        const file = req.files[0];
+      const archivoCrear = archivoSubido(req);
+      if (archivoCrear) {
+        const file = archivoCrear;
         const bucket = gridfsManager.getBucket();
 
         if (!bucket) {
@@ -122,7 +159,10 @@ class CalendarioController {
         data: eventoPopulado,
       });
 
-      // Notificar a todos los usuarios de la escuela (fire-and-forget)
+      // Notificar a todos los usuarios de la escuela solo si el evento quedó publicado (ACTIVO)
+      if (evento.estado !== EstadoEvento.ACTIVO) {
+        return;
+      }
       const escuelaId = req.user!.escuelaId;
       const titulo = (eventoData as any).titulo || 'Nuevo evento';
       const fechaStr = eventoData.fechaInicio
@@ -401,8 +441,8 @@ class CalendarioController {
       throw new ApiError(404, 'Evento no encontrado');
     }
 
-    // 🚨 CAMBIO AQUÍ: Agregar COORDINADOR y RECTOR a los roles permitidos
-    const rolesAdministrativos = ['ADMIN', 'COORDINADOR', 'RECTOR','DOCENTE','ADMINISTRATIVO'];
+    // Administrativos: cualquier evento de su colegio. DOCENTE (y demás): solo los que creó
+    const rolesAdministrativos = ['ADMIN', 'COORDINADOR', 'RECTOR', 'ADMINISTRATIVO'];
     const esCreador = evento.creadorId.toString() === req.user._id;
     const tienePermisoAdministrativo = rolesAdministrativos.includes(req.user.tipo);
 
@@ -411,7 +451,18 @@ class CalendarioController {
       throw new ApiError(403, 'No tienes permiso para editar este evento');
     }
 
-    const datosActualizacion: any = { ...req.body };
+    // Lista blanca: escuelaId, creadorId y archivoAdjunto no se pueden modificar desde el body
+    const datosActualizacion: any = tomarCamposEvento(req.body);
+
+    if (datosActualizacion.cursoId) {
+      const cursoValido = await Curso.exists({
+        _id: datosActualizacion.cursoId,
+        escuelaId: req.user.escuelaId,
+      });
+      if (!cursoValido) {
+        throw new ApiError(400, 'Curso no válido');
+      }
+    }
 
     // Procesar fechas
     if (datosActualizacion.fechaInicio) {
@@ -432,8 +483,9 @@ class CalendarioController {
     }
 
     // Verificar si hay un archivo adjunto
-    if (req.files && req.files.length > 0) {
-      const file = req.files[0];
+    const archivoActualizar = archivoSubido(req);
+    if (archivoActualizar) {
+      const file = archivoActualizar;
       const bucket = gridfsManager.getBucket();
 
       if (!bucket) {
@@ -482,10 +534,14 @@ class CalendarioController {
     }
 
     // Actualizar el evento
-    await EventoCalendario.findByIdAndUpdate(req.params.id, datosActualizacion, {
-      new: true,
-      runValidators: true,
-    });
+    await EventoCalendario.findOneAndUpdate(
+      { _id: req.params.id, escuelaId: req.user.escuelaId },
+      datosActualizacion,
+      {
+        new: true,
+        runValidators: true,
+      },
+    );
 
     // Obtener evento actualizado con campos populados
     const eventoActualizado = await EventoCalendario.findById(req.params.id)

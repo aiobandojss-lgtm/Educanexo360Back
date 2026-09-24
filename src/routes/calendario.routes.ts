@@ -10,6 +10,7 @@ import {
   confirmarAsistenciaValidation,
 } from '../validations/calendario.validation';
 import gridfsManager from '../config/gridfs';
+import ApiError from '../utils/ApiError';
 import { invalidateOnCalendario } from '../middleware/dashboardCacheInvalidation.middleware';
 
 const router = express.Router();
@@ -17,12 +18,33 @@ const router = express.Router();
 // Todas las rutas requieren autenticación
 router.use(authenticate);
 
+// Subida del adjunto (un solo archivo en el campo 'archivo', como envían web y Flutter).
+// Se resuelve en cada petición: getUpload() solo existe después de initializeStorage (al conectar Mongo),
+// que ocurre DESPUÉS de importar las rutas. Antes se evaluaba al importar y quedaba en [] (nunca subía).
+const subirAdjunto: express.RequestHandler = (req, res, next) => {
+  const upload = gridfsManager.getUpload();
+  if (!upload) {
+    return next(new ApiError(503, 'Servicio de archivos no disponible'));
+  }
+  return upload.single('archivo')(req, res, next);
+};
+
+// Middlewares de actualización, compartidos por PUT /:id y su alias POST /:id
+const middlewaresActualizar = [
+  authorize('ADMIN', 'DOCENTE'),
+  invalidateOnCalendario,
+  subirAdjunto,
+  validate(actualizarEventoValidation),
+  calendarioController.actualizarEvento as express.RequestHandler,
+];
+
 // Rutas para gestionar eventos
+// Crear: solo administrativos (authorize('ADMIN') los incluye) y DOCENTE
 router.post(
   '/',
-  authorize('ADMIN', 'DOCENTE', 'ESTUDIANTE', 'PADRE', 'ACUDIENTE'),
+  authorize('ADMIN', 'DOCENTE'),
   invalidateOnCalendario, // ← AGREGAR ESTA LÍNEA
-  gridfsManager.getUpload()?.single('archivo') || [],
+  subirAdjunto,
   validate(crearEventoValidation),
   calendarioController.crearEvento as unknown as express.RequestHandler,
 );
@@ -39,14 +61,41 @@ router.get(
   calendarioController.obtenerEventoPorId as express.RequestHandler,
 );
 
-router.put(
-  '/:id',
-  authorize('ADMIN', 'DOCENTE'),
-  invalidateOnCalendario, // ← AGREGAR ESTA LÍNEA
-  gridfsManager.getUpload()?.single('archivo') || [],
-  validate(actualizarEventoValidation),
-  calendarioController.actualizarEvento as express.RequestHandler,
-);
+router.put('/:id', ...middlewaresActualizar);
+
+/**
+ * @swagger
+ * /api/calendario/{id}:
+ *   post:
+ *     summary: Alias de PUT /api/calendario/{id} para actualizar un evento con adjunto (multipart)
+ *     description: Usado por la app Flutter. Mismo handler, autenticación, validaciones y reglas de propiedad que el PUT.
+ *     tags: [Calendario]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               archivo:
+ *                 type: string
+ *                 format: binary
+ *     responses:
+ *       200:
+ *         description: Evento actualizado
+ *       403:
+ *         description: Sin permiso (DOCENTE que no creó el evento)
+ *       404:
+ *         description: Evento no encontrado
+ */
+router.post('/:id', ...middlewaresActualizar);
 
 router.delete(
   '/:id',
