@@ -22,6 +22,18 @@ interface RequestWithUser extends Request {
   };
 }
 
+// perfil por rutas punteadas (perfil.telefono...): solo los campos enviados, sin borrar los demás
+const perfilPorRutas = (perfil: unknown): Record<string, string> => {
+  const datos: Record<string, string> = {};
+  if (perfil && typeof perfil === 'object') {
+    ['telefono', 'direccion', 'foto'].forEach((campo) => {
+      const valor = (perfil as Record<string, unknown>)[campo];
+      if (typeof valor === 'string') datos[`perfil.${campo}`] = valor;
+    });
+  }
+  return datos;
+};
+
 class UsuarioController {
   async obtenerUsuarios(req: RequestWithUser, res: Response, next: NextFunction) {
     try {
@@ -218,13 +230,7 @@ class UsuarioController {
         const { nombre, apellidos, email, estado, perfil, tipo, info_academica } = req.body;
         datosPermitidos = { nombre, apellidos, email, estado };
 
-        if (perfil && typeof perfil === 'object') {
-          datosPermitidos.perfil = {
-            telefono: perfil.telefono,
-            direccion: perfil.direccion,
-            foto: perfil.foto,
-          };
-        }
+        Object.assign(datosPermitidos, perfilPorRutas(perfil));
 
         // Cambiar el tipo solo lo puede hacer un ADMIN (SUPER_ADMIN ya lo bloquea la validación).
         // Si llega igual al actual se ignora: el formulario web siempre lo envía.
@@ -271,7 +277,7 @@ class UsuarioController {
         datosPermitidos = {
           nombre: req.body.nombre,
           apellidos: req.body.apellidos,
-          perfil: req.body.perfil, // Incluye el teléfono
+          ...perfilPorRutas(req.body.perfil), // Incluye el teléfono (sin borrar dirección/foto)
         };
       }
 

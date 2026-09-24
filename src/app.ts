@@ -109,15 +109,10 @@ app.use(responseTimeMiddleware);
 const apiRouter = express.Router();
 
 // ===== ENDPOINT DE DIAGNÓSTICO/SALUD =====
+// Público: solo el estado (sin memoria, entorno ni versión). Flutter solo revisa el HTTP 200.
 apiRouter.get('/health', (req: Request, res: Response) => {
   res.json({
     status: 'UP',
-    version: process.env.npm_package_version || '1.0.0',
-    environment: process.env.NODE_ENV || 'development',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    memoryUsage: process.memoryUsage(),
-    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
   });
 });
 

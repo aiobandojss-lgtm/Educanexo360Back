@@ -22,7 +22,7 @@ const router = Router();
 router.get(
   '/stats',
   authenticate,
-  authorize('ADMIN'),
+  authorize('SUPER_ADMIN'),
   (req: AuthenticatedRequest, res: Response) => {
     try {
       const stats = getCacheStats();
@@ -42,7 +42,7 @@ router.get(
 router.delete(
   '/clear',
   authenticate,
-  authorize('ADMIN'),
+  authorize('SUPER_ADMIN'),
   (req: AuthenticatedRequest, res: Response) => {
     try {
       cache.flushAll();
