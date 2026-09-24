@@ -75,7 +75,7 @@ class InvitacionService {
 
     // Si se proporciona un cursoId, validar que pertenezca a la escuela
     if (data.cursoId) {
-      const curso = await Curso.findById(data.cursoId);
+      const curso = await Curso.findOne({ _id: data.cursoId, escuelaId: data.escuelaId });
 
       console.log('Curso encontrado:', curso ? JSON.stringify(curso) : 'Curso no encontrado');
 
@@ -303,9 +303,13 @@ class InvitacionService {
   /**
    * Obtiene invitaciones por curso
    */
-  async obtenerInvitacionesPorCurso(cursoId: string, estado?: EstadoInvitacion) {
+  async obtenerInvitacionesPorCurso(cursoId: string, escuelaId: string, estado?: EstadoInvitacion) {
+    if (!Types.ObjectId.isValid(cursoId) || !Types.ObjectId.isValid(escuelaId)) {
+      throw new ApiError(400, 'Parámetros inválidos');
+    }
     const filtro: any = {
       cursoId: new Types.ObjectId(cursoId),
+      escuelaId: new Types.ObjectId(escuelaId),
       tipo: TipoInvitacion.CURSO,
     };
 
@@ -323,8 +327,8 @@ class InvitacionService {
   /**
    * Revocar una invitación
    */
-  async revocarInvitacion(invitacionId: string) {
-    const invitacion = await Invitacion.findById(invitacionId);
+  async revocarInvitacion(invitacionId: string, escuelaId: string) {
+    const invitacion = await Invitacion.findOne({ _id: invitacionId, escuelaId });
 
     if (!invitacion) {
       throw new ApiError(404, 'Invitación no encontrada');
@@ -345,9 +349,9 @@ class InvitacionService {
   /**
    * Obtiene una invitación por ID
    */
-  async obtenerInvitacionPorId(id: string) {
-    // Buscar la invitación y poblar los campos relacionados
-    const invitacion = await Invitacion.findById(id)
+  async obtenerInvitacionPorId(id: string, escuelaId: string) {
+    // Buscar la invitación (solo del colegio del usuario) y poblar los campos relacionados
+    const invitacion = await Invitacion.findOne({ _id: id, escuelaId })
       .populate('creadorId', 'nombre apellidos')
       .populate('cursoId', 'nombre grado grupo');
 

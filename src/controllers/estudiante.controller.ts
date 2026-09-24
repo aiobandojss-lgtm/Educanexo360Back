@@ -2,6 +2,11 @@
 import { Request, Response } from 'express';
 import { estudianteService } from '../services/estudiante.service'; // IMPORT CORREGIDO
 import ApiError from '../utils/ApiError';
+import { queryString } from '../utils/accesoAcademico';
+
+// escuelaId SIEMPRE del usuario autenticado (nunca del cliente). Las rutas solo admiten
+// ADMIN/RECTOR/COORDINADOR, que siempre tienen escuela.
+const escuelaDelUsuario = (req: Request): string | undefined => req.user?.escuelaId || undefined;
 
 /**
  * Busca estudiantes existentes para asociación con acudientes
@@ -11,7 +16,12 @@ export const buscarEstudiantesParaAsociacion = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const { escuelaId, nombre, apellidos, email, codigo_estudiante, cursoId } = req.query;
+    const escuelaId = escuelaDelUsuario(req);
+    const nombre = queryString(req.query.nombre);
+    const apellidos = queryString(req.query.apellidos);
+    const email = queryString(req.query.email);
+    const codigo_estudiante = queryString(req.query.codigo_estudiante);
+    const cursoId = queryString(req.query.cursoId);
 
     if (!escuelaId) {
       res.status(400).json({
@@ -22,12 +32,12 @@ export const buscarEstudiantesParaAsociacion = async (
     }
 
     const estudiantes = await estudianteService.buscarEstudiantesExistentes({
-      escuelaId: escuelaId as string,
-      nombre: nombre as string,
-      apellidos: apellidos as string,
-      email: email as string,
-      codigo_estudiante: codigo_estudiante as string,
-      cursoId: cursoId as string,
+      escuelaId,
+      nombre,
+      apellidos,
+      email,
+      codigo_estudiante,
+      cursoId,
     });
 
     res.status(200).json({
@@ -59,7 +69,7 @@ export const buscarEstudiantesParaAsociacion = async (
 export const obtenerEstudiantePorId = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
-    const { escuelaId } = req.query;
+    const escuelaId = escuelaDelUsuario(req);
 
     if (!escuelaId) {
       res.status(400).json({
@@ -69,7 +79,7 @@ export const obtenerEstudiantePorId = async (req: Request, res: Response): Promi
       return;
     }
 
-    const estudiante = await estudianteService.obtenerEstudiantePorId(id, escuelaId as string);
+    const estudiante = await estudianteService.obtenerEstudiantePorId(id, escuelaId);
 
     if (!estudiante) {
       res.status(404).json({
@@ -107,7 +117,9 @@ export const obtenerEstudiantePorId = async (req: Request, res: Response): Promi
 export const verificarAsociacionEstudiante = async (req: Request, res: Response): Promise<void> => {
   try {
     const { estudianteId } = req.params;
-    const { acudienteEmail, escuelaId } = req.body;
+    const acudienteEmail =
+      typeof req.body.acudienteEmail === 'string' ? req.body.acudienteEmail : undefined;
+    const escuelaId = escuelaDelUsuario(req);
 
     if (!acudienteEmail || !escuelaId) {
       res.status(400).json({

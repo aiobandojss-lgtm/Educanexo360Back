@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import invitacionService from '../services/invitacion.service';
 import { TipoInvitacion, EstadoInvitacion } from '../models/invitacion.model';
 import { catchAsync } from '../utils/catchAsync';
+import ApiError from '../utils/ApiError';
 
 interface CustomRequest extends Request {
   user?: {
@@ -23,9 +24,16 @@ export const crearInvitacion = catchAsync(
     const { tipo, cursoId, estudianteId, cantidadUsos, fechaExpiracion, datosAdicionales } =
       req.body;
 
-    // Corregido: Usar req.user en lugar de req.usuario
-    const escuelaId = req.body.escuelaId || (req.user?.escuelaId as string);
+    // escuelaId SIEMPRE del usuario autenticado; solo SUPER_ADMIN puede indicar otra escuela
+    const escuelaId =
+      req.user?.tipo === 'SUPER_ADMIN' && req.body.escuelaId
+        ? String(req.body.escuelaId)
+        : (req.user?.escuelaId as string);
     const creadorId = req.user?._id as string;
+
+    if (!escuelaId) {
+      throw new ApiError(403, 'No tiene una escuela asociada');
+    }
 
     console.log('Datos para crear invitación:', {
       tipo,
@@ -66,12 +74,13 @@ export const validarCodigo = catchAsync(async (req: Request, res: Response, next
 });
 
 export const obtenerInvitacionesPorCurso = catchAsync(
-  async (req: Request, res: Response, next: NextFunction) => {
+  async (req: CustomRequest, res: Response, next: NextFunction) => {
     const { cursoId } = req.params;
-    const { estado } = req.query;
+    const estado = typeof req.query.estado === 'string' ? req.query.estado : undefined;
 
     const invitaciones = await invitacionService.obtenerInvitacionesPorCurso(
       cursoId,
+      req.user?.escuelaId as string,
       estado as EstadoInvitacion,
     );
 
@@ -84,10 +93,10 @@ export const obtenerInvitacionesPorCurso = catchAsync(
 );
 
 export const revocarInvitacion = catchAsync(
-  async (req: Request, res: Response, next: NextFunction) => {
+  async (req: CustomRequest, res: Response, next: NextFunction) => {
     const { id } = req.params;
 
-    const resultado = await invitacionService.revocarInvitacion(id);
+    const resultado = await invitacionService.revocarInvitacion(id, req.user?.escuelaId as string);
 
     res.status(200).json({
       success: true,
@@ -97,10 +106,13 @@ export const revocarInvitacion = catchAsync(
 );
 
 export const obtenerInvitacionPorId = catchAsync(
-  async (req: Request, res: Response, next: NextFunction) => {
+  async (req: CustomRequest, res: Response, next: NextFunction) => {
     const { id } = req.params;
 
-    const invitacion = await invitacionService.obtenerInvitacionPorId(id);
+    const invitacion = await invitacionService.obtenerInvitacionPorId(
+      id,
+      req.user?.escuelaId as string,
+    );
 
     res.status(200).json({
       success: true,
@@ -112,9 +124,9 @@ export const obtenerInvitacionPorId = catchAsync(
 
 export const obtenerInvitacionesEscuela = catchAsync(
   async (req: CustomRequest, res: Response, next: NextFunction) => {
-    // Corregido: Usar req.user en lugar de req.usuario
-    const escuelaId = req.params.escuelaId || (req.user?.escuelaId as string);
-    const { estado } = req.query;
+    // escuelaId SIEMPRE del usuario autenticado (ninguna ruta define :escuelaId)
+    const escuelaId = req.user?.escuelaId as string;
+    const estado = typeof req.query.estado === 'string' ? req.query.estado : undefined;
     const pagina = parseInt(req.query.pagina as string) || 1;
     const limite = parseInt(req.query.limite as string) || 10;
 
