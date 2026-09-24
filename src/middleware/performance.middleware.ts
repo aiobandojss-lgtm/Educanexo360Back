@@ -65,7 +65,12 @@ export const responseTimeMiddleware = (req: Request, res: Response, next: NextFu
 };
 
 // Middleware para limitar tasa de peticiones
-export const rateLimiter = (windowMs: number = 60000, max: number = 100): RequestHandler => {
+// keyGenerator opcional: por defecto la llave es la IP (p. ej. login usa IP + email)
+export const rateLimiter = (
+  windowMs: number = 60000,
+  max: number = 100,
+  keyGenerator?: (req: Request) => string,
+): RequestHandler => {
   const requests = new Map<string, number[]>();
 
   // Limpieza periódica: eliminar IPs sin peticiones dentro de la ventana (evita que el Map crezca sin límite)
@@ -82,7 +87,7 @@ export const rateLimiter = (windowMs: number = 60000, max: number = 100): Reques
   }, 5 * 60 * 1000).unref();
 
   const middleware: RequestHandler = (req: Request, res: Response, next: NextFunction): void => {
-    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    const ip = keyGenerator ? keyGenerator(req) : req.ip || req.socket.remoteAddress || 'unknown';
     const now = Date.now();
 
     // Inicializar array si no existe

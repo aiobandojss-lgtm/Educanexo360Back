@@ -122,7 +122,7 @@ apiRouter.get('/health', (req: Request, res: Response) => {
 });
 
 // ===== RUTAS DE LA API en el router =====
-apiRouter.use('/auth', rateLimiter(60000, 20), authRoutes);           // 20 req/min — login, registro
+apiRouter.use('/auth', authRoutes); // límites propios por endpoint en auth.routes.ts (login por IP+email, refresh holgado)
 apiRouter.use('/mensajes', rateLimiter(60000, 60), mensajeRoutes);    // 60 req/min — tiene uploads
 apiRouter.use('/usuarios', rateLimiter(60000, 60), usuarioRoutes);    // 60 req/min — busquedas con regex
 apiRouter.use('/dashboard', rateLimiter(60000, 30), dashboardRoutes); // 30 req/min — queries de agregacion pesadas
