@@ -8,6 +8,56 @@ import ApiError from '../utils/ApiError';
 import { GridFSBucket } from 'mongodb';
 import * as fs from 'fs';
 import { escapeRegex } from '../utils/escapeRegex';
+import {
+  esRolAdministrativo,
+  docenteTieneCurso,
+  obtenerHijosIds,
+  queryString,
+} from '../utils/accesoAcademico';
+
+const idDe = (valor: any): string => String(valor?._id ?? valor);
+
+/**
+ * Regla de acceso a una tarea (objeto plano). Devuelve las entregas visibles o null si no tiene acceso.
+ * - Administrativos: todo (su colegio ya va en la consulta).
+ * - DOCENTE: tareas propias o de sus cursos.
+ * - ESTUDIANTE: si tiene entrega o pertenece al curso; solo ve SU entrega.
+ * - ACUDIENTE: si algún hijo tiene entrega o pertenece al curso; solo ve las entregas de sus hijos.
+ */
+const resolverAccesoTarea = async (
+  user: any,
+  tarea: any,
+): Promise<{ entregas: any[]; completo: boolean } | null> => {
+  const entregas: any[] = tarea.entregas || [];
+
+  if (esRolAdministrativo(user.tipo)) return { entregas, completo: true };
+
+  if (user.tipo === 'DOCENTE') {
+    const propia = idDe(tarea.docenteId) === String(user._id);
+    if (propia || (await docenteTieneCurso(user, idDe(tarea.cursoId)))) {
+      return { entregas, completo: true };
+    }
+    return null;
+  }
+
+  let permitidos: string[] = [];
+  if (user.tipo === 'ESTUDIANTE') permitidos = [String(user._id)];
+  else if (user.tipo === 'ACUDIENTE') permitidos = await obtenerHijosIds(user);
+  else return null;
+
+  const visibles = entregas.filter((e) => e?.estudianteId && permitidos.includes(idDe(e.estudianteId)));
+  if (visibles.length > 0) return { entregas: visibles, completo: false };
+
+  // Sin entrega (p. ej. estudiante agregado después): acceso si pertenece al curso de la tarea
+  const enCurso = permitidos.length
+    ? await Curso.exists({
+        _id: idDe(tarea.cursoId),
+        escuelaId: user.escuelaId,
+        estudiantes: { $in: permitidos },
+      })
+    : null;
+  return enCurso ? { entregas: [], completo: false } : null;
+};
 import pushNotificationService from '../services/pushNotification.service';
 
 interface RequestWithUser extends Request {
@@ -159,32 +209,42 @@ class TareaController {
       const filters: any = { escuelaId: req.user.escuelaId };
 
       // Filtros según el rol
+      let estudiantesVisibles: string[] | null = null; // null = ve todas las entregas
       if (req.user.tipo === 'DOCENTE') {
         filters.docenteId = req.user._id;
       } else if (req.user.tipo === 'ESTUDIANTE') {
         filters['entregas.estudianteId'] = req.user._id;
+        estudiantesVisibles = [String(req.user._id)];
+      } else if (req.user.tipo === 'ACUDIENTE') {
+        estudiantesVisibles = await obtenerHijosIds(req.user);
+        filters['entregas.estudianteId'] = { $in: estudiantesVisibles };
       }
 
-      // Filtros adicionales
-      if (req.query.cursoId) {
-        filters.cursoId = req.query.cursoId;
+      // Filtros adicionales (casteados a string: evita operadores como estado[$ne]=)
+      const cursoId = queryString(req.query.cursoId);
+      const asignaturaId = queryString(req.query.asignaturaId);
+      const estado = queryString(req.query.estado);
+      const prioridad = queryString(req.query.prioridad);
+      const busqueda = queryString(req.query.busqueda);
+
+      if (cursoId) {
+        filters.cursoId = cursoId;
       }
 
-      if (req.query.asignaturaId) {
-        filters.asignaturaId = req.query.asignaturaId;
+      if (asignaturaId) {
+        filters.asignaturaId = asignaturaId;
       }
 
-      if (req.query.estado) {
-        filters.estado = req.query.estado;
+      if (estado) {
+        filters.estado = estado;
       }
 
-      if (req.query.prioridad) {
-        filters.prioridad = req.query.prioridad;
+      if (prioridad) {
+        filters.prioridad = prioridad;
       }
 
       // Búsqueda por texto
-      if (req.query.busqueda) {
-        const busqueda = req.query.busqueda as string;
+      if (busqueda) {
         filters.$or = [
           { titulo: { $regex: escapeRegex(busqueda), $options: 'i' } },
           { descripcion: { $regex: escapeRegex(busqueda), $options: 'i' } },
@@ -202,6 +262,14 @@ class TareaController {
           .lean(),
         Tarea.countDocuments(filters),
       ]);
+
+      // ESTUDIANTE / ACUDIENTE: quitar las entregas de otros estudiantes
+      if (estudiantesVisibles) {
+        const visibles = new Set(estudiantesVisibles);
+        tareas.forEach((t: any) => {
+          t.entregas = (t.entregas || []).filter((e: any) => visibles.has(idDe(e.estudianteId)));
+        });
+      }
 
       res.json({
         success: true,
@@ -240,17 +308,24 @@ class TareaController {
         throw new ApiError(404, 'Tarea no encontrada');
       }
 
+      // Regla de rol (DOCENTE sus cursos, ESTUDIANTE lo suyo, ACUDIENTE sus hijos)
+      const acceso = await resolverAccesoTarea(req.user, tarea.toObject());
+      if (!acceso) {
+        throw new ApiError(404, 'Tarea no encontrada');
+      }
+
       // Actualizar estados de entregas
       tarea.actualizarEstadosEntregas();
       await tarea.save();
 
-      // Si es estudiante, filtrar solo su entrega
-      if (req.user.tipo === 'ESTUDIANTE') {
+      // ESTUDIANTE / ACUDIENTE: solo sus entregas, sin estadísticas del curso
+      if (!acceso.completo) {
         const tareaObj = tarea.toObject();
+        const visibles = new Set(acceso.entregas.map((e: any) => idDe(e.estudianteId)));
         tareaObj.entregas = tareaObj.entregas.filter(
-          (e: any) => e.estudianteId._id.toString() === req.user?._id
+          (e: any) => e?.estudianteId && visibles.has(idDe(e.estudianteId))
         );
-        
+
         res.json({
           success: true,
           data: tareaObj,
@@ -818,7 +893,7 @@ class TareaController {
       }
 
       const { id, archivoId } = req.params;
-      const tipo = req.query.tipo as string; // 'referencia' o 'entrega'
+      const tipo = queryString(req.query.tipo); // 'referencia' o 'entrega'
 
       const tarea = await Tarea.findOne({
         _id: id,
@@ -826,6 +901,13 @@ class TareaController {
       });
 
       if (!tarea) {
+        throw new ApiError(404, 'Tarea no encontrada');
+      }
+
+      // Solo quien puede ver la tarea; en entregas, solo las visibles para su rol
+      // (propio estudiante, su acudiente, docente del curso o administrativos)
+      const acceso = await resolverAccesoTarea(req.user, tarea.toObject());
+      if (!acceso) {
         throw new ApiError(404, 'Tarea no encontrada');
       }
 
@@ -838,9 +920,9 @@ class TareaController {
         );
         bucketName = 'tareas_referencias';
       } else if (tipo === 'entrega') {
-        // Buscar en todas las entregas
-        for (const entrega of tarea.entregas) {
-          archivo = entrega.archivos.find(
+        // Buscar solo en las entregas visibles para el usuario
+        for (const entrega of acceso.entregas) {
+          archivo = (entrega.archivos || []).find(
             (a: any) => a.fileId.toString() === archivoId
           );
           if (archivo) break;
@@ -1105,13 +1187,15 @@ async misTareas(req: RequestWithUser, res: Response, next: NextFunction) {
         filters.docenteId = req.user._id;
       }
 
-      // Filtros opcionales
-      if (req.query.cursoId) {
-        filters.cursoId = req.query.cursoId;
+      // Filtros opcionales (casteados a string)
+      const cursoIdFiltro = queryString(req.query.cursoId);
+      const asignaturaIdFiltro = queryString(req.query.asignaturaId);
+      if (cursoIdFiltro) {
+        filters.cursoId = cursoIdFiltro;
       }
 
-      if (req.query.asignaturaId) {
-        filters.asignaturaId = req.query.asignaturaId;
+      if (asignaturaIdFiltro) {
+        filters.asignaturaId = asignaturaIdFiltro;
       }
 
       const tareas = await Tarea.find(filters);

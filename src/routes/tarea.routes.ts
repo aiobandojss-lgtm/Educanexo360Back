@@ -48,14 +48,18 @@ router.post(
   tareaController.crear
 );
 
+// Lectura: administrativos (authorize('ADMIN') los incluye), DOCENTE, ESTUDIANTE y ACUDIENTE;
+// el controlador filtra por rol
 router.get(
   '/',
+  authorize('ADMIN', 'DOCENTE', 'ESTUDIANTE', 'ACUDIENTE'),
   validate(tareaValidation.listar),
   tareaController.listar
 );
 
 router.get(
   '/:id',
+  authorize('ADMIN', 'DOCENTE', 'ESTUDIANTE', 'ACUDIENTE'),
   validate(tareaValidation.obtenerPorId),
   tareaController.obtenerPorId
 );
@@ -98,8 +102,10 @@ router.delete(
   tareaController.eliminarArchivoReferencia
 );
 
+// Descarga: el controlador verifica acceso a la tarea y, en entregas, que sea visible para el rol
 router.get(
   '/:id/archivos/:archivoId',
+  authorize('ADMIN', 'DOCENTE', 'ESTUDIANTE', 'ACUDIENTE'),
   validate(tareaValidation.archivo),
   tareaController.descargarArchivo
 );
