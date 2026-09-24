@@ -27,14 +27,14 @@ router.post(
 
 router.get(
   '/',
-  authorize('ADMIN', 'DOCENTE', 'ESTUDIANTE', 'PADRE'),
+  authorize('ADMIN', 'DOCENTE', 'ESTUDIANTE', 'ACUDIENTE'),
   cacheMiddleware('calificaciones'),
   calificacionController.obtenerTodas,
 );
 
 router.get(
   '/:id',
-  authorize('ADMIN', 'DOCENTE', 'ESTUDIANTE', 'PADRE'),
+  authorize('ADMIN', 'DOCENTE', 'ESTUDIANTE', 'ACUDIENTE'),
   calificacionController.obtenerPorId,
 );
 
