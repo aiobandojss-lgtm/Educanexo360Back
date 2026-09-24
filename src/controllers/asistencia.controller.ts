@@ -14,6 +14,25 @@ import {
 } from '../interfaces/IAsistencia';
 import AlertaAsistencia from '../models/alertaAsistencia.model';
 import { triggerAlertasAsistencia } from '../services/alertaAsistencia.service';
+import {
+  esRolAdministrativo,
+  docenteTieneCurso,
+  obtenerCursosDocente,
+  obtenerHijosIds,
+  puedeVerEstudiante,
+  queryString,
+} from '../utils/accesoAcademico';
+
+const idDe = (valor: any): string => String(valor?._id ?? valor);
+
+// DOCENTE: puede ver un registro si lo creó o si es de uno de sus cursos
+const docentePuedeVerRegistro = async (user: any, asistencia: any): Promise<boolean> =>
+  idDe(asistencia.docenteId) === String(user._id) ||
+  (await docenteTieneCurso(user, idDe(asistencia.cursoId)));
+
+// Solo el docente que creó el registro o un rol administrativo pueden modificarlo
+const puedeModificarRegistro = (user: any, asistencia: any): boolean =>
+  esRolAdministrativo(user.tipo) || idDe(asistencia.docenteId) === String(user._id);
 
 // Definir la interfaz para Request con el usuario autenticado
 interface RequestWithUser extends Request {
@@ -55,6 +74,7 @@ export const crearAsistencia = async (req: RequestWithUser, res: Response, next:
 
     // Verificar si ya existe un registro de asistencia para este curso, fecha y asignatura
     const existeAsistencia = await Asistencia.findOne({
+      escuelaId: req.user.escuelaId,
       fecha: new Date(fecha),
       cursoId,
       ...(asignaturaId && { asignaturaId }),
@@ -96,7 +116,7 @@ export const crearAsistencia = async (req: RequestWithUser, res: Response, next:
 
     // Obtener los estudiantes del curso si no se proporcionaron
     if (!estudiantes || estudiantes.length === 0) {
-      const curso = await Curso.findById(cursoId);
+      const curso = await Curso.findOne({ _id: cursoId, escuelaId: req.user.escuelaId });
       if (!curso) {
         return next(new ApiError(404, 'Curso no encontrado'));
       }
@@ -144,16 +164,15 @@ export const obtenerAsistencias = async (
       return next(new ApiError(401, 'No autorizado'));
     }
 
-    const {
-      cursoId,
-      asignaturaId,
-      desde,
-      hasta,
-      docenteId,
-      finalizado,
-      page = 1,
-      limit = 10,
-    } = req.query;
+    // Valores de query casteados a string (evita operadores como cursoId[$ne]=)
+    const cursoId = queryString(req.query.cursoId);
+    const asignaturaId = queryString(req.query.asignaturaId);
+    const desde = queryString(req.query.desde);
+    const hasta = queryString(req.query.hasta);
+    const docenteId = queryString(req.query.docenteId);
+    const finalizado = queryString(req.query.finalizado);
+    const page = queryString(req.query.page) || 1;
+    const limit = queryString(req.query.limit) || 10;
 
     const skip = (Number(page) - 1) * Number(limit);
 
@@ -164,6 +183,12 @@ export const obtenerAsistencias = async (
     if (asignaturaId) query.asignaturaId = asignaturaId;
     if (docenteId) query.docenteId = docenteId;
     if (finalizado !== undefined) query.finalizado = finalizado === 'true';
+
+    // DOCENTE: solo registros propios o de sus cursos
+    if (req.user.tipo === 'DOCENTE') {
+      const cursosDocente = await obtenerCursosDocente(req.user._id, req.user.escuelaId);
+      query.$or = [{ docenteId: req.user._id }, { cursoId: { $in: cursosDocente } }];
+    }
 
     // Filtro por rango de fechas
     if (desde || hasta) {
@@ -218,7 +243,7 @@ export const obtenerAsistenciaPorId = async (
 
     const { id } = req.params;
 
-    const asistencia = await Asistencia.findById(id)
+    const asistencia = await Asistencia.findOne({ _id: id, escuelaId: req.user.escuelaId })
       .populate('cursoId', 'nombre nivel grado grupo')
       .populate('asignaturaId', 'nombre codigo')
       .populate('docenteId', 'nombre apellidos')
@@ -232,8 +257,8 @@ export const obtenerAsistenciaPorId = async (
       return next(new ApiError(404, 'Registro de asistencia no encontrado'));
     }
 
-    // Verificar que pertenece a la escuela del usuario
-    if (asistencia.escuelaId.toString() !== req.user.escuelaId) {
+    // DOCENTE: solo registros propios o de sus cursos
+    if (req.user.tipo === 'DOCENTE' && !(await docentePuedeVerRegistro(req.user, asistencia))) {
       return next(new ApiError(403, 'No tiene acceso a este registro de asistencia'));
     }
 
@@ -301,24 +326,36 @@ export const actualizarAsistencia = async (
     }
 
     const { id } = req.params;
-    const { estudiantes, observacionesGenerales, tipoSesion, horaInicio, horaFin } = req.body;
+    const { observacionesGenerales, tipoSesion, horaInicio, horaFin } = req.body;
+    let { estudiantes } = req.body;
 
-    const asistencia = await Asistencia.findById(id);
+    const asistencia = await Asistencia.findOne({ _id: id, escuelaId: req.user.escuelaId });
 
     if (!asistencia) {
       return next(new ApiError(404, 'Registro de asistencia no encontrado'));
     }
 
-    // Verificar que pertenece a la escuela del usuario
-    if (asistencia.escuelaId.toString() !== req.user.escuelaId) {
-      return next(new ApiError(403, 'No tiene acceso a este registro de asistencia'));
+    // Solo el docente que creó el registro o un rol administrativo
+    if (!puedeModificarRegistro(req.user, asistencia)) {
+      return next(new ApiError(403, 'No tiene autorización para modificar este registro'));
     }
 
     // Actualizar solo los campos permitidos
-    if (estudiantes) {
+    if (Array.isArray(estudiantes)) {
+      // Solo estudiantes del curso del registro, y solo campos permitidos
+      const curso = await Curso.findOne({ _id: asistencia.cursoId, escuelaId: req.user.escuelaId })
+        .select('estudiantes')
+        .lean();
+      const idsCurso = new Set((curso?.estudiantes || []).map((e: any) => String(e)));
+
+      estudiantes = estudiantes.filter((est: any) => idsCurso.has(String(est?.estudianteId)));
+
       // Añadir registradoPor y fechaRegistro a cada estudiante actualizado
       const estudiantesActualizados = estudiantes.map((est: any) => ({
-        ...est,
+        estudianteId: est.estudianteId,
+        estado: est.estado,
+        justificacion: est.justificacion,
+        observaciones: est.observaciones,
         registradoPor: req.user!._id,
         fechaRegistro: new Date(),
       }));
@@ -355,11 +392,19 @@ export const actualizarAsistencia = async (
         (async () => {
           for (const estudianteId of ausentesIds) {
             try {
-              const estudiante = await Usuario.findById(estudianteId).select('nombre apellidos').lean() as any;
+              const estudiante = await Usuario.findOne({ _id: estudianteId, escuelaId: asistencia.escuelaId })
+                .select('nombre apellidos')
+                .lean() as any;
               if (!estudiante) continue;
 
+              // Corregido: el campo real es info_academica.estudiantes_asociados (antes: estudiantesAsociados)
               const acudientes = await Usuario.find(
-                { estudiantesAsociados: estudianteId, fcmToken: { $exists: true, $ne: null } },
+                {
+                  escuelaId: asistencia.escuelaId,
+                  tipo: 'ACUDIENTE',
+                  'info_academica.estudiantes_asociados': estudianteId,
+                  fcmToken: { $exists: true, $ne: null },
+                },
                 { fcmToken: 1 }
               ).lean() as any[];
 
@@ -403,15 +448,15 @@ export const finalizarAsistencia = async (
 
     const { id } = req.params;
 
-    const asistencia = await Asistencia.findById(id);
+    const asistencia = await Asistencia.findOne({ _id: id, escuelaId: req.user.escuelaId });
 
     if (!asistencia) {
       return next(new ApiError(404, 'Registro de asistencia no encontrado'));
     }
 
-    // Verificar que pertenece a la escuela del usuario
-    if (asistencia.escuelaId.toString() !== req.user.escuelaId) {
-      return next(new ApiError(403, 'No tiene acceso a este registro de asistencia'));
+    // Solo el docente que creó el registro o un rol administrativo
+    if (!puedeModificarRegistro(req.user, asistencia)) {
+      return next(new ApiError(403, 'No tiene autorización para modificar este registro'));
     }
 
     // Verificar que tenga al menos un estudiante registrado
@@ -478,7 +523,7 @@ export const eliminarAsistencia = async (
     }
 
     // Verificar que solo el creador o un administrador puede eliminar
-    if (asistencia.docenteId.toString() !== req.user._id && req.user.tipo !== 'ADMIN') {
+    if (!puedeModificarRegistro(req.user, asistencia)) {
       return next(new ApiError(403, 'No tiene autorización para eliminar este registro'));
     }
 
@@ -513,7 +558,14 @@ export const obtenerEstadisticasCurso = async (
     }
 
     const { cursoId } = req.params;
-    const { desde, hasta, asignaturaId } = req.query;
+    const desde = queryString(req.query.desde);
+    const hasta = queryString(req.query.hasta);
+    const asignaturaId = queryString(req.query.asignaturaId);
+
+    // DOCENTE: solo sus cursos
+    if (req.user.tipo === 'DOCENTE' && !(await docenteTieneCurso(req.user, cursoId))) {
+      return next(new ApiError(403, 'No tiene acceso a este curso'));
+    }
 
     // Construir la consulta
     const query: any = {
@@ -656,10 +708,21 @@ export const obtenerEstadisticasEstudiante = async (
     }
 
     const { estudianteId } = req.params;
-    const { desde, hasta, cursoId, asignaturaId } = req.query;
+    const desde = queryString(req.query.desde);
+    const hasta = queryString(req.query.hasta);
+    const cursoId = queryString(req.query.cursoId);
+    const asignaturaId = queryString(req.query.asignaturaId);
 
-    // Verificar que el estudiante existe
-    const estudiante = await Usuario.findById(estudianteId).select('nombre apellidos');
+    // Regla de rol: ESTUDIANTE él mismo, ACUDIENTE sus hijos, DOCENTE sus cursos, administrativos su colegio
+    if (!(await puedeVerEstudiante(req.user, estudianteId))) {
+      return next(new ApiError(403, 'No tiene acceso a la información de este estudiante'));
+    }
+
+    // Verificar que el estudiante existe en el colegio
+    const estudiante = await Usuario.findOne({
+      _id: estudianteId,
+      escuelaId: req.user.escuelaId,
+    }).select('nombre apellidos');
     if (!estudiante) {
       return next(new ApiError(404, 'Estudiante no encontrado'));
     }
@@ -813,7 +876,9 @@ export const obtenerAsistenciaDia = async (
       return next(new ApiError(401, 'No autorizado'));
     }
 
-    const { fecha, cursoId, asignaturaId } = req.query;
+    const fecha = queryString(req.query.fecha);
+    const cursoId = queryString(req.query.cursoId);
+    const asignaturaId = queryString(req.query.asignaturaId);
 
     if (!fecha) {
       return next(new ApiError(400, 'La fecha es requerida'));
@@ -821,6 +886,11 @@ export const obtenerAsistenciaDia = async (
 
     if (!cursoId) {
       return next(new ApiError(400, 'El ID del curso es requerido'));
+    }
+
+    // DOCENTE: solo sus cursos
+    if (req.user.tipo === 'DOCENTE' && !(await docenteTieneCurso(req.user, cursoId))) {
+      return next(new ApiError(403, 'No tiene acceso a este curso'));
     }
 
     // Construir fechas para buscar registros en el día específico
@@ -883,12 +953,35 @@ export const obtenerResumen = async (req: RequestWithUser, res: Response, next: 
       return next(new ApiError(401, 'No autorizado'));
     }
 
-    const { fechaInicio, fechaFin, cursoId } = req.query;
+    const fechaInicio = queryString(req.query.fechaInicio);
+    const fechaFin = queryString(req.query.fechaFin);
+    const cursoId = queryString(req.query.cursoId);
+    const estudianteIdQuery = queryString(req.query.estudianteId);
 
     // Construir la consulta
     const query: any = { escuelaId: req.user.escuelaId };
 
     if (cursoId) query.cursoId = cursoId;
+
+    // ESTUDIANTE / ACUDIENTE: solo registros donde aparece el estudiante permitido
+    const esRolPersonal = req.user.tipo === 'ESTUDIANTE' || req.user.tipo === 'ACUDIENTE';
+    let estudiantesPermitidos: string[] = [];
+    if (req.user.tipo === 'ESTUDIANTE') {
+      estudiantesPermitidos = [String(req.user._id)];
+    } else if (req.user.tipo === 'ACUDIENTE') {
+      const hijos = await obtenerHijosIds(req.user);
+      if (estudianteIdQuery) {
+        if (!hijos.includes(estudianteIdQuery)) {
+          return next(new ApiError(403, 'No tiene acceso a la información de este estudiante'));
+        }
+        estudiantesPermitidos = [estudianteIdQuery];
+      } else {
+        estudiantesPermitidos = hijos;
+      }
+    }
+    if (esRolPersonal) {
+      query['estudiantes.estudianteId'] = { $in: estudiantesPermitidos };
+    }
 
     // Filtro por rango de fechas
     if (fechaInicio || fechaFin) {
@@ -908,6 +1001,16 @@ export const obtenerResumen = async (req: RequestWithUser, res: Response, next: 
       .populate('asignaturaId', 'nombre codigo') // ← ✅ AGREGAR ESTA LÍNEA
       .populate('docenteId', 'nombre apellidos')
       .select('fecha cursoId asignaturaId docenteId estudiantes createdAt finalizado'); // ← ✅ Agregar asignaturaId
+
+    // Roles personales: cada registro solo con la entrada del estudiante permitido (no la de sus compañeros)
+    if (esRolPersonal) {
+      const permitidos = new Set(estudiantesPermitidos);
+      registros.forEach((registro: any) => {
+        registro.estudiantes = registro.estudiantes.filter((est: any) =>
+          permitidos.has(String(est.estudianteId)),
+        );
+      });
+    }
 
     // Transformar los datos para el formato que espera el frontend
     const resumen = registros.map((registro) => {
@@ -1036,7 +1139,7 @@ export const obtenerResumenPeriodo = async (
     const fechaFin = new Date(periodoEncontrado.fecha_fin);
 
     // Obtener todos los estudiantes del curso
-    const curso = await Curso.findById(cursoId).populate({
+    const curso = await Curso.findOne({ _id: cursoId, escuelaId: req.user.escuelaId }).populate({
       path: 'estudiantes',
       select: 'nombre apellidos',
     });

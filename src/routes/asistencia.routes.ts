@@ -28,21 +28,25 @@ const router = express.Router();
 // Todas las rutas requieren autenticación
 router.use(authenticate);
 
+// Roles del personal: administrativos (authorize('ADMIN') los incluye) y DOCENTE (filtrado a sus cursos en el controlador)
+const personal = authorize('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO');
+
 // Rutas para estadísticas y consultas especiales (deben ir antes de las rutas con :id)
-router.get('/dia', obtenerAsistenciaDia as RequestHandler);
+router.get('/dia', personal, obtenerAsistenciaDia as RequestHandler);
 router.get(
   '/alertas',
   authorize('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'),
   validate(alertasAsistenciaValidation),
   getAlertasAsistencia as RequestHandler,
 );
-router.get('/estadisticas/curso/:cursoId', obtenerEstadisticasCurso as RequestHandler);
+router.get('/estadisticas/curso/:cursoId', personal, obtenerEstadisticasCurso as RequestHandler);
+// Todos los roles; el controlador aplica puedeVerEstudiante (ESTUDIANTE él mismo, ACUDIENTE sus hijos)
 router.get(
   '/estadisticas/estudiante/:estudianteId',
   obtenerEstadisticasEstudiante as RequestHandler,
 );
 
-// Ruta para obtener resumen general
+// Resumen: todos los roles; ESTUDIANTE/ACUDIENTE quedan filtrados a su estudiante en el controlador
 router.get('/resumen', obtenerResumen as RequestHandler);
 
 router.get(
@@ -59,9 +63,9 @@ router.post(
   crearAsistencia as RequestHandler,
 );
 
-// Permitir acceso a todos los usuarios autenticados para consultar asistencias
-router.get('/', obtenerAsistencias as RequestHandler);
-router.get('/:id', obtenerAsistenciaPorId as RequestHandler);
+// Listado y detalle: solo personal (ESTUDIANTE/ACUDIENTE usan /resumen y /estadisticas/estudiante)
+router.get('/', personal, obtenerAsistencias as RequestHandler);
+router.get('/:id', personal, obtenerAsistenciaPorId as RequestHandler);
 
 router.put(
   '/:id',
