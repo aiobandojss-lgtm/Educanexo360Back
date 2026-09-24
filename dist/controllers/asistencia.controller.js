@@ -13,6 +13,11 @@ const pushNotification_service_1 = __importDefault(require("../services/pushNoti
 const IAsistencia_1 = require("../interfaces/IAsistencia");
 const alertaAsistencia_model_1 = __importDefault(require("../models/alertaAsistencia.model"));
 const alertaAsistencia_service_1 = require("../services/alertaAsistencia.service");
+const accesoAcademico_1 = require("../utils/accesoAcademico");
+const idDe = (valor) => String(valor?._id ?? valor);
+const docentePuedeVerRegistro = async (user, asistencia) => idDe(asistencia.docenteId) === String(user._id) ||
+    (await (0, accesoAcademico_1.docenteTieneCurso)(user, idDe(asistencia.cursoId)));
+const puedeModificarRegistro = (user, asistencia) => (0, accesoAcademico_1.esRolAdministrativo)(user.tipo) || idDe(asistencia.docenteId) === String(user._id);
 const crearAsistencia = async (req, res, next) => {
     try {
         if (!req.user) {
@@ -20,6 +25,7 @@ const crearAsistencia = async (req, res, next) => {
         }
         const { fecha, cursoId, asignaturaId, tipoSesion, horaInicio, horaFin, observacionesGenerales, estudiantes, } = req.body;
         const existeAsistencia = await asistencia_model_1.default.findOne({
+            escuelaId: req.user.escuelaId,
             fecha: new Date(fecha),
             cursoId,
             ...(asignaturaId && { asignaturaId }),
@@ -44,7 +50,7 @@ const crearAsistencia = async (req, res, next) => {
             }
         }
         if (!estudiantes || estudiantes.length === 0) {
-            const curso = await curso_model_1.default.findById(cursoId);
+            const curso = await curso_model_1.default.findOne({ _id: cursoId, escuelaId: req.user.escuelaId });
             if (!curso) {
                 return next(new ApiError_1.default(404, 'Curso no encontrado'));
             }
@@ -75,7 +81,14 @@ const obtenerAsistencias = async (req, res, next) => {
         if (!req.user) {
             return next(new ApiError_1.default(401, 'No autorizado'));
         }
-        const { cursoId, asignaturaId, desde, hasta, docenteId, finalizado, page = 1, limit = 10, } = req.query;
+        const cursoId = (0, accesoAcademico_1.queryString)(req.query.cursoId);
+        const asignaturaId = (0, accesoAcademico_1.queryString)(req.query.asignaturaId);
+        const desde = (0, accesoAcademico_1.queryString)(req.query.desde);
+        const hasta = (0, accesoAcademico_1.queryString)(req.query.hasta);
+        const docenteId = (0, accesoAcademico_1.queryString)(req.query.docenteId);
+        const finalizado = (0, accesoAcademico_1.queryString)(req.query.finalizado);
+        const page = (0, accesoAcademico_1.queryString)(req.query.page) || 1;
+        const limit = (0, accesoAcademico_1.queryString)(req.query.limit) || 10;
         const skip = (Number(page) - 1) * Number(limit);
         const query = { escuelaId: req.user.escuelaId };
         if (cursoId)
@@ -86,6 +99,10 @@ const obtenerAsistencias = async (req, res, next) => {
             query.docenteId = docenteId;
         if (finalizado !== undefined)
             query.finalizado = finalizado === 'true';
+        if (req.user.tipo === 'DOCENTE') {
+            const cursosDocente = await (0, accesoAcademico_1.obtenerCursosDocente)(req.user._id, req.user.escuelaId);
+            query.$or = [{ docenteId: req.user._id }, { cursoId: { $in: cursosDocente } }];
+        }
         if (desde || hasta) {
             query.fecha = {};
             if (desde)
@@ -126,7 +143,7 @@ const obtenerAsistenciaPorId = async (req, res, next) => {
             return next(new ApiError_1.default(401, 'No autorizado'));
         }
         const { id } = req.params;
-        const asistencia = await asistencia_model_1.default.findById(id)
+        const asistencia = await asistencia_model_1.default.findOne({ _id: id, escuelaId: req.user.escuelaId })
             .populate('cursoId', 'nombre nivel grado grupo')
             .populate('asignaturaId', 'nombre codigo')
             .populate('docenteId', 'nombre apellidos')
@@ -138,7 +155,7 @@ const obtenerAsistenciaPorId = async (req, res, next) => {
         if (!asistencia) {
             return next(new ApiError_1.default(404, 'Registro de asistencia no encontrado'));
         }
-        if (asistencia.escuelaId.toString() !== req.user.escuelaId) {
+        if (req.user.tipo === 'DOCENTE' && !(await docentePuedeVerRegistro(req.user, asistencia))) {
             return next(new ApiError_1.default(403, 'No tiene acceso a este registro de asistencia'));
         }
         const estudiantesFormateados = asistencia.estudiantes.map((est) => {
@@ -182,17 +199,26 @@ const actualizarAsistencia = async (req, res, next) => {
             return next(new ApiError_1.default(401, 'No autorizado'));
         }
         const { id } = req.params;
-        const { estudiantes, observacionesGenerales, tipoSesion, horaInicio, horaFin } = req.body;
-        const asistencia = await asistencia_model_1.default.findById(id);
+        const { observacionesGenerales, tipoSesion, horaInicio, horaFin } = req.body;
+        let { estudiantes } = req.body;
+        const asistencia = await asistencia_model_1.default.findOne({ _id: id, escuelaId: req.user.escuelaId });
         if (!asistencia) {
             return next(new ApiError_1.default(404, 'Registro de asistencia no encontrado'));
         }
-        if (asistencia.escuelaId.toString() !== req.user.escuelaId) {
-            return next(new ApiError_1.default(403, 'No tiene acceso a este registro de asistencia'));
+        if (!puedeModificarRegistro(req.user, asistencia)) {
+            return next(new ApiError_1.default(403, 'No tiene autorización para modificar este registro'));
         }
-        if (estudiantes) {
+        if (Array.isArray(estudiantes)) {
+            const curso = await curso_model_1.default.findOne({ _id: asistencia.cursoId, escuelaId: req.user.escuelaId })
+                .select('estudiantes')
+                .lean();
+            const idsCurso = new Set((curso?.estudiantes || []).map((e) => String(e)));
+            estudiantes = estudiantes.filter((est) => idsCurso.has(String(est?.estudianteId)));
             const estudiantesActualizados = estudiantes.map((est) => ({
-                ...est,
+                estudianteId: est.estudianteId,
+                estado: est.estado,
+                justificacion: est.justificacion,
+                observaciones: est.observaciones,
                 registradoPor: req.user._id,
                 fechaRegistro: new Date(),
             }));
@@ -219,10 +245,17 @@ const actualizarAsistencia = async (req, res, next) => {
                 (async () => {
                     for (const estudianteId of ausentesIds) {
                         try {
-                            const estudiante = await usuario_model_1.default.findById(estudianteId).select('nombre apellidos').lean();
+                            const estudiante = await usuario_model_1.default.findOne({ _id: estudianteId, escuelaId: asistencia.escuelaId })
+                                .select('nombre apellidos')
+                                .lean();
                             if (!estudiante)
                                 continue;
-                            const acudientes = await usuario_model_1.default.find({ estudiantesAsociados: estudianteId, fcmToken: { $exists: true, $ne: null } }, { fcmToken: 1 }).lean();
+                            const acudientes = await usuario_model_1.default.find({
+                                escuelaId: asistencia.escuelaId,
+                                tipo: 'ACUDIENTE',
+                                'info_academica.estudiantes_asociados': estudianteId,
+                                fcmToken: { $exists: true, $ne: null },
+                            }, { fcmToken: 1 }).lean();
                             for (const acudiente of acudientes) {
                                 pushNotification_service_1.default.enviarNotificacion({
                                     token: acudiente.fcmToken,
@@ -254,12 +287,12 @@ const finalizarAsistencia = async (req, res, next) => {
             return next(new ApiError_1.default(401, 'No autorizado'));
         }
         const { id } = req.params;
-        const asistencia = await asistencia_model_1.default.findById(id);
+        const asistencia = await asistencia_model_1.default.findOne({ _id: id, escuelaId: req.user.escuelaId });
         if (!asistencia) {
             return next(new ApiError_1.default(404, 'Registro de asistencia no encontrado'));
         }
-        if (asistencia.escuelaId.toString() !== req.user.escuelaId) {
-            return next(new ApiError_1.default(403, 'No tiene acceso a este registro de asistencia'));
+        if (!puedeModificarRegistro(req.user, asistencia)) {
+            return next(new ApiError_1.default(403, 'No tiene autorización para modificar este registro'));
         }
         if (!asistencia.estudiantes || asistencia.estudiantes.length === 0) {
             return next(new ApiError_1.default(400, 'No se puede finalizar un registro sin estudiantes'));
@@ -298,7 +331,7 @@ const eliminarAsistencia = async (req, res, next) => {
         if (asistencia.escuelaId.toString() !== req.user.escuelaId) {
             return next(new ApiError_1.default(403, 'No tiene acceso a este registro de asistencia'));
         }
-        if (asistencia.docenteId.toString() !== req.user._id && req.user.tipo !== 'ADMIN') {
+        if (!puedeModificarRegistro(req.user, asistencia)) {
             return next(new ApiError_1.default(403, 'No tiene autorización para eliminar este registro'));
         }
         if (asistencia.finalizado) {
@@ -321,7 +354,12 @@ const obtenerEstadisticasCurso = async (req, res, next) => {
             return next(new ApiError_1.default(401, 'No autorizado'));
         }
         const { cursoId } = req.params;
-        const { desde, hasta, asignaturaId } = req.query;
+        const desde = (0, accesoAcademico_1.queryString)(req.query.desde);
+        const hasta = (0, accesoAcademico_1.queryString)(req.query.hasta);
+        const asignaturaId = (0, accesoAcademico_1.queryString)(req.query.asignaturaId);
+        if (req.user.tipo === 'DOCENTE' && !(await (0, accesoAcademico_1.docenteTieneCurso)(req.user, cursoId))) {
+            return next(new ApiError_1.default(403, 'No tiene acceso a este curso'));
+        }
         const query = {
             cursoId,
             escuelaId: req.user.escuelaId,
@@ -433,8 +471,17 @@ const obtenerEstadisticasEstudiante = async (req, res, next) => {
             return next(new ApiError_1.default(401, 'No autorizado'));
         }
         const { estudianteId } = req.params;
-        const { desde, hasta, cursoId, asignaturaId } = req.query;
-        const estudiante = await usuario_model_1.default.findById(estudianteId).select('nombre apellidos');
+        const desde = (0, accesoAcademico_1.queryString)(req.query.desde);
+        const hasta = (0, accesoAcademico_1.queryString)(req.query.hasta);
+        const cursoId = (0, accesoAcademico_1.queryString)(req.query.cursoId);
+        const asignaturaId = (0, accesoAcademico_1.queryString)(req.query.asignaturaId);
+        if (!(await (0, accesoAcademico_1.puedeVerEstudiante)(req.user, estudianteId))) {
+            return next(new ApiError_1.default(403, 'No tiene acceso a la información de este estudiante'));
+        }
+        const estudiante = await usuario_model_1.default.findOne({
+            _id: estudianteId,
+            escuelaId: req.user.escuelaId,
+        }).select('nombre apellidos');
         if (!estudiante) {
             return next(new ApiError_1.default(404, 'Estudiante no encontrado'));
         }
@@ -559,12 +606,17 @@ const obtenerAsistenciaDia = async (req, res, next) => {
         if (!req.user) {
             return next(new ApiError_1.default(401, 'No autorizado'));
         }
-        const { fecha, cursoId, asignaturaId } = req.query;
+        const fecha = (0, accesoAcademico_1.queryString)(req.query.fecha);
+        const cursoId = (0, accesoAcademico_1.queryString)(req.query.cursoId);
+        const asignaturaId = (0, accesoAcademico_1.queryString)(req.query.asignaturaId);
         if (!fecha) {
             return next(new ApiError_1.default(400, 'La fecha es requerida'));
         }
         if (!cursoId) {
             return next(new ApiError_1.default(400, 'El ID del curso es requerido'));
+        }
+        if (req.user.tipo === 'DOCENTE' && !(await (0, accesoAcademico_1.docenteTieneCurso)(req.user, cursoId))) {
+            return next(new ApiError_1.default(403, 'No tiene acceso a este curso'));
         }
         const fechaInicio = new Date(fecha);
         fechaInicio.setHours(0, 0, 0, 0);
@@ -607,10 +659,33 @@ const obtenerResumen = async (req, res, next) => {
         if (!req.user) {
             return next(new ApiError_1.default(401, 'No autorizado'));
         }
-        const { fechaInicio, fechaFin, cursoId } = req.query;
+        const fechaInicio = (0, accesoAcademico_1.queryString)(req.query.fechaInicio);
+        const fechaFin = (0, accesoAcademico_1.queryString)(req.query.fechaFin);
+        const cursoId = (0, accesoAcademico_1.queryString)(req.query.cursoId);
+        const estudianteIdQuery = (0, accesoAcademico_1.queryString)(req.query.estudianteId);
         const query = { escuelaId: req.user.escuelaId };
         if (cursoId)
             query.cursoId = cursoId;
+        const esRolPersonal = req.user.tipo === 'ESTUDIANTE' || req.user.tipo === 'ACUDIENTE';
+        let estudiantesPermitidos = [];
+        if (req.user.tipo === 'ESTUDIANTE') {
+            estudiantesPermitidos = [String(req.user._id)];
+        }
+        else if (req.user.tipo === 'ACUDIENTE') {
+            const hijos = await (0, accesoAcademico_1.obtenerHijosIds)(req.user);
+            if (estudianteIdQuery) {
+                if (!hijos.includes(estudianteIdQuery)) {
+                    return next(new ApiError_1.default(403, 'No tiene acceso a la información de este estudiante'));
+                }
+                estudiantesPermitidos = [estudianteIdQuery];
+            }
+            else {
+                estudiantesPermitidos = hijos;
+            }
+        }
+        if (esRolPersonal) {
+            query['estudiantes.estudianteId'] = { $in: estudiantesPermitidos };
+        }
         if (fechaInicio || fechaFin) {
             query.fecha = {};
             if (fechaInicio)
@@ -626,6 +701,12 @@ const obtenerResumen = async (req, res, next) => {
             .populate('asignaturaId', 'nombre codigo')
             .populate('docenteId', 'nombre apellidos')
             .select('fecha cursoId asignaturaId docenteId estudiantes createdAt finalizado');
+        if (esRolPersonal) {
+            const permitidos = new Set(estudiantesPermitidos);
+            registros.forEach((registro) => {
+                registro.estudiantes = registro.estudiantes.filter((est) => permitidos.has(String(est.estudianteId)));
+            });
+        }
         const resumen = registros.map((registro) => {
             const totalEstudiantes = registro.estudiantes.length;
             const presentes = registro.estudiantes.filter((est) => est.estado === IAsistencia_1.EstadoAsistencia.PRESENTE).length;
@@ -707,7 +788,7 @@ const obtenerResumenPeriodo = async (req, res, next) => {
         }
         const fechaInicio = new Date(periodoEncontrado.fecha_inicio);
         const fechaFin = new Date(periodoEncontrado.fecha_fin);
-        const curso = await curso_model_1.default.findById(cursoId).populate({
+        const curso = await curso_model_1.default.findOne({ _id: cursoId, escuelaId: req.user.escuelaId }).populate({
             path: 'estudiantes',
             select: 'nombre apellidos',
         });

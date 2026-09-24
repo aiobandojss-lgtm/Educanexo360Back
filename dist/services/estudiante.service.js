@@ -11,7 +11,18 @@ const ApiError_1 = __importDefault(require("../utils/ApiError"));
 const escapeRegex_1 = require("../utils/escapeRegex");
 class EstudianteService {
     async buscarEstudiantesExistentes(options) {
-        const { escuelaId, ...criterios } = options;
+        const { escuelaId } = options;
+        const texto = (v) => typeof v === 'string' && v.trim() !== '' ? v.trim() : undefined;
+        const prefijo = (v) => {
+            const t = texto(v);
+            return t && t.length >= 3 ? new RegExp('^' + (0, escapeRegex_1.escapeRegex)(t), 'i') : undefined;
+        };
+        const criterios = {
+            email: texto(options.email)?.toLowerCase(),
+            codigo_estudiante: texto(options.codigo_estudiante),
+            nombre: prefijo(options.nombre),
+            apellidos: prefijo(options.apellidos),
+        };
         const query = {
             tipo: 'ESTUDIANTE',
             estado: 'ACTIVO',
@@ -26,18 +37,18 @@ class EstudianteService {
         }
         if (criterios.nombre && criterios.apellidos) {
             orConditions.push({
-                nombre: new RegExp((0, escapeRegex_1.escapeRegex)(criterios.nombre), 'i'),
-                apellidos: new RegExp((0, escapeRegex_1.escapeRegex)(criterios.apellidos), 'i'),
+                nombre: criterios.nombre,
+                apellidos: criterios.apellidos,
             });
         }
         else if (criterios.nombre) {
             orConditions.push({
-                nombre: new RegExp((0, escapeRegex_1.escapeRegex)(criterios.nombre), 'i'),
+                nombre: criterios.nombre,
             });
         }
         else if (criterios.apellidos) {
             orConditions.push({
-                apellidos: new RegExp((0, escapeRegex_1.escapeRegex)(criterios.apellidos), 'i'),
+                apellidos: criterios.apellidos,
             });
         }
         if (orConditions.length > 0) {
@@ -47,7 +58,10 @@ class EstudianteService {
             return [];
         }
         try {
-            const estudiantes = await usuario_model_1.default.find(query).lean();
+            const estudiantes = await usuario_model_1.default.find(query)
+                .select('_id nombre apellidos email info_academica.codigo_estudiante')
+                .limit(5)
+                .lean();
             const estudiantesEncontrados = [];
             for (const estudiante of estudiantes) {
                 let cursoInfo = undefined;

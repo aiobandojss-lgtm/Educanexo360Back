@@ -10,6 +10,17 @@ const ApiError_1 = __importDefault(require("../utils/ApiError"));
 const escapeRegex_1 = require("../utils/escapeRegex");
 const notificacion_service_1 = __importDefault(require("../services/notificacion.service"));
 const INotificacion_1 = require("../interfaces/INotificacion");
+const perfilPorRutas = (perfil) => {
+    const datos = {};
+    if (perfil && typeof perfil === 'object') {
+        ['telefono', 'direccion', 'foto'].forEach((campo) => {
+            const valor = perfil[campo];
+            if (typeof valor === 'string')
+                datos[`perfil.${campo}`] = valor;
+        });
+    }
+    return datos;
+};
 class UsuarioController {
     async obtenerUsuarios(req, res, next) {
         try {
@@ -141,13 +152,7 @@ class UsuarioController {
                 }
                 const { nombre, apellidos, email, estado, perfil, tipo, info_academica } = req.body;
                 datosPermitidos = { nombre, apellidos, email, estado };
-                if (perfil && typeof perfil === 'object') {
-                    datosPermitidos.perfil = {
-                        telefono: perfil.telefono,
-                        direccion: perfil.direccion,
-                        foto: perfil.foto,
-                    };
-                }
+                Object.assign(datosPermitidos, perfilPorRutas(perfil));
                 if (tipo !== undefined && tipo !== usuarioObjetivo.tipo) {
                     if (!esAdmin) {
                         throw new ApiError_1.default(403, 'No tienes permiso para cambiar el tipo de usuario');
@@ -183,7 +188,7 @@ class UsuarioController {
                 datosPermitidos = {
                     nombre: req.body.nombre,
                     apellidos: req.body.apellidos,
-                    perfil: req.body.perfil,
+                    ...perfilPorRutas(req.body.perfil),
                 };
             }
             const usuario = await usuario_model_1.default.findOneAndUpdate({

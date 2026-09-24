@@ -22,8 +22,8 @@ class AcademicService {
         }
         return result;
     }
-    async calcularPromedioPeriodo(estudianteId, asignaturaId, periodo, año_academico) {
-        const cacheKey = this.createCacheKey('promedio_periodo', estudianteId, asignaturaId, periodo.toString(), año_academico);
+    async calcularPromedioPeriodo(estudianteId, asignaturaId, periodo, año_academico, escuelaId) {
+        const cacheKey = this.createCacheKey('promedio_periodo', escuelaId, estudianteId, asignaturaId, periodo.toString(), año_academico);
         return await this.getOrSetCache(cacheKey, 300, async () => {
             console.log(`🔍 Calculando promedio periodo: ${estudianteId}, ${asignaturaId}, ${periodo}, ${año_academico}`);
             const resultado = await calificacion_model_1.default.aggregate([
@@ -31,6 +31,7 @@ class AcademicService {
                     $match: {
                         estudianteId: new mongoose_1.default.Types.ObjectId(estudianteId),
                         asignaturaId: new mongoose_1.default.Types.ObjectId(asignaturaId),
+                        escuelaId: new mongoose_1.default.Types.ObjectId(escuelaId),
                         periodo,
                         año_academico,
                     },
@@ -345,8 +346,8 @@ class AcademicService {
             return promedio;
         });
     }
-    async calcularPromedioAsignatura(estudianteId, asignaturaId, año_academico) {
-        const cacheKey = this.createCacheKey('promedio_asignatura', estudianteId, asignaturaId, año_academico);
+    async calcularPromedioAsignatura(estudianteId, asignaturaId, año_academico, escuelaId) {
+        const cacheKey = this.createCacheKey('promedio_asignatura', escuelaId, estudianteId, asignaturaId, año_academico);
         return await this.getOrSetCache(cacheKey, 600, async () => {
             console.log(`🔍 Calculando promedio asignatura completa: ${estudianteId}, ${asignaturaId}, ${año_academico}`);
             const resultado = await calificacion_model_1.default.aggregate([
@@ -354,6 +355,7 @@ class AcademicService {
                     $match: {
                         estudianteId: new mongoose_1.default.Types.ObjectId(estudianteId),
                         asignaturaId: new mongoose_1.default.Types.ObjectId(asignaturaId),
+                        escuelaId: new mongoose_1.default.Types.ObjectId(escuelaId),
                         año_academico,
                     },
                 },
@@ -446,8 +448,8 @@ class AcademicService {
             return promedioAsignatura;
         });
     }
-    async obtenerEstadisticasGrupo(cursoId, asignaturaId, periodo, año_academico) {
-        const cacheKey = this.createCacheKey('estadisticas_grupo', cursoId, asignaturaId, periodo.toString(), año_academico);
+    async obtenerEstadisticasGrupo(cursoId, asignaturaId, periodo, año_academico, escuelaId) {
+        const cacheKey = this.createCacheKey('estadisticas_grupo', escuelaId, cursoId, asignaturaId, periodo.toString(), año_academico);
         return await this.getOrSetCache(cacheKey, 180, async () => {
             console.log(`🔍 Calculando estadísticas grupo: ${cursoId}, ${asignaturaId}, ${periodo}, ${año_academico}`);
             const resultado = await calificacion_model_1.default.aggregate([
@@ -456,6 +458,8 @@ class AcademicService {
                         periodo,
                         año_academico,
                         asignaturaId: new mongoose_1.default.Types.ObjectId(asignaturaId),
+                        cursoId: new mongoose_1.default.Types.ObjectId(cursoId),
+                        escuelaId: new mongoose_1.default.Types.ObjectId(escuelaId),
                     },
                 },
                 {

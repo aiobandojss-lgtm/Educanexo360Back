@@ -24,6 +24,7 @@ class NotificacionController {
                 throw new ApiError_1.default(400, 'Platform debe ser "ios" o "android"');
             }
             console.log(`📱 Registrando token FCM para usuario: ${req.user._id}`);
+            await usuario_model_1.default.updateMany({ fcmToken, _id: { $ne: req.user._id } }, { $set: { fcmToken: null, fcmTokenUpdatedAt: new Date() } });
             const usuarioActualizado = await usuario_model_1.default.findByIdAndUpdate(req.user._id, {
                 $set: {
                     fcmToken: fcmToken,
@@ -51,12 +52,29 @@ class NotificacionController {
             next(error);
         }
     }
+    async desregistrarTokenFCM(req, res, next) {
+        try {
+            if (!req.user) {
+                throw new ApiError_1.default(401, 'No autorizado');
+            }
+            const { fcmToken } = req.body;
+            const resultado = await usuario_model_1.default.updateOne({ _id: req.user._id, fcmToken }, { $set: { fcmToken: null, fcmTokenUpdatedAt: new Date() }, $unset: { platform: '' } });
+            res.json({
+                success: true,
+                message: 'Dispositivo desvinculado',
+                data: { tokenRemoved: resultado.modifiedCount > 0 },
+            });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
     async enviarNotificacionPrueba(req, res, next) {
         try {
             if (!req.user) {
                 throw new ApiError_1.default(401, 'No autorizado');
             }
-            if (!['ADMIN', 'RECTOR', 'COORDINADOR'].includes(req.user.tipo)) {
+            if (!['SUPER_ADMIN', 'ADMIN'].includes(req.user.tipo)) {
                 throw new ApiError_1.default(403, 'No tiene permisos para enviar notificaciones de prueba');
             }
             const { titulo, mensaje, usuarioId, prioridad = 'NORMAL' } = req.body;
@@ -65,7 +83,10 @@ class NotificacionController {
             }
             let targetUser;
             if (usuarioId) {
-                targetUser = await usuario_model_1.default.findById(usuarioId).select('_id nombre apellidos fcmToken');
+                const filtroDestino = { _id: usuarioId };
+                if (req.user.tipo !== 'SUPER_ADMIN')
+                    filtroDestino.escuelaId = req.user.escuelaId;
+                targetUser = await usuario_model_1.default.findOne(filtroDestino).select('_id nombre apellidos fcmToken');
                 if (!targetUser) {
                     throw new ApiError_1.default(404, 'Usuario objetivo no encontrado');
                 }

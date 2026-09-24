@@ -673,6 +673,7 @@ class MensajeController {
                     const estudiantesInfo = await usuario_model_1.default.find({
                         _id: { $in: destinatariosIds },
                         tipo: 'ESTUDIANTE',
+                        escuelaId: req.user.escuelaId,
                     }).select('_id');
                     const datosMensaje = {
                         asunto: mensajeEnviado.asunto,
@@ -1449,21 +1450,7 @@ class MensajeController {
                     const isUrgent = prioridad === IMensaje_1.PrioridadMensaje.ALTA ||
                         asunto.toLowerCase().includes('urgente') ||
                         asunto.toLowerCase().includes('emergencia');
-                    let allRecipients = [...destinatariosArray];
-                    if (cursoIdsArray && cursoIdsArray.length > 0) {
-                        for (const cursoId of cursoIdsArray) {
-                            const curso = await mongoose_1.default.model('Curso').findById(cursoId).populate('estudiantes');
-                            if (curso && curso.estudiantes) {
-                                const estudiantesIds = curso.estudiantes.map((est) => est._id.toString());
-                                allRecipients.push(...estudiantesIds);
-                                const acudientes = await usuario_model_1.default.find({
-                                    'info_academica.estudiantes_asociados': { $in: estudiantesIds },
-                                    tipo: 'ACUDIENTE',
-                                }).select('_id');
-                                allRecipients.push(...acudientes.map((a) => a._id.toString()));
-                            }
-                        }
-                    }
+                    let allRecipients = (nuevoMensaje.destinatarios || []).map((d) => String(d?._id ?? d));
                     allRecipients = [...new Set(allRecipients)];
                     let pushEnviadas = 0;
                     for (const recipientId of allRecipients) {
@@ -1493,6 +1480,7 @@ class MensajeController {
                     const estudiantesInfo = await usuario_model_1.default.find({
                         _id: { $in: destinatariosArray },
                         tipo: 'ESTUDIANTE',
+                        escuelaId: req.user.escuelaId,
                     }).select('_id');
                     const estudiantesIds = estudiantesInfo.map((est) => est._id.toString());
                     for (const estudianteId of estudiantesIds) {
@@ -2341,6 +2329,7 @@ class MensajeController {
             const estudiantesInfo = await usuario_model_1.default.find({
                 _id: { $in: destinatarios },
                 tipo: 'ESTUDIANTE',
+                escuelaId: req.user.escuelaId,
             }).select('_id');
             const estudiantesIds = estudiantesInfo.map((est) => est._id.toString());
             for (const estudianteId of estudiantesIds) {

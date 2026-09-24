@@ -6,11 +6,17 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.obtenerInvitacionesEscuela = exports.obtenerInvitacionPorId = exports.revocarInvitacion = exports.obtenerInvitacionesPorCurso = exports.validarCodigo = exports.crearInvitacion = void 0;
 const invitacion_service_1 = __importDefault(require("../services/invitacion.service"));
 const catchAsync_1 = require("../utils/catchAsync");
+const ApiError_1 = __importDefault(require("../utils/ApiError"));
 exports.crearInvitacion = (0, catchAsync_1.catchAsync)(async (req, res, next) => {
     console.log('Creando invitación, datos de usuario:', req.user);
     const { tipo, cursoId, estudianteId, cantidadUsos, fechaExpiracion, datosAdicionales } = req.body;
-    const escuelaId = req.body.escuelaId || req.user?.escuelaId;
+    const escuelaId = req.user?.tipo === 'SUPER_ADMIN' && req.body.escuelaId
+        ? String(req.body.escuelaId)
+        : req.user?.escuelaId;
     const creadorId = req.user?._id;
+    if (!escuelaId) {
+        throw new ApiError_1.default(403, 'No tiene una escuela asociada');
+    }
     console.log('Datos para crear invitación:', {
         tipo,
         escuelaId,
@@ -44,8 +50,8 @@ exports.validarCodigo = (0, catchAsync_1.catchAsync)(async (req, res, next) => {
 });
 exports.obtenerInvitacionesPorCurso = (0, catchAsync_1.catchAsync)(async (req, res, next) => {
     const { cursoId } = req.params;
-    const { estado } = req.query;
-    const invitaciones = await invitacion_service_1.default.obtenerInvitacionesPorCurso(cursoId, estado);
+    const estado = typeof req.query.estado === 'string' ? req.query.estado : undefined;
+    const invitaciones = await invitacion_service_1.default.obtenerInvitacionesPorCurso(cursoId, req.user?.escuelaId, estado);
     res.status(200).json({
         success: true,
         data: invitaciones,
@@ -54,7 +60,7 @@ exports.obtenerInvitacionesPorCurso = (0, catchAsync_1.catchAsync)(async (req, r
 });
 exports.revocarInvitacion = (0, catchAsync_1.catchAsync)(async (req, res, next) => {
     const { id } = req.params;
-    const resultado = await invitacion_service_1.default.revocarInvitacion(id);
+    const resultado = await invitacion_service_1.default.revocarInvitacion(id, req.user?.escuelaId);
     res.status(200).json({
         success: true,
         message: resultado.message,
@@ -62,7 +68,7 @@ exports.revocarInvitacion = (0, catchAsync_1.catchAsync)(async (req, res, next) 
 });
 exports.obtenerInvitacionPorId = (0, catchAsync_1.catchAsync)(async (req, res, next) => {
     const { id } = req.params;
-    const invitacion = await invitacion_service_1.default.obtenerInvitacionPorId(id);
+    const invitacion = await invitacion_service_1.default.obtenerInvitacionPorId(id, req.user?.escuelaId);
     res.status(200).json({
         success: true,
         data: invitacion,
@@ -70,8 +76,8 @@ exports.obtenerInvitacionPorId = (0, catchAsync_1.catchAsync)(async (req, res, n
     });
 });
 exports.obtenerInvitacionesEscuela = (0, catchAsync_1.catchAsync)(async (req, res, next) => {
-    const escuelaId = req.params.escuelaId || req.user?.escuelaId;
-    const { estado } = req.query;
+    const escuelaId = req.user?.escuelaId;
+    const estado = typeof req.query.estado === 'string' ? req.query.estado : undefined;
     const pagina = parseInt(req.query.pagina) || 1;
     const limite = parseInt(req.query.limite) || 10;
     console.log('Obteniendo invitaciones con escuelaId:', escuelaId);

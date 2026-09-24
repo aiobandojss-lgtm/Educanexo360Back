@@ -48,6 +48,7 @@ const email_service_1 = __importStar(require("./email.service"));
 const notificacion_service_1 = __importDefault(require("./notificacion.service"));
 const simpleCache_1 = require("../cache/simpleCache");
 const config_1 = __importDefault(require("../config/config"));
+const accesoAcademico_1 = require("../utils/accesoAcademico");
 class MensajeService {
     createCacheKey(type, ...params) {
         return `${type}_${params.join('_')}`;
@@ -247,9 +248,13 @@ class MensajeService {
     async crearMensaje(datos, user) {
         try {
             const { destinatarios = [], destinatariosCc = [], cursoIds = [], asunto, contenido, adjuntos = [], tipo = IMensaje_1.TipoMensaje.INDIVIDUAL, prioridad = IMensaje_1.PrioridadMensaje.NORMAL, estado = IMensaje_1.EstadoMensaje.ENVIADO, etiquetas = [], esRespuesta = false, mensajeOriginalId = null, esCopiaAcudiente = false, } = datos;
-            let destinatariosFinales = [...destinatarios];
-            let destinatariosCcFinales = [...destinatariosCc];
-            if (cursoIds && cursoIds.length > 0) {
+            if (!user.escuelaId) {
+                throw new ApiError_1.default(403, 'No tiene una escuela asociada');
+            }
+            let destinatariosFinales = (0, accesoAcademico_1.aArregloDeIds)(destinatarios);
+            let destinatariosCcFinales = (0, accesoAcademico_1.aArregloDeIds)(destinatariosCc);
+            const cursoIdsValidos = (0, accesoAcademico_1.aArregloDeIds)(cursoIds);
+            if (cursoIdsValidos.length > 0) {
                 const rolesMasivos = [
                     'ADMIN',
                     'SUPER_ADMIN',
@@ -261,13 +266,29 @@ class MensajeService {
                 if (!rolesMasivos.includes(user.tipo)) {
                     throw new ApiError_1.default(403, 'No tiene permisos para enviar mensajes masivos');
                 }
-                const cursosDestinatarios = await this.obtenerDestinatariosDeCursos(cursoIds);
+                if (user.tipo === 'DOCENTE') {
+                    const cursosDocente = await (0, accesoAcademico_1.obtenerCursosDocente)(String(user._id), String(user.escuelaId), false);
+                    if (cursoIdsValidos.some((id) => !cursosDocente.includes(id))) {
+                        throw new ApiError_1.default(403, 'Solo puede enviar mensajes a sus cursos');
+                    }
+                }
+                const cursosDestinatarios = await this.obtenerDestinatariosDeCursos(cursoIdsValidos, String(user.escuelaId));
                 destinatariosFinales.push(...cursosDestinatarios);
             }
             destinatariosFinales = [...new Set(destinatariosFinales)];
             destinatariosCcFinales = [...new Set(destinatariosCcFinales)];
+            const validos = await usuario_model_1.default.find({
+                _id: { $in: [...destinatariosFinales, ...destinatariosCcFinales] },
+                escuelaId: user.escuelaId,
+                estado: 'ACTIVO',
+            })
+                .select('_id')
+                .lean();
+            const idsValidos = new Set(validos.map((u) => String(u._id)));
+            destinatariosFinales = destinatariosFinales.filter((id) => idsValidos.has(id));
+            destinatariosCcFinales = destinatariosCcFinales.filter((id) => idsValidos.has(id));
             if (destinatariosFinales.length === 0) {
-                throw new ApiError_1.default(400, 'Debe especificar al menos un destinatario');
+                throw new ApiError_1.default(400, 'Debe especificar al menos un destinatario válido');
             }
             const destinatariosObjectIds = destinatariosFinales
                 .map((id) => this.safeObjectId(id))
@@ -291,7 +312,7 @@ class MensajeService {
                 mensajeOriginalId,
                 lecturas: [],
                 esCopiaAcudiente,
-                cursoIds: cursoIds
+                cursoIds: cursoIdsValidos
                     .map((id) => this.safeObjectId(id))
                     .filter((id) => id !== null),
             }));
@@ -310,99 +331,41 @@ class MensajeService {
             throw this.handleError(error);
         }
     }
-    async obtenerDestinatariosDeCursos(cursoIds) {
+    async obtenerDestinatariosDeCursos(cursoIds, escuelaId) {
         const validCursoIds = cursoIds.map((id) => this.safeObjectId(id)).filter((id) => id !== null);
-        if (validCursoIds.length === 0) {
+        if (validCursoIds.length === 0 || !escuelaId) {
             return [];
         }
-        const resultado = await curso_model_1.default.aggregate([
-            {
-                $match: {
-                    _id: { $in: validCursoIds },
-                },
-            },
-            {
-                $unwind: {
-                    path: '$estudiantes',
-                    preserveNullAndEmptyArrays: false,
-                },
-            },
-            {
-                $group: {
-                    _id: null,
-                    estudiantesIds: { $addToSet: '$estudiantes' },
-                },
-            },
-            {
-                $lookup: {
-                    from: 'usuarios',
-                    let: { estudiantesIds: '$estudiantesIds' },
-                    pipeline: [
-                        {
-                            $match: {
-                                $expr: {
-                                    $and: [
-                                        { $in: ['$_id', '$$estudiantesIds'] },
-                                        { $eq: ['$tipo', 'ESTUDIANTE'] },
-                                        { $eq: ['$estado', 'ACTIVO'] },
-                                    ],
-                                },
-                            },
-                        },
-                        {
-                            $project: { _id: 1 },
-                        },
-                    ],
-                    as: 'estudiantes_activos',
-                },
-            },
-            {
-                $lookup: {
-                    from: 'usuarios',
-                    let: { estudiantesIds: '$estudiantesIds' },
-                    pipeline: [
-                        {
-                            $match: {
-                                $expr: {
-                                    $and: [
-                                        { $eq: ['$tipo', 'ACUDIENTE'] },
-                                        {
-                                            $ne: [
-                                                {
-                                                    $size: {
-                                                        $setIntersection: [
-                                                            '$info_academica.estudiantes_asociados',
-                                                            '$$estudiantesIds',
-                                                        ],
-                                                    },
-                                                },
-                                                0,
-                                            ],
-                                        },
-                                    ],
-                                },
-                            },
-                        },
-                        {
-                            $project: { _id: 1 },
-                        },
-                    ],
-                    as: 'acudientes',
-                },
-            },
-            {
-                $project: {
-                    _id: 0,
-                    todos_destinatarios: {
-                        $concatArrays: [
-                            { $map: { input: '$estudiantes_activos', as: 'e', in: { $toString: '$$e._id' } } },
-                            { $map: { input: '$acudientes', as: 'a', in: { $toString: '$$a._id' } } },
-                        ],
-                    },
-                },
-            },
-        ]);
-        const destinatarios = resultado.length > 0 ? resultado[0].todos_destinatarios : [];
+        const cursos = await curso_model_1.default.find({ _id: { $in: validCursoIds }, escuelaId })
+            .select('estudiantes')
+            .lean();
+        const idsEnCursos = [...new Set(cursos.flatMap((c) => (c.estudiantes || []).map(String)))];
+        if (idsEnCursos.length === 0) {
+            return [];
+        }
+        const estudiantes = await usuario_model_1.default.find({
+            _id: { $in: idsEnCursos },
+            escuelaId,
+            tipo: 'ESTUDIANTE',
+            estado: 'ACTIVO',
+        })
+            .select('_id')
+            .lean();
+        const estudiantesIds = estudiantes.map((e) => e._id);
+        const acudientes = estudiantesIds.length
+            ? await usuario_model_1.default.find({
+                escuelaId,
+                tipo: 'ACUDIENTE',
+                estado: 'ACTIVO',
+                'info_academica.estudiantes_asociados': { $in: estudiantesIds },
+            })
+                .select('_id')
+                .lean()
+            : [];
+        const destinatarios = [
+            ...estudiantesIds.map(String),
+            ...acudientes.map((a) => String(a._id)),
+        ];
         console.log(`✅ Destinatarios de cursos obtenidos: ${destinatarios.length}`);
         return destinatarios;
     }
@@ -415,6 +378,7 @@ class MensajeService {
                 return;
             const usuarios = await usuario_model_1.default.find({
                 _id: { $in: validDestinatariosIds },
+                escuelaId: remitente.escuelaId,
                 estado: 'ACTIVO',
             }).select('_id email nombre apellidos');
             const nombreRemitente = `${remitente.nombre} ${remitente.apellidos}`.trim();
@@ -468,7 +432,11 @@ class MensajeService {
                 console.log(`[WARNING] ID de estudiante inválido: ${estudianteId}`);
                 return null;
             }
-            const cacheKey = this.createCacheKey('acudientes', estudianteId);
+            const escuelaId = String(usuarioOrigen?.escuelaId || '');
+            if (!mongoose_1.default.isValidObjectId(escuelaId)) {
+                return null;
+            }
+            const cacheKey = this.createCacheKey('acudientes', escuelaId, estudianteId);
             const cached = simpleCache_1.cache.get(cacheKey);
             let acudientes;
             if (cached && cached.length > 0) {
@@ -476,43 +444,21 @@ class MensajeService {
                 acudientes = cached;
             }
             else {
-                acudientes = await usuario_model_1.default.aggregate([
-                    {
-                        $match: {
-                            _id: new mongoose_1.default.Types.ObjectId(estudianteId),
-                            tipo: 'ESTUDIANTE',
-                            estado: 'ACTIVO',
-                        },
-                    },
-                    {
-                        $lookup: {
-                            from: 'usuarios',
-                            let: { estudianteId: '$_id' },
-                            pipeline: [
-                                {
-                                    $match: {
-                                        $expr: {
-                                            $and: [
-                                                { $eq: ['$tipo', 'ACUDIENTE'] },
-                                                { $in: ['$$estudianteId', '$info_academica.estudiantes_asociados'] },
-                                            ],
-                                        },
-                                    },
-                                },
-                                {
-                                    $project: { _id: 1 },
-                                },
-                            ],
-                            as: 'acudientes',
-                        },
-                    },
-                    {
-                        $unwind: '$acudientes',
-                    },
-                    {
-                        $replaceRoot: { newRoot: '$acudientes' },
-                    },
-                ]);
+                const estudiante = await usuario_model_1.default.exists({
+                    _id: estudianteId,
+                    escuelaId,
+                    tipo: 'ESTUDIANTE',
+                    estado: 'ACTIVO',
+                });
+                acudientes = estudiante
+                    ? await usuario_model_1.default.find({
+                        escuelaId,
+                        tipo: 'ACUDIENTE',
+                        'info_academica.estudiantes_asociados': new mongoose_1.default.Types.ObjectId(estudianteId),
+                    })
+                        .select('_id')
+                        .lean()
+                    : [];
                 if (acudientes.length > 0) {
                     if ((0, simpleCache_1.safeCacheSet)(cacheKey, acudientes, 300)) {
                         console.log(`💾 CACHE SET: ${cacheKey} (300s)`);

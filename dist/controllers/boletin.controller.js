@@ -9,6 +9,7 @@ const usuario_model_1 = __importDefault(require("../models/usuario.model"));
 const asignatura_model_1 = __importDefault(require("../models/asignatura.model"));
 const curso_model_1 = __importDefault(require("../models/curso.model"));
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
+const accesoAcademico_1 = require("../utils/accesoAcademico");
 class BoletinController {
     async generarBoletinPeriodo(req, res, next) {
         try {
@@ -19,7 +20,11 @@ class BoletinController {
             if (!estudianteId || !periodo || !año_academico) {
                 throw new ApiError_1.default(400, 'Faltan parámetros requeridos');
             }
-            const estudiante = await usuario_model_1.default.findById(estudianteId);
+            if (!(await (0, accesoAcademico_1.puedeVerEstudiante)(req.user, estudianteId))) {
+                throw new ApiError_1.default(403, 'No tiene acceso a la información de este estudiante');
+            }
+            const escuelaId = req.user.escuelaId;
+            const estudiante = await usuario_model_1.default.findOne({ _id: estudianteId, escuelaId });
             if (!estudiante) {
                 throw new ApiError_1.default(404, 'Estudiante no encontrado');
             }
@@ -27,6 +32,7 @@ class BoletinController {
                 throw new ApiError_1.default(400, 'El ID proporcionado no corresponde a un estudiante');
             }
             const curso = await curso_model_1.default.findOne({
+                escuelaId,
                 estudiantes: { $in: [estudianteId] },
             });
             if (!curso) {
@@ -34,6 +40,7 @@ class BoletinController {
             }
             const asignaturas = await asignatura_model_1.default.find({
                 cursoId: curso._id,
+                escuelaId,
                 estado: 'ACTIVO',
             }).populate('docenteId', 'nombre apellidos');
             const asignaturasData = [];
@@ -41,13 +48,15 @@ class BoletinController {
                 const calificacion = await calificacion_model_1.default.findOne({
                     estudianteId,
                     asignaturaId: asignatura._id,
+                    escuelaId,
                     periodo: Number(periodo),
-                    año_academico,
+                    año_academico: String(año_academico),
                 });
                 const logros = await logro_model_1.default.find({
                     asignaturaId: asignatura._id,
+                    escuelaId,
                     periodo: Number(periodo),
-                    año_academico,
+                    año_academico: String(año_academico),
                     estado: 'ACTIVO',
                 }).lean();
                 const logrosData = [];
@@ -143,7 +152,11 @@ class BoletinController {
             if (!estudianteId || !año_academico) {
                 throw new ApiError_1.default(400, 'Faltan parámetros requeridos');
             }
-            const estudiante = await usuario_model_1.default.findById(estudianteId);
+            if (!(await (0, accesoAcademico_1.puedeVerEstudiante)(req.user, estudianteId))) {
+                throw new ApiError_1.default(403, 'No tiene acceso a la información de este estudiante');
+            }
+            const escuelaId = req.user.escuelaId;
+            const estudiante = await usuario_model_1.default.findOne({ _id: estudianteId, escuelaId });
             if (!estudiante) {
                 throw new ApiError_1.default(404, 'Estudiante no encontrado');
             }
@@ -151,6 +164,7 @@ class BoletinController {
                 throw new ApiError_1.default(400, 'El ID proporcionado no corresponde a un estudiante');
             }
             const curso = await curso_model_1.default.findOne({
+                escuelaId,
                 estudiantes: { $in: [estudianteId] },
             });
             if (!curso) {
@@ -158,6 +172,7 @@ class BoletinController {
             }
             const asignaturas = await asignatura_model_1.default.find({
                 cursoId: curso._id,
+                escuelaId,
                 estado: 'ACTIVO',
             }).populate('docenteId', 'nombre apellidos');
             const periodos = [1, 2, 3, 4];
@@ -170,15 +185,16 @@ class BoletinController {
                     const calificacion = await calificacion_model_1.default.findOne({
                         estudianteId,
                         asignaturaId: asignatura._id,
+                        escuelaId,
                         periodo,
-                        año_academico,
+                        año_academico: String(año_academico),
                     });
                     const logrosCalificados = [];
                     if (calificacion &&
                         calificacion.calificaciones_logros &&
                         calificacion.calificaciones_logros.length > 0) {
                         for (const calLogro of calificacion.calificaciones_logros) {
-                            const logro = await logro_model_1.default.findById(calLogro.logroId);
+                            const logro = await logro_model_1.default.findOne({ _id: calLogro.logroId, escuelaId });
                             if (logro) {
                                 logrosCalificados.push({
                                     logro: {

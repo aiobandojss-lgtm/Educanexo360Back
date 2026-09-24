@@ -6,9 +6,16 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.verificarAsociacionEstudiante = exports.obtenerEstudiantePorId = exports.buscarEstudiantesParaAsociacion = void 0;
 const estudiante_service_1 = require("../services/estudiante.service");
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
+const accesoAcademico_1 = require("../utils/accesoAcademico");
+const escuelaDelUsuario = (req) => req.user?.escuelaId || undefined;
 const buscarEstudiantesParaAsociacion = async (req, res) => {
     try {
-        const { escuelaId, nombre, apellidos, email, codigo_estudiante, cursoId } = req.query;
+        const escuelaId = escuelaDelUsuario(req);
+        const nombre = (0, accesoAcademico_1.queryString)(req.query.nombre);
+        const apellidos = (0, accesoAcademico_1.queryString)(req.query.apellidos);
+        const email = (0, accesoAcademico_1.queryString)(req.query.email);
+        const codigo_estudiante = (0, accesoAcademico_1.queryString)(req.query.codigo_estudiante);
+        const cursoId = (0, accesoAcademico_1.queryString)(req.query.cursoId);
         if (!escuelaId) {
             res.status(400).json({
                 success: false,
@@ -17,12 +24,12 @@ const buscarEstudiantesParaAsociacion = async (req, res) => {
             return;
         }
         const estudiantes = await estudiante_service_1.estudianteService.buscarEstudiantesExistentes({
-            escuelaId: escuelaId,
-            nombre: nombre,
-            apellidos: apellidos,
-            email: email,
-            codigo_estudiante: codigo_estudiante,
-            cursoId: cursoId,
+            escuelaId,
+            nombre,
+            apellidos,
+            email,
+            codigo_estudiante,
+            cursoId,
         });
         res.status(200).json({
             success: true,
@@ -49,7 +56,7 @@ exports.buscarEstudiantesParaAsociacion = buscarEstudiantesParaAsociacion;
 const obtenerEstudiantePorId = async (req, res) => {
     try {
         const { id } = req.params;
-        const { escuelaId } = req.query;
+        const escuelaId = escuelaDelUsuario(req);
         if (!escuelaId) {
             res.status(400).json({
                 success: false,
@@ -89,7 +96,8 @@ exports.obtenerEstudiantePorId = obtenerEstudiantePorId;
 const verificarAsociacionEstudiante = async (req, res) => {
     try {
         const { estudianteId } = req.params;
-        const { acudienteEmail, escuelaId } = req.body;
+        const acudienteEmail = typeof req.body.acudienteEmail === 'string' ? req.body.acudienteEmail : undefined;
+        const escuelaId = escuelaDelUsuario(req);
         if (!acudienteEmail || !escuelaId) {
             res.status(400).json({
                 success: false,

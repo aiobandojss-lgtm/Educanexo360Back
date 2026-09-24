@@ -48,7 +48,7 @@ const responseTimeMiddleware = (req, res, next) => {
     next();
 };
 exports.responseTimeMiddleware = responseTimeMiddleware;
-const rateLimiter = (windowMs = 60000, max = 100) => {
+const rateLimiter = (windowMs = 60000, max = 100, keyGenerator) => {
     const requests = new Map();
     setInterval(() => {
         const now = Date.now();
@@ -63,7 +63,7 @@ const rateLimiter = (windowMs = 60000, max = 100) => {
         });
     }, 5 * 60 * 1000).unref();
     const middleware = (req, res, next) => {
-        const ip = req.ip || req.socket.remoteAddress || 'unknown';
+        const ip = keyGenerator ? keyGenerator(req) : req.ip || req.socket.remoteAddress || 'unknown';
         const now = Date.now();
         const userRequests = requests.get(ip) || [];
         const validRequests = userRequests.filter((timestamp) => now - timestamp < windowMs);

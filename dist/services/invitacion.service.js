@@ -83,7 +83,7 @@ class InvitacionService {
     async crearInvitacion(data) {
         console.log('Datos recibidos:', JSON.stringify(data));
         if (data.cursoId) {
-            const curso = await curso_model_1.default.findById(data.cursoId);
+            const curso = await curso_model_1.default.findOne({ _id: data.cursoId, escuelaId: data.escuelaId });
             console.log('Curso encontrado:', curso ? JSON.stringify(curso) : 'Curso no encontrado');
             if (curso) {
                 console.log('Comparando escuelas:', {
@@ -244,9 +244,13 @@ class InvitacionService {
                 : 0,
         };
     }
-    async obtenerInvitacionesPorCurso(cursoId, estado) {
+    async obtenerInvitacionesPorCurso(cursoId, escuelaId, estado) {
+        if (!mongoose_1.Types.ObjectId.isValid(cursoId) || !mongoose_1.Types.ObjectId.isValid(escuelaId)) {
+            throw new ApiError_1.default(400, 'Parámetros inválidos');
+        }
         const filtro = {
             cursoId: new mongoose_1.Types.ObjectId(cursoId),
+            escuelaId: new mongoose_1.Types.ObjectId(escuelaId),
             tipo: invitacion_model_1.TipoInvitacion.CURSO,
         };
         if (estado) {
@@ -257,8 +261,8 @@ class InvitacionService {
             .populate('creadorId', 'nombre apellidos');
         return invitaciones;
     }
-    async revocarInvitacion(invitacionId) {
-        const invitacion = await invitacion_model_1.default.findById(invitacionId);
+    async revocarInvitacion(invitacionId, escuelaId) {
+        const invitacion = await invitacion_model_1.default.findOne({ _id: invitacionId, escuelaId });
         if (!invitacion) {
             throw new ApiError_1.default(404, 'Invitación no encontrada');
         }
@@ -271,8 +275,8 @@ class InvitacionService {
         await invitacion.save();
         return { message: 'Invitación revocada exitosamente' };
     }
-    async obtenerInvitacionPorId(id) {
-        const invitacion = await invitacion_model_1.default.findById(id)
+    async obtenerInvitacionPorId(id, escuelaId) {
+        const invitacion = await invitacion_model_1.default.findOne({ _id: id, escuelaId })
             .populate('creadorId', 'nombre apellidos')
             .populate('cursoId', 'nombre grado grupo');
         if (!invitacion) {

@@ -44,6 +44,38 @@ const ApiError_1 = __importDefault(require("../utils/ApiError"));
 const mongodb_1 = require("mongodb");
 const fs = __importStar(require("fs"));
 const escapeRegex_1 = require("../utils/escapeRegex");
+const accesoAcademico_1 = require("../utils/accesoAcademico");
+const idDe = (valor) => String(valor?._id ?? valor);
+const resolverAccesoTarea = async (user, tarea) => {
+    const entregas = tarea.entregas || [];
+    if ((0, accesoAcademico_1.esRolAdministrativo)(user.tipo))
+        return { entregas, completo: true };
+    if (user.tipo === 'DOCENTE') {
+        const propia = idDe(tarea.docenteId) === String(user._id);
+        if (propia || (await (0, accesoAcademico_1.docenteTieneCurso)(user, idDe(tarea.cursoId)))) {
+            return { entregas, completo: true };
+        }
+        return null;
+    }
+    let permitidos = [];
+    if (user.tipo === 'ESTUDIANTE')
+        permitidos = [String(user._id)];
+    else if (user.tipo === 'ACUDIENTE')
+        permitidos = await (0, accesoAcademico_1.obtenerHijosIds)(user);
+    else
+        return null;
+    const visibles = entregas.filter((e) => e?.estudianteId && permitidos.includes(idDe(e.estudianteId)));
+    if (visibles.length > 0)
+        return { entregas: visibles, completo: false };
+    const enCurso = permitidos.length
+        ? await curso_model_1.default.exists({
+            _id: idDe(tarea.cursoId),
+            escuelaId: user.escuelaId,
+            estudiantes: { $in: permitidos },
+        })
+        : null;
+    return enCurso ? { entregas: [], completo: false } : null;
+};
 const pushNotification_service_1 = __importDefault(require("../services/pushNotification.service"));
 class TareaController {
     async crear(req, res, next) {
@@ -134,26 +166,36 @@ class TareaController {
             const limite = parseInt(req.query.limite) || 10;
             const skip = (pagina - 1) * limite;
             const filters = { escuelaId: req.user.escuelaId };
+            let estudiantesVisibles = null;
             if (req.user.tipo === 'DOCENTE') {
                 filters.docenteId = req.user._id;
             }
             else if (req.user.tipo === 'ESTUDIANTE') {
                 filters['entregas.estudianteId'] = req.user._id;
+                estudiantesVisibles = [String(req.user._id)];
             }
-            if (req.query.cursoId) {
-                filters.cursoId = req.query.cursoId;
+            else if (req.user.tipo === 'ACUDIENTE') {
+                estudiantesVisibles = await (0, accesoAcademico_1.obtenerHijosIds)(req.user);
+                filters['entregas.estudianteId'] = { $in: estudiantesVisibles };
             }
-            if (req.query.asignaturaId) {
-                filters.asignaturaId = req.query.asignaturaId;
+            const cursoId = (0, accesoAcademico_1.queryString)(req.query.cursoId);
+            const asignaturaId = (0, accesoAcademico_1.queryString)(req.query.asignaturaId);
+            const estado = (0, accesoAcademico_1.queryString)(req.query.estado);
+            const prioridad = (0, accesoAcademico_1.queryString)(req.query.prioridad);
+            const busqueda = (0, accesoAcademico_1.queryString)(req.query.busqueda);
+            if (cursoId) {
+                filters.cursoId = cursoId;
             }
-            if (req.query.estado) {
-                filters.estado = req.query.estado;
+            if (asignaturaId) {
+                filters.asignaturaId = asignaturaId;
             }
-            if (req.query.prioridad) {
-                filters.prioridad = req.query.prioridad;
+            if (estado) {
+                filters.estado = estado;
             }
-            if (req.query.busqueda) {
-                const busqueda = req.query.busqueda;
+            if (prioridad) {
+                filters.prioridad = prioridad;
+            }
+            if (busqueda) {
                 filters.$or = [
                     { titulo: { $regex: (0, escapeRegex_1.escapeRegex)(busqueda), $options: 'i' } },
                     { descripcion: { $regex: (0, escapeRegex_1.escapeRegex)(busqueda), $options: 'i' } },
@@ -170,6 +212,12 @@ class TareaController {
                     .lean(),
                 tarea_model_1.default.countDocuments(filters),
             ]);
+            if (estudiantesVisibles) {
+                const visibles = new Set(estudiantesVisibles);
+                tareas.forEach((t) => {
+                    t.entregas = (t.entregas || []).filter((e) => visibles.has(idDe(e.estudianteId)));
+                });
+            }
             res.json({
                 success: true,
                 data: tareas,
@@ -201,11 +249,16 @@ class TareaController {
             if (!tarea) {
                 throw new ApiError_1.default(404, 'Tarea no encontrada');
             }
+            const acceso = await resolverAccesoTarea(req.user, tarea.toObject());
+            if (!acceso) {
+                throw new ApiError_1.default(404, 'Tarea no encontrada');
+            }
             tarea.actualizarEstadosEntregas();
             await tarea.save();
-            if (req.user.tipo === 'ESTUDIANTE') {
+            if (!acceso.completo) {
                 const tareaObj = tarea.toObject();
-                tareaObj.entregas = tareaObj.entregas.filter((e) => e.estudianteId._id.toString() === req.user?._id);
+                const visibles = new Set(acceso.entregas.map((e) => idDe(e.estudianteId)));
+                tareaObj.entregas = tareaObj.entregas.filter((e) => e?.estudianteId && visibles.has(idDe(e.estudianteId)));
                 res.json({
                     success: true,
                     data: tareaObj,
@@ -605,12 +658,16 @@ class TareaController {
                 throw new ApiError_1.default(401, 'No autorizado');
             }
             const { id, archivoId } = req.params;
-            const tipo = req.query.tipo;
+            const tipo = (0, accesoAcademico_1.queryString)(req.query.tipo);
             const tarea = await tarea_model_1.default.findOne({
                 _id: id,
                 escuelaId: req.user.escuelaId,
             });
             if (!tarea) {
+                throw new ApiError_1.default(404, 'Tarea no encontrada');
+            }
+            const acceso = await resolverAccesoTarea(req.user, tarea.toObject());
+            if (!acceso) {
                 throw new ApiError_1.default(404, 'Tarea no encontrada');
             }
             let archivo;
@@ -620,8 +677,8 @@ class TareaController {
                 bucketName = 'tareas_referencias';
             }
             else if (tipo === 'entrega') {
-                for (const entrega of tarea.entregas) {
-                    archivo = entrega.archivos.find((a) => a.fileId.toString() === archivoId);
+                for (const entrega of acceso.entregas) {
+                    archivo = (entrega.archivos || []).find((a) => a.fileId.toString() === archivoId);
                     if (archivo)
                         break;
                 }
@@ -804,11 +861,13 @@ class TareaController {
             if (req.user.tipo === 'DOCENTE') {
                 filters.docenteId = req.user._id;
             }
-            if (req.query.cursoId) {
-                filters.cursoId = req.query.cursoId;
+            const cursoIdFiltro = (0, accesoAcademico_1.queryString)(req.query.cursoId);
+            const asignaturaIdFiltro = (0, accesoAcademico_1.queryString)(req.query.asignaturaId);
+            if (cursoIdFiltro) {
+                filters.cursoId = cursoIdFiltro;
             }
-            if (req.query.asignaturaId) {
-                filters.asignaturaId = req.query.asignaturaId;
+            if (asignaturaIdFiltro) {
+                filters.asignaturaId = asignaturaIdFiltro;
             }
             const tareas = await tarea_model_1.default.find(filters);
             let totalTareas = 0;

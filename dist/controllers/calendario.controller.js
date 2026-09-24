@@ -13,6 +13,29 @@ const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const ICalendario_1 = require("../interfaces/ICalendario");
 const pushNotification_service_1 = __importDefault(require("../services/pushNotification.service"));
+const CAMPOS_EVENTO = [
+    'titulo',
+    'descripcion',
+    'fechaInicio',
+    'fechaFin',
+    'todoElDia',
+    'lugar',
+    'tipo',
+    'color',
+    'cursoId',
+    'invitados',
+    'recordatorios',
+    'estado',
+];
+const tomarCamposEvento = (body) => {
+    const datos = {};
+    CAMPOS_EVENTO.forEach((campo) => {
+        if (body?.[campo] !== undefined)
+            datos[campo] = body[campo];
+    });
+    return datos;
+};
+const archivoSubido = (req) => req.file || (Array.isArray(req.files) && req.files.length > 0 ? req.files[0] : undefined);
 class CalendarioController {
     async crearEvento(req, res, next) {
         try {
@@ -20,12 +43,19 @@ class CalendarioController {
                 throw new ApiError_1.default(401, 'No autorizado');
             }
             const eventoData = {
-                ...req.body,
+                ...tomarCamposEvento(req.body),
                 escuelaId: req.user.escuelaId,
                 creadorId: req.user._id,
             };
-            if (req.files && req.files.length > 0) {
-                const file = req.files[0];
+            if (eventoData.cursoId) {
+                const cursoValido = await curso_model_1.default.exists({ _id: eventoData.cursoId, escuelaId: req.user.escuelaId });
+                if (!cursoValido) {
+                    throw new ApiError_1.default(400, 'Curso no válido');
+                }
+            }
+            const archivoCrear = archivoSubido(req);
+            if (archivoCrear) {
+                const file = archivoCrear;
                 const bucket = gridfs_1.default.getBucket();
                 if (!bucket) {
                     throw new ApiError_1.default(500, 'Servicio de archivos no disponible');
@@ -40,8 +70,10 @@ class CalendarioController {
                     },
                 });
                 const fileContent = fs_1.default.readFileSync(file.path);
-                uploadStream.write(fileContent);
-                uploadStream.end();
+                await new Promise((resolve, reject) => {
+                    uploadStream.once('finish', resolve).once('error', reject);
+                    uploadStream.end(fileContent);
+                });
                 eventoData.archivoAdjunto = {
                     fileId: uploadStream.id,
                     nombre: file.originalname,
@@ -89,6 +121,9 @@ class CalendarioController {
                 success: true,
                 data: eventoPopulado,
             });
+            if (evento.estado !== ICalendario_1.EstadoEvento.ACTIVO) {
+                return;
+            }
             const escuelaId = req.user.escuelaId;
             const titulo = eventoData.titulo || 'Nuevo evento';
             const fechaStr = eventoData.fechaInicio
@@ -305,13 +340,22 @@ class CalendarioController {
             if (!evento) {
                 throw new ApiError_1.default(404, 'Evento no encontrado');
             }
-            const rolesAdministrativos = ['ADMIN', 'COORDINADOR', 'RECTOR', 'DOCENTE', 'ADMINISTRATIVO'];
+            const rolesAdministrativos = ['ADMIN', 'COORDINADOR', 'RECTOR', 'ADMINISTRATIVO'];
             const esCreador = evento.creadorId.toString() === req.user._id;
             const tienePermisoAdministrativo = rolesAdministrativos.includes(req.user.tipo);
             if (!esCreador && !tienePermisoAdministrativo) {
                 throw new ApiError_1.default(403, 'No tienes permiso para editar este evento');
             }
-            const datosActualizacion = { ...req.body };
+            const datosActualizacion = tomarCamposEvento(req.body);
+            if (datosActualizacion.cursoId) {
+                const cursoValido = await curso_model_1.default.exists({
+                    _id: datosActualizacion.cursoId,
+                    escuelaId: req.user.escuelaId,
+                });
+                if (!cursoValido) {
+                    throw new ApiError_1.default(400, 'Curso no válido');
+                }
+            }
             if (datosActualizacion.fechaInicio) {
                 datosActualizacion.fechaInicio = new Date(datosActualizacion.fechaInicio);
             }
@@ -326,8 +370,9 @@ class CalendarioController {
                     throw new ApiError_1.default(400, 'Formato de invitados inválido');
                 }
             }
-            if (req.files && req.files.length > 0) {
-                const file = req.files[0];
+            const archivoActualizar = archivoSubido(req);
+            if (archivoActualizar) {
+                const file = archivoActualizar;
                 const bucket = gridfs_1.default.getBucket();
                 if (!bucket) {
                     throw new ApiError_1.default(500, 'Servicio de archivos no disponible');
@@ -350,8 +395,10 @@ class CalendarioController {
                     },
                 });
                 const fileContent = fs_1.default.readFileSync(file.path);
-                uploadStream.write(fileContent);
-                uploadStream.end();
+                await new Promise((resolve, reject) => {
+                    uploadStream.once('finish', resolve).once('error', reject);
+                    uploadStream.end(fileContent);
+                });
                 datosActualizacion.archivoAdjunto = {
                     fileId: uploadStream.id,
                     nombre: file.originalname,
@@ -365,7 +412,7 @@ class CalendarioController {
                     console.error('Error deleting temporary file:', error);
                 }
             }
-            await calendario_model_1.default.findByIdAndUpdate(req.params.id, datosActualizacion, {
+            await calendario_model_1.default.findOneAndUpdate({ _id: req.params.id, escuelaId: req.user.escuelaId }, datosActualizacion, {
                 new: true,
                 runValidators: true,
             });

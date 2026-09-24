@@ -75,7 +75,7 @@ exports.authController = {
             const tokens = await auth_service_1.default.refreshAuth(refreshToken);
             res.json({
                 success: true,
-                data: tokens,
+                data: { ...tokens, token: tokens.access.token },
             });
         }
         catch (error) {

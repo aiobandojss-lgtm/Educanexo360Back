@@ -36,6 +36,7 @@ const cache_routes_1 = __importDefault(require("./routes/cache.routes"));
 const dashboard_routes_1 = __importDefault(require("./routes/dashboard.routes"));
 const tarea_routes_1 = __importDefault(require("./routes/tarea.routes"));
 const perfilRol_routes_1 = __importDefault(require("./routes/perfilRol.routes"));
+const sanitize_middleware_1 = require("./middleware/sanitize.middleware");
 dotenv_1.default.config();
 const basePath = process.env.BASE_PATH || '';
 console.log(`Inicializando aplicación con BASE_PATH: "${basePath}"`);
@@ -74,21 +75,16 @@ app.use((0, cors_1.default)(corsOptions));
 app.use((0, helmet_1.default)());
 app.use(express_1.default.json({ limit: '10mb' }));
 app.use(express_1.default.urlencoded({ extended: true, limit: '10mb' }));
+app.use(sanitize_middleware_1.sanitizeNoSQL);
 (0, performance_middleware_1.setupCompression)(app);
 app.use(performance_middleware_1.responseTimeMiddleware);
 const apiRouter = express_1.default.Router();
 apiRouter.get('/health', (req, res) => {
     res.json({
         status: 'UP',
-        version: process.env.npm_package_version || '1.0.0',
-        environment: process.env.NODE_ENV || 'development',
-        timestamp: new Date().toISOString(),
-        uptime: process.uptime(),
-        memoryUsage: process.memoryUsage(),
-        mongodb: mongoose_1.default.connection.readyState === 1 ? 'connected' : 'disconnected',
     });
 });
-apiRouter.use('/auth', (0, performance_middleware_1.rateLimiter)(60000, 20), auth_routes_1.default);
+apiRouter.use('/auth', auth_routes_1.default);
 apiRouter.use('/mensajes', (0, performance_middleware_1.rateLimiter)(60000, 60), mensaje_routes_1.default);
 apiRouter.use('/usuarios', (0, performance_middleware_1.rateLimiter)(60000, 60), usuario_routes_1.default);
 apiRouter.use('/dashboard', (0, performance_middleware_1.rateLimiter)(60000, 30), dashboard_routes_1.default);
@@ -108,7 +104,7 @@ apiRouter.use('/system', system_routes_1.default);
 apiRouter.use('/superadmin', superadmin_routes_1.default);
 apiRouter.use('/invitaciones', (0, performance_middleware_1.rateLimiter)(60000, 20), invitacion_routes_1.default);
 apiRouter.use('/registro', (0, performance_middleware_1.rateLimiter)(60000, 10), registro_routes_1.default);
-apiRouter.use('/public', public_routes_1.default);
+apiRouter.use('/public', (0, performance_middleware_1.rateLimiter)(60000, 30), public_routes_1.default);
 apiRouter.use('/estudiantes', estudiante_routes_1.default);
 apiRouter.use('/cache', cache_routes_1.default);
 apiRouter.use('/perfiles-rol', perfilRol_routes_1.default);

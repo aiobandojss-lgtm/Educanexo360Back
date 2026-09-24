@@ -163,7 +163,11 @@ exports.obtenerInfoCursoPublica = obtenerInfoCursoPublica;
 const buscarEstudiantesConInvitacion = async (req, res) => {
     try {
         const { codigoInvitacion } = req.params;
-        const { nombre, apellidos, email, codigo_estudiante } = req.query;
+        const comoTexto = (v) => (typeof v === 'string' ? v : undefined);
+        const nombre = comoTexto(req.query.nombre);
+        const apellidos = comoTexto(req.query.apellidos);
+        const email = comoTexto(req.query.email);
+        const codigo_estudiante = comoTexto(req.query.codigo_estudiante);
         if (!codigoInvitacion) {
             res.status(400).json({
                 success: false,
@@ -191,10 +195,10 @@ const buscarEstudiantesConInvitacion = async (req, res) => {
         }
         const estudiantes = await estudiante_service_1.estudianteService.buscarEstudiantesExistentes({
             escuelaId: invitacionInfo.escuelaId,
-            nombre: nombre,
-            apellidos: apellidos,
-            email: email,
-            codigo_estudiante: codigo_estudiante,
+            nombre,
+            apellidos,
+            email,
+            codigo_estudiante,
         });
         const estudiantesPublicos = estudiantes.map((est) => ({
             _id: est._id,
