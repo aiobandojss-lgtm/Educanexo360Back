@@ -99,8 +99,11 @@ class CalendarioController {
         });
 
         const fileContent = fs.readFileSync(file.path);
-        uploadStream.write(fileContent);
-        uploadStream.end();
+        // Esperar a que GridFS termine de escribir (antes se respondía antes de que existiera el archivo)
+        await new Promise((resolve, reject) => {
+          uploadStream.once('finish', resolve).once('error', reject);
+          uploadStream.end(fileContent);
+        });
 
         eventoData.archivoAdjunto = {
           fileId: uploadStream.id,
@@ -515,8 +518,11 @@ class CalendarioController {
       });
 
       const fileContent = fs.readFileSync(file.path);
-      uploadStream.write(fileContent);
-      uploadStream.end();
+      // Esperar a que GridFS termine de escribir (antes se respondía antes de que existiera el archivo)
+      await new Promise((resolve, reject) => {
+        uploadStream.once('finish', resolve).once('error', reject);
+        uploadStream.end(fileContent);
+      });
 
       datosActualizacion.archivoAdjunto = {
         fileId: uploadStream.id,
