@@ -199,7 +199,12 @@ export const buscarEstudiantesConInvitacion = async (
 ): Promise<void> => {
   try {
     const { codigoInvitacion } = req.params;
-    const { nombre, apellidos, email, codigo_estudiante } = req.query;
+    // Solo strings: evita operadores NoSQL (email[$ne]=x) desde un endpoint público
+    const comoTexto = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
+    const nombre = comoTexto(req.query.nombre);
+    const apellidos = comoTexto(req.query.apellidos);
+    const email = comoTexto(req.query.email);
+    const codigo_estudiante = comoTexto(req.query.codigo_estudiante);
 
     if (!codigoInvitacion) {
       res.status(400).json({
@@ -232,10 +237,10 @@ export const buscarEstudiantesConInvitacion = async (
     // Buscar estudiantes existentes en la escuela
     const estudiantes = await estudianteService.buscarEstudiantesExistentes({
       escuelaId: invitacionInfo.escuelaId,
-      nombre: nombre as string,
-      apellidos: apellidos as string,
-      email: email as string,
-      codigo_estudiante: codigo_estudiante as string,
+      nombre,
+      apellidos,
+      email,
+      codigo_estudiante,
     });
 
     // Filtrar solo información necesaria para el registro público

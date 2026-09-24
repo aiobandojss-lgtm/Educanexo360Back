@@ -41,7 +41,22 @@ class EstudianteService {
   async buscarEstudiantesExistentes(
     options: BusquedaEstudianteOptions,
   ): Promise<EstudianteEncontrado[]> {
-    const { escuelaId, ...criterios } = options;
+    const { escuelaId } = options;
+
+    // Solo strings (evita operadores NoSQL como email[$ne]=x) y sin espacios sobrantes
+    const texto = (v: unknown): string | undefined =>
+      typeof v === 'string' && v.trim() !== '' ? v.trim() : undefined;
+    // Nombre/apellidos: coincidencia por PREFIJO, mínimo 3 letras (evita enumerar el colegio)
+    const prefijo = (v: unknown): RegExp | undefined => {
+      const t = texto(v);
+      return t && t.length >= 3 ? new RegExp('^' + escapeRegex(t), 'i') : undefined;
+    };
+    const criterios = {
+      email: texto(options.email)?.toLowerCase(),
+      codigo_estudiante: texto(options.codigo_estudiante),
+      nombre: prefijo(options.nombre),
+      apellidos: prefijo(options.apellidos),
+    };
 
     // Construir query de búsqueda
     const query: any = {
@@ -63,16 +78,16 @@ class EstudianteService {
 
     if (criterios.nombre && criterios.apellidos) {
       orConditions.push({
-        nombre: new RegExp(escapeRegex(criterios.nombre), 'i'),
-        apellidos: new RegExp(escapeRegex(criterios.apellidos), 'i'),
+        nombre: criterios.nombre,
+        apellidos: criterios.apellidos,
       });
     } else if (criterios.nombre) {
       orConditions.push({
-        nombre: new RegExp(escapeRegex(criterios.nombre), 'i'),
+        nombre: criterios.nombre,
       });
     } else if (criterios.apellidos) {
       orConditions.push({
-        apellidos: new RegExp(escapeRegex(criterios.apellidos), 'i'),
+        apellidos: criterios.apellidos,
       });
     }
 
@@ -84,7 +99,11 @@ class EstudianteService {
     }
 
     try {
-      const estudiantes = await Usuario.find(query).lean();
+      // Máximo 5 resultados y solo los campos necesarios
+      const estudiantes = await Usuario.find(query)
+        .select('_id nombre apellidos email info_academica.codigo_estudiante')
+        .limit(5)
+        .lean();
 
       // Para cada estudiante, obtener información adicional
       const estudiantesEncontrados: EstudianteEncontrado[] = [];

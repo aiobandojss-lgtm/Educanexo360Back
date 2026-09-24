@@ -141,7 +141,7 @@ apiRouter.use('/superadmin', superadminRoutes);
 // RUTAS PARA EL SISTEMA DE INVITACIONES Y REGISTRO
 apiRouter.use('/invitaciones', rateLimiter(60000, 20), invitacionRoutes); // 20 req/min — previene abuso de invitaciones
 apiRouter.use('/registro', rateLimiter(60000, 10), registroRoutes);       // 10 req/min — previene spam de cuentas
-apiRouter.use('/public', publicRoutes);
+apiRouter.use('/public', rateLimiter(60000, 30), publicRoutes); // 30 req/min por IP — endpoints sin autenticación
 apiRouter.use('/estudiantes', estudianteRoutes);
 apiRouter.use('/cache', cacheRoutes);
 apiRouter.use('/perfiles-rol', perfilRolRoutes);
