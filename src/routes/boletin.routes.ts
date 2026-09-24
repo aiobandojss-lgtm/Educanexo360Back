@@ -12,13 +12,13 @@ router.use(authenticate);
 // Rutas para generar boletines
 router.get(
   '/periodo',
-  authorize('ADMIN', 'DOCENTE', 'ESTUDIANTE', 'PADRE'),
+  authorize('ADMIN', 'DOCENTE', 'ESTUDIANTE', 'ACUDIENTE'),
   boletinController.generarBoletinPeriodo,
 );
 
 router.get(
   '/final',
-  authorize('ADMIN', 'DOCENTE', 'ESTUDIANTE', 'PADRE'),
+  authorize('ADMIN', 'DOCENTE', 'ESTUDIANTE', 'ACUDIENTE'),
   boletinController.generarBoletinFinal,
 );
 

@@ -12,13 +12,13 @@ router.use(authenticate);
 // Rutas para cálculo de promedios
 router.get(
   '/promedio-periodo',
-  authorize('ADMIN', 'DOCENTE', 'ESTUDIANTE', 'PADRE'),
+  authorize('ADMIN', 'DOCENTE', 'ESTUDIANTE', 'ACUDIENTE'),
   academicController.obtenerPromedioPeriodo,
 );
 
 router.get(
   '/promedio-asignatura',
-  authorize('ADMIN', 'DOCENTE', 'ESTUDIANTE', 'PADRE'),
+  authorize('ADMIN', 'DOCENTE', 'ESTUDIANTE', 'ACUDIENTE'),
   academicController.obtenerPromedioAsignatura,
 );
 

@@ -8,6 +8,7 @@ import Usuario from '../models/usuario.model';
 import Asignatura from '../models/asignatura.model';
 import Curso from '../models/curso.model';
 import ApiError from '../utils/ApiError';
+import { puedeVerEstudiante } from '../utils/accesoAcademico';
 import { ParamsDictionary } from 'express-serve-static-core';
 import { ParsedQs } from 'qs';
 
@@ -48,8 +49,14 @@ class BoletinController {
         throw new ApiError(400, 'Faltan parámetros requeridos');
       }
 
-      // Validar que el estudiante exista
-      const estudiante = await Usuario.findById(estudianteId);
+      // Regla de rol: ESTUDIANTE él mismo, ACUDIENTE sus hijos, DOCENTE sus cursos, administrativos su colegio
+      if (!(await puedeVerEstudiante(req.user, estudianteId))) {
+        throw new ApiError(403, 'No tiene acceso a la información de este estudiante');
+      }
+      const escuelaId = req.user.escuelaId;
+
+      // Validar que el estudiante exista (siempre dentro del colegio)
+      const estudiante = await Usuario.findOne({ _id: estudianteId, escuelaId });
 
       if (!estudiante) {
         throw new ApiError(404, 'Estudiante no encontrado');
@@ -62,6 +69,7 @@ class BoletinController {
 
       // Encontrar el curso del estudiante
       const curso = await Curso.findOne({
+        escuelaId,
         estudiantes: { $in: [estudianteId] },
       });
 
@@ -72,6 +80,7 @@ class BoletinController {
       // Obtener todas las asignaturas del curso
       const asignaturas = await Asignatura.find({
         cursoId: curso._id,
+        escuelaId,
         estado: 'ACTIVO',
       }).populate('docenteId', 'nombre apellidos');
 
@@ -83,15 +92,17 @@ class BoletinController {
         const calificacion = await Calificacion.findOne({
           estudianteId,
           asignaturaId: asignatura._id,
+          escuelaId,
           periodo: Number(periodo),
-          año_academico,
+          año_academico: String(año_academico),
         });
 
         // Obtener todos los logros de la asignatura en este periodo
         const logros = await Logro.find({
           asignaturaId: asignatura._id,
+          escuelaId,
           periodo: Number(periodo),
-          año_academico,
+          año_academico: String(año_academico),
           estado: 'ACTIVO',
         }).lean();
 
@@ -214,8 +225,14 @@ class BoletinController {
         throw new ApiError(400, 'Faltan parámetros requeridos');
       }
 
-      // Validar que el estudiante exista
-      const estudiante = await Usuario.findById(estudianteId);
+      // Regla de rol: ESTUDIANTE él mismo, ACUDIENTE sus hijos, DOCENTE sus cursos, administrativos su colegio
+      if (!(await puedeVerEstudiante(req.user, estudianteId))) {
+        throw new ApiError(403, 'No tiene acceso a la información de este estudiante');
+      }
+      const escuelaId = req.user.escuelaId;
+
+      // Validar que el estudiante exista (siempre dentro del colegio)
+      const estudiante = await Usuario.findOne({ _id: estudianteId, escuelaId });
 
       if (!estudiante) {
         throw new ApiError(404, 'Estudiante no encontrado');
@@ -228,6 +245,7 @@ class BoletinController {
 
       // Encontrar el curso del estudiante
       const curso = await Curso.findOne({
+        escuelaId,
         estudiantes: { $in: [estudianteId] },
       });
 
@@ -238,6 +256,7 @@ class BoletinController {
       // Obtener todas las asignaturas del curso
       const asignaturas = await Asignatura.find({
         cursoId: curso._id,
+        escuelaId,
         estado: 'ACTIVO',
       }).populate('docenteId', 'nombre apellidos');
 
@@ -256,8 +275,9 @@ class BoletinController {
           const calificacion = await Calificacion.findOne({
             estudianteId,
             asignaturaId: asignatura._id,
+            escuelaId,
             periodo,
-            año_academico,
+            año_academico: String(año_academico),
           });
 
           // Obtener los logros calificados para este periodo
@@ -268,7 +288,7 @@ class BoletinController {
             calificacion.calificaciones_logros.length > 0
           ) {
             for (const calLogro of calificacion.calificaciones_logros) {
-              const logro = await Logro.findById(calLogro.logroId);
+              const logro = await Logro.findOne({ _id: calLogro.logroId, escuelaId });
               if (logro) {
                 logrosCalificados.push({
                   logro: {

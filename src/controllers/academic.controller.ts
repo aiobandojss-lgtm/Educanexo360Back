@@ -2,7 +2,21 @@
 
 import { Request, Response, NextFunction } from 'express';
 import academicService from '../services/academic.service';
+import mongoose from 'mongoose';
 import ApiError from '../utils/ApiError';
+import {
+  puedeVerEstudiante,
+  docenteTieneCurso,
+  esRolAdministrativo,
+  queryString,
+} from '../utils/accesoAcademico';
+
+// Valida que los IDs recibidos por query sean ObjectId (evita operadores y errores de cast)
+const validarIds = (...ids: (string | undefined)[]): void => {
+  if (ids.some((id) => !id || !mongoose.isValidObjectId(id))) {
+    throw new ApiError(400, 'Parámetros inválidos');
+  }
+};
 
 interface RequestWithUser extends Request {
   user?: {
@@ -25,17 +39,26 @@ class AcademicController {
         throw new ApiError(401, 'No autorizado');
       }
 
-      const { estudianteId, asignaturaId, periodo, año_academico } = req.query;
+      const estudianteId = queryString(req.query.estudianteId);
+      const asignaturaId = queryString(req.query.asignaturaId);
+      const periodo = queryString(req.query.periodo);
+      const año_academico = queryString(req.query.año_academico);
 
       if (!estudianteId || !asignaturaId || !periodo || !año_academico) {
         throw new ApiError(400, 'Faltan parámetros requeridos');
       }
+      validarIds(estudianteId, asignaturaId);
+
+      if (!(await puedeVerEstudiante(req.user, estudianteId))) {
+        throw new ApiError(403, 'No tiene acceso a la información de este estudiante');
+      }
 
       const promedios = await academicService.calcularPromedioPeriodo(
-        estudianteId as string,
-        asignaturaId as string,
+        estudianteId,
+        asignaturaId,
         Number(periodo),
-        año_academico as string,
+        año_academico,
+        req.user.escuelaId,
       );
 
       res.json({
@@ -53,16 +76,24 @@ class AcademicController {
         throw new ApiError(401, 'No autorizado');
       }
 
-      const { estudianteId, asignaturaId, año_academico } = req.query;
+      const estudianteId = queryString(req.query.estudianteId);
+      const asignaturaId = queryString(req.query.asignaturaId);
+      const año_academico = queryString(req.query.año_academico);
 
       if (!estudianteId || !asignaturaId || !año_academico) {
         throw new ApiError(400, 'Faltan parámetros requeridos');
       }
+      validarIds(estudianteId, asignaturaId);
+
+      if (!(await puedeVerEstudiante(req.user, estudianteId))) {
+        throw new ApiError(403, 'No tiene acceso a la información de este estudiante');
+      }
 
       const promedios = await academicService.calcularPromedioAsignatura(
-        estudianteId as string,
-        asignaturaId as string,
-        año_academico as string,
+        estudianteId,
+        asignaturaId,
+        año_academico,
+        req.user.escuelaId,
       );
 
       res.json({
@@ -80,17 +111,27 @@ class AcademicController {
         throw new ApiError(401, 'No autorizado');
       }
 
-      const { cursoId, asignaturaId, periodo, año_academico } = req.query;
+      const cursoId = queryString(req.query.cursoId);
+      const asignaturaId = queryString(req.query.asignaturaId);
+      const periodo = queryString(req.query.periodo);
+      const año_academico = queryString(req.query.año_academico);
 
       if (!cursoId || !asignaturaId || !periodo || !año_academico) {
         throw new ApiError(400, 'Faltan parámetros requeridos');
       }
+      validarIds(cursoId, asignaturaId);
+
+      // DOCENTE: solo sus cursos. Administrativos: su colegio (el filtro escuelaId va en la agregación)
+      if (!esRolAdministrativo(req.user.tipo) && !(await docenteTieneCurso(req.user, cursoId))) {
+        throw new ApiError(403, 'No tiene acceso a este curso');
+      }
 
       const estadisticas = await academicService.obtenerEstadisticasGrupo(
-        cursoId as string,
-        asignaturaId as string,
+        cursoId,
+        asignaturaId,
         Number(periodo),
-        año_academico as string,
+        año_academico,
+        req.user.escuelaId,
       );
 
       res.json({

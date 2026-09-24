@@ -82,9 +82,11 @@ class AcademicService {
     asignaturaId: string,
     periodo: number,
     año_academico: string,
+    escuelaId: string,
   ): Promise<PromedioResult | null> {
     const cacheKey = this.createCacheKey(
       'promedio_periodo',
+      escuelaId,
       estudianteId,
       asignaturaId,
       periodo.toString(),
@@ -102,6 +104,7 @@ class AcademicService {
           $match: {
             estudianteId: new mongoose.Types.ObjectId(estudianteId),
             asignaturaId: new mongoose.Types.ObjectId(asignaturaId),
+            escuelaId: new mongoose.Types.ObjectId(escuelaId),
             periodo,
             año_academico,
           },
@@ -436,9 +439,11 @@ class AcademicService {
     estudianteId: string,
     asignaturaId: string,
     año_academico: string,
+    escuelaId: string,
   ): Promise<PromedioAsignaturaResult> {
     const cacheKey = this.createCacheKey(
       'promedio_asignatura',
+      escuelaId,
       estudianteId,
       asignaturaId,
       año_academico,
@@ -455,6 +460,7 @@ class AcademicService {
           $match: {
             estudianteId: new mongoose.Types.ObjectId(estudianteId),
             asignaturaId: new mongoose.Types.ObjectId(asignaturaId),
+            escuelaId: new mongoose.Types.ObjectId(escuelaId),
             año_academico,
           },
         },
@@ -557,9 +563,11 @@ class AcademicService {
     asignaturaId: string,
     periodo: number,
     año_academico: string,
+    escuelaId: string,
   ): Promise<EstadisticasGrupoResult> {
     const cacheKey = this.createCacheKey(
       'estadisticas_grupo',
+      escuelaId,
       cursoId,
       asignaturaId,
       periodo.toString(),
@@ -578,6 +586,8 @@ class AcademicService {
             periodo,
             año_academico,
             asignaturaId: new mongoose.Types.ObjectId(asignaturaId),
+            cursoId: new mongoose.Types.ObjectId(cursoId),
+            escuelaId: new mongoose.Types.ObjectId(escuelaId),
           },
         },
         {
