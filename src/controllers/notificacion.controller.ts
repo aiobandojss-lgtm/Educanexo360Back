@@ -41,6 +41,13 @@ export class NotificacionController {
 
       console.log(`📱 Registrando token FCM para usuario: ${req.user._id}`);
 
+      // Un token pertenece a un solo dispositivo: quitarlo de cualquier otra cuenta
+      // (celular compartido → evita que lleguen push de la cuenta anterior)
+      await Usuario.updateMany(
+        { fcmToken, _id: { $ne: req.user._id } },
+        { $set: { fcmToken: null, fcmTokenUpdatedAt: new Date() } },
+      );
+
       const usuarioActualizado = await Usuario.findByIdAndUpdate(
         req.user._id,
         {
@@ -75,6 +82,31 @@ export class NotificacionController {
     }
   }
 
+  // Desvincular el dispositivo al cerrar sesión (idempotente: responde 200 aunque no coincida)
+  async desregistrarTokenFCM(req: RequestWithUser, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) {
+        throw new ApiError(401, 'No autorizado');
+      }
+
+      const { fcmToken } = req.body;
+
+      // Solo se borra si el token coincide con el registrado para ESTE usuario
+      const resultado = await Usuario.updateOne(
+        { _id: req.user._id, fcmToken },
+        { $set: { fcmToken: null, fcmTokenUpdatedAt: new Date() }, $unset: { platform: '' } },
+      );
+
+      res.json({
+        success: true,
+        message: 'Dispositivo desvinculado',
+        data: { tokenRemoved: resultado.modifiedCount > 0 },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   // MÉTODO CORREGIDO: Enviar notificación de prueba
   async enviarNotificacionPrueba(req: RequestWithUser, res: Response, next: NextFunction): Promise<void> {
     try {
@@ -82,7 +114,7 @@ export class NotificacionController {
         throw new ApiError(401, 'No autorizado');
       }
 
-      if (!['ADMIN', 'RECTOR', 'COORDINADOR'].includes(req.user.tipo)) {
+      if (!['SUPER_ADMIN', 'ADMIN'].includes(req.user.tipo)) {
         throw new ApiError(403, 'No tiene permisos para enviar notificaciones de prueba');
       }
 
@@ -94,7 +126,10 @@ export class NotificacionController {
 
       let targetUser;
       if (usuarioId) {
-        targetUser = await Usuario.findById(usuarioId).select('_id nombre apellidos fcmToken');
+        // Solo usuarios del mismo colegio (SUPER_ADMIN no tiene colegio: puede elegir cualquiera)
+        const filtroDestino: Record<string, unknown> = { _id: usuarioId };
+        if (req.user.tipo !== 'SUPER_ADMIN') filtroDestino.escuelaId = req.user.escuelaId;
+        targetUser = await Usuario.findOne(filtroDestino).select('_id nombre apellidos fcmToken');
         if (!targetUser) {
           throw new ApiError(404, 'Usuario objetivo no encontrado');
         }
