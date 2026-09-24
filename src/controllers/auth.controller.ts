@@ -103,7 +103,9 @@ export const authController = {
 
       res.json({
         success: true,
-        data: tokens,
+        // token (plano) = access token: compatibilidad con APKs viejas que leen data.token.
+        // Los clientes actuales siguen leyendo data.access.token / data.refresh.token.
+        data: { ...tokens, token: tokens.access.token },
       });
     } catch (error) {
       next(error);
