@@ -2188,7 +2188,82 @@ export class MensajeController {
         matchBandeja.estadoUsuario = EstadoMensaje.ELIMINADO;
       }
 
-      pipeline.push({ $match: matchBandeja }, { $sort: { createdAt: -1 } });
+      // Recorte de arreglos ANTES del $sort (auditoría 3.M): el sort no carga estadosUsuarios/lecturas/
+      // destinatarios completos (miles en masivos; límite de 100 MB de memoria del sort en M0).
+      // Es la misma etapa que antes corría en la página; la salida no cambia.
+      pipeline.push(
+        { $match: matchBandeja },
+        {
+          $addFields: {
+            totalDestinatarios: { $size: { $ifNull: ['$destinatarios', []] } },
+            // leido: destinatario → si ÉL lo leyó; remitente → si alguien lo leyó (como lo interpretaba el web)
+            leido: {
+              $cond: [
+                '$esRemitente',
+                { $gt: [{ $size: { $ifNull: ['$lecturas', []] } }, 0] },
+                { $in: [usuarioId, { $ifNull: ['$lecturas.usuarioId', []] }] },
+              ],
+            },
+            // Solo la entrada del propio usuario (el web filtra archivados/eliminados con ella;
+            // Flutter calcula "leído por mí" con lecturas). Antes: arreglos completos (miles en masivos).
+            estadosUsuarios: {
+              $filter: {
+                input: { $ifNull: ['$estadosUsuarios', []] },
+                as: 'e',
+                cond: { $eq: ['$$e.usuarioId', usuarioId] },
+              },
+            },
+            lecturas: {
+              $filter: {
+                input: { $ifNull: ['$lecturas', []] },
+                as: 'l',
+                cond: { $eq: ['$$l.usuarioId', usuarioId] },
+              },
+            },
+            // Destinatarios visibles: remitente → los 3 primeros (borradores: TODOS, porque Flutter
+            // edita el borrador desde el item de la lista y al guardar perdería los demás);
+            // individual con ≤10 → todos; masivo o >10 → solo el propio usuario (privacidad).
+            // El conteo va en totalDestinatarios.
+            destinatarios: {
+              $cond: [
+                '$esRemitente',
+                {
+                  $cond: [
+                    {
+                      $or: [
+                        bandeja === 'borradores',
+                        { $eq: ['$tipo', TipoMensaje.BORRADOR] },
+                        { $eq: ['$estado', EstadoMensaje.BORRADOR] },
+                      ],
+                    },
+                    { $ifNull: ['$destinatarios', []] },
+                    { $slice: [{ $ifNull: ['$destinatarios', []] }, 3] },
+                  ],
+                },
+                {
+                  $cond: [
+                    {
+                      $and: [
+                        { $eq: ['$tipo', TipoMensaje.INDIVIDUAL] },
+                        { $lte: [{ $size: { $ifNull: ['$destinatarios', []] } }, 10] },
+                      ],
+                    },
+                    { $ifNull: ['$destinatarios', []] },
+                    {
+                      $filter: {
+                        input: { $ifNull: ['$destinatarios', []] },
+                        as: 'd',
+                        cond: { $eq: ['$$d', usuarioId] },
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+        { $sort: { createdAt: -1 } },
+      );
 
       // 3) Página + conteo en una sola consulta; el $lookup solo corre sobre la página
       const proyeccionUsuario = (prefijo: string) => ({
@@ -2205,75 +2280,6 @@ export class MensajeController {
           datos: [
             { $skip: (opciones.pagina - 1) * opciones.limite },
             { $limit: opciones.limite },
-            {
-              $addFields: {
-                totalDestinatarios: { $size: { $ifNull: ['$destinatarios', []] } },
-                // leido: destinatario → si ÉL lo leyó; remitente → si alguien lo leyó (como lo interpretaba el web)
-                leido: {
-                  $cond: [
-                    '$esRemitente',
-                    { $gt: [{ $size: { $ifNull: ['$lecturas', []] } }, 0] },
-                    { $in: [usuarioId, { $ifNull: ['$lecturas.usuarioId', []] }] },
-                  ],
-                },
-                // Solo la entrada del propio usuario (el web filtra archivados/eliminados con ella;
-                // Flutter calcula "leído por mí" con lecturas). Antes: arreglos completos (miles en masivos).
-                estadosUsuarios: {
-                  $filter: {
-                    input: { $ifNull: ['$estadosUsuarios', []] },
-                    as: 'e',
-                    cond: { $eq: ['$$e.usuarioId', usuarioId] },
-                  },
-                },
-                lecturas: {
-                  $filter: {
-                    input: { $ifNull: ['$lecturas', []] },
-                    as: 'l',
-                    cond: { $eq: ['$$l.usuarioId', usuarioId] },
-                  },
-                },
-                // Destinatarios visibles: remitente → los 3 primeros (borradores: TODOS, porque Flutter
-                // edita el borrador desde el item de la lista y al guardar perdería los demás);
-                // individual con ≤10 → todos; masivo o >10 → solo el propio usuario (privacidad).
-                // El conteo va en totalDestinatarios.
-                destinatarios: {
-                  $cond: [
-                    '$esRemitente',
-                    {
-                      $cond: [
-                        {
-                          $or: [
-                            bandeja === 'borradores',
-                            { $eq: ['$tipo', TipoMensaje.BORRADOR] },
-                            { $eq: ['$estado', EstadoMensaje.BORRADOR] },
-                          ],
-                        },
-                        { $ifNull: ['$destinatarios', []] },
-                        { $slice: [{ $ifNull: ['$destinatarios', []] }, 3] },
-                      ],
-                    },
-                    {
-                      $cond: [
-                        {
-                          $and: [
-                            { $eq: ['$tipo', TipoMensaje.INDIVIDUAL] },
-                            { $lte: [{ $size: { $ifNull: ['$destinatarios', []] } }, 10] },
-                          ],
-                        },
-                        { $ifNull: ['$destinatarios', []] },
-                        {
-                          $filter: {
-                            input: { $ifNull: ['$destinatarios', []] },
-                            as: 'd',
-                            cond: { $eq: ['$$d', usuarioId] },
-                          },
-                        },
-                      ],
-                    },
-                  ],
-                },
-              },
-            },
             {
               $lookup: {
                 from: 'usuarios',
