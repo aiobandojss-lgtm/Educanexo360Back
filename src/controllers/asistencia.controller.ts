@@ -990,8 +990,10 @@ export const obtenerResumen = async (req: RequestWithUser, res: Response, next: 
     if (fechaInicio) query.fecha.$gte = new Date(fechaInicio as string);
     if (fechaFin) query.fecha.$lte = new Date(fechaFin as string);
     if (!fechaInicio && !fechaFin) {
+      // Inicio de mes en UTC: las fechas se guardan como medianoche UTC (igual que 'YYYY-MM-DD' de los
+      // clientes); con hora local (UTC-5) quedaba por fuera el registro del día 1
       const hoy = new Date();
-      query.fecha.$gte = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+      query.fecha.$gte = new Date(Date.UTC(hoy.getUTCFullYear(), hoy.getUTCMonth(), 1));
     }
 
     // Si es docente, solo mostrar sus propios registros
