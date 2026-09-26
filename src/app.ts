@@ -199,10 +199,20 @@ const connectDB = async () => {
     );
 
     // Opciones de conexión mejoradas
+    // maxPoolSize 10: un solo proceso de Passenger no necesita más y Atlas M0 admite máx. 500
+    // conexiones en total (el default del driver es 100 por proceso)
     const mongooseOptions = {
       serverSelectionTimeoutMS: 5000,
       socketTimeoutMS: 45000,
+      maxPoolSize: 10,
     };
+
+    // Listeners de conexión: registrar caídas y reconexiones (el driver reintenta solo)
+    if (mongoose.connection.listenerCount('error') === 0) {
+      mongoose.connection.on('error', (err) => console.error('[MongoDB] Error de conexión:', err));
+      mongoose.connection.on('disconnected', () => console.warn('[MongoDB] Desconectado'));
+      mongoose.connection.on('reconnected', () => console.warn('[MongoDB] Reconectado'));
+    }
 
     // Conectar a MongoDB
     const conn = await mongoose.connect(mongoURI, mongooseOptions);
@@ -266,6 +276,12 @@ const startServer = async () => {
   // Capturar señales para cierre graceful
   process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
   process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+  // Promesas rechazadas sin catch (p. ej. tareas en segundo plano): registrar SIN tumbar el proceso.
+  // Con un solo proceso de Passenger, una caída deja a todos los colegios sin servicio.
+  process.on('unhandledRejection', (reason) => {
+    console.error('Promesa rechazada sin manejar:', reason);
+  });
 
   // Manejar excepciones no capturadas
   process.on('uncaughtException', (error) => {

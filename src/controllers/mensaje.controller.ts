@@ -2,6 +2,7 @@
 
 import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
+import { pipeline } from 'stream/promises';
 import Mensaje from '../models/mensaje.model';
 import Usuario from '../models/usuario.model';
 import gridfsManager from '../config/gridfs';
@@ -672,9 +673,8 @@ export class MensajeController {
               },
             });
 
-            const fileContent = fs.readFileSync(file.path);
-            uploadStream.write(fileContent);
-            uploadStream.end();
+            // Stream del disco a GridFS esperando a que termine (antes: readFileSync bloqueante + write sin esperar)
+            await pipeline(fs.createReadStream(file.path), uploadStream);
 
             nuevosAdjuntos.push({
               nombre: file.originalname,
@@ -768,9 +768,8 @@ export class MensajeController {
                 },
               });
 
-              const fileContent = fs.readFileSync(file.path);
-              uploadStream.write(fileContent);
-              uploadStream.end();
+              // Stream del disco a GridFS esperando a que termine (antes: readFileSync bloqueante + write sin esperar)
+              await pipeline(fs.createReadStream(file.path), uploadStream);
 
               adjuntos.push({
                 nombre: file.originalname,
@@ -1960,9 +1959,8 @@ export class MensajeController {
             },
           });
 
-          const fileContent = fs.readFileSync(file.path);
-          uploadStream.write(fileContent);
-          uploadStream.end();
+          // Stream del disco a GridFS esperando a que termine (antes: readFileSync bloqueante + write sin esperar)
+          await pipeline(fs.createReadStream(file.path), uploadStream);
 
           adjuntos.push({
             nombre: file.originalname,
@@ -2856,20 +2854,31 @@ export class MensajeController {
       }
 
       // Buscar el archivo en GridFS
-      const documentoCursor = bucket.find({ _id: new mongoose.Types.ObjectId(adjuntoId) });
-      const documentoCount = await documentoCursor.count();
-      if (documentoCount === 0) {
+      // Existencia en GridFS (cursor.count() está deprecado en el driver 6)
+      const [documento] = await bucket.find({ _id: new mongoose.Types.ObjectId(adjuntoId) }).limit(1).toArray();
+      if (!documento) {
         throw new ApiError(404, 'Archivo no encontrado en el sistema');
       }
 
-      // Configurar respuesta
+      // Configurar respuesta (nombre codificado RFC 5987: caracteres no latin-1 lanzaban excepción)
+      const nombreArchivo = String(adjunto.nombre || 'archivo');
+      const nombreAscii = nombreArchivo.replace(/[^\x20-\x7E]|"/g, '_');
       res.set({
         'Content-Type': adjunto.tipo,
-        'Content-Disposition': `attachment; filename="${adjunto.nombre}"`,
+        'Content-Disposition': `attachment; filename="${nombreAscii}"; filename*=UTF-8''${encodeURIComponent(nombreArchivo)}`,
       });
 
       // Devolver el stream del archivo
       const downloadStream = bucket.openDownloadStream(new mongoose.Types.ObjectId(adjuntoId));
+      // Sin handler, un error de GridFS con las cabeceras ya enviadas era un error de stream no manejado
+      downloadStream.on('error', (error) => {
+        console.error('Error en stream de descarga GridFS:', error);
+        if (!res.headersSent) {
+          next(new ApiError(500, 'Error al descargar el archivo'));
+        } else {
+          res.end();
+        }
+      });
       downloadStream.pipe(res);
     } catch (error) {
       next(error);
@@ -3215,9 +3224,8 @@ export class MensajeController {
             },
           });
 
-          const fileContent = fs.readFileSync(file.path);
-          uploadStream.write(fileContent);
-          uploadStream.end();
+          // Stream del disco a GridFS esperando a que termine (antes: readFileSync bloqueante + write sin esperar)
+          await pipeline(fs.createReadStream(file.path), uploadStream);
 
           adjuntos.push({
             nombre: file.originalname,

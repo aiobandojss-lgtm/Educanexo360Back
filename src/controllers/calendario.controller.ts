@@ -783,20 +783,31 @@ class CalendarioController {
 
       // Buscar el archivo en GridFS
       const fileId = new mongoose.Types.ObjectId(evento.archivoAdjunto.fileId.toString());
-      const documentoCursor = bucket.find({ _id: fileId });
-      const documentoCount = await documentoCursor.count();
-      if (documentoCount === 0) {
+      // Existencia en GridFS (cursor.count() está deprecado en el driver 6)
+      const [documento] = await bucket.find({ _id: fileId }).limit(1).toArray();
+      if (!documento) {
         throw new ApiError(404, 'Archivo no encontrado en el sistema');
       }
 
-      // Configurar respuesta
+      // Configurar respuesta (nombre codificado RFC 5987: caracteres no latin-1 lanzaban excepción)
+      const nombreArchivo = String(evento.archivoAdjunto.nombre || 'archivo');
+      const nombreAscii = nombreArchivo.replace(/[^\x20-\x7E]|"/g, '_');
       res.set({
         'Content-Type': evento.archivoAdjunto.tipo,
-        'Content-Disposition': `attachment; filename="${evento.archivoAdjunto.nombre}"`,
+        'Content-Disposition': `attachment; filename="${nombreAscii}"; filename*=UTF-8''${encodeURIComponent(nombreArchivo)}`,
       });
 
       // Devolver el stream del archivo
       const downloadStream = bucket.openDownloadStream(fileId);
+      // Sin handler, un error de GridFS con las cabeceras ya enviadas era un error de stream no manejado
+      downloadStream.on('error', (error) => {
+        console.error('Error en stream de descarga GridFS:', error);
+        if (!res.headersSent) {
+          next(new ApiError(500, 'Error al descargar el archivo'));
+        } else {
+          res.end();
+        }
+      });
       downloadStream.pipe(res);
     } catch (error) {
       next(error);
