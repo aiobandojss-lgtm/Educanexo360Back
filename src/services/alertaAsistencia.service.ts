@@ -13,6 +13,7 @@ import { EstadoAsistencia } from '../interfaces/IAsistencia';
 import { NivelAlertaAsistencia } from '../interfaces/IAlertaAsistencia';
 import { EstadoNotificacion, TipoNotificacion } from '../interfaces/INotificacion';
 import { TipoMensaje, PrioridadMensaje } from '../interfaces/IMensaje';
+import { finDelDiaColombia } from '../utils/fechas';
 
 type DestinatarioAlerta = {
   _id: mongoose.Types.ObjectId;
@@ -93,9 +94,14 @@ async function obtenerPeriodoVigente(
   const hoy = new Date();
   const periodo = periodoId
     ? periodos.find((p) => String(p._id) === String(periodoId))
-    : periodos.find((p) => new Date(p.fecha_inicio) <= hoy && hoy <= new Date(p.fecha_fin));
+    : // hasta el FIN del día de fecha_fin (hora Colombia): el último día del periodo no cae en 'sin-periodo'
+      periodos.find((p) => new Date(p.fecha_inicio) <= hoy && hoy <= finDelDiaColombia(new Date(p.fecha_fin)));
   if (!periodo) return { id: periodoId || 'sin-periodo' };
-  return { id: String(periodo._id), desde: new Date(periodo.fecha_inicio), hasta: new Date(periodo.fecha_fin) };
+  return {
+    id: String(periodo._id),
+    desde: new Date(periodo.fecha_inicio),
+    hasta: finDelDiaColombia(new Date(periodo.fecha_fin)),
+  };
 }
 
 async function enviarNotificacionesAlerta(params: {
@@ -211,6 +217,13 @@ async function enviarNotificacionesAlerta(params: {
   // Canal 4: FCM / push notifications — pendiente cuando Flutter integre Firebase.
 }
 
+// Mínimo de clases registradas en el periodo antes de evaluar umbrales: al inicio del periodo 1 ausencia
+// de 1 clase = 100% y disparaba todas las alertas (configurable con ALERTA_MIN_CLASES)
+export const MIN_CLASES_ALERTA = Math.max(parseInt(process.env.ALERTA_MIN_CLASES || '8', 10) || 8, 1);
+
+// Rango de cada nivel para no repetir alertas de nivel igual o menor en el mismo periodo
+const RANGO_NIVEL: Record<string, number> = { ALERTA: 1, CRITICO: 2, INMINENTE: 3 };
+
 const UMBRALES: { nivel: NivelAlertaAsistencia; minPct: number }[] = [
   { nivel: 'INMINENTE', minPct: 30 },
   { nivel: 'CRITICO', minPct: 25 },
@@ -267,9 +280,30 @@ export async function procesarAlertasAsistenciaCurso(params: {
     },
   ]);
 
+  // Alertas ya emitidas en el periodo: nivel máximo por estudiante
+  const idsConClases = conteos.filter((c: any) => c.total >= MIN_CLASES_ALERTA).map((c: any) => c._id);
+  const previas = idsConClases.length
+    ? await AlertaAsistencia.find({ estudianteId: { $in: idsConClases }, periodoId: periodo.id })
+        .select('estudianteId nivel')
+        .lean()
+    : [];
+  const nivelPrevio = new Map<string, number>();
+  previas.forEach((a: any) => {
+    const k = String(a.estudianteId);
+    nivelPrevio.set(k, Math.max(nivelPrevio.get(k) || 0, RANGO_NIVEL[a.nivel] || 0));
+  });
+
   const enRiesgo = conteos
+    // Sin suficientes clases en el periodo no se evalúa (evita 100% con 1 ausencia de 1 clase)
+    .filter((c: any) => c.total >= MIN_CLASES_ALERTA)
     .map((c: any) => ({ estudianteId: String(c._id), porcentaje: (c.ausentes / c.total) * 100 }))
-    .map((c) => ({ ...c, umbrales: UMBRALES.filter((u) => c.porcentaje >= u.minPct) }))
+    .map((c) => {
+      // Solo el nivel MÁS ALTO alcanzado, y solo si supera el máximo ya alertado en el periodo
+      const alcanzado = UMBRALES.find((u) => c.porcentaje >= u.minPct); // UMBRALES va de mayor a menor
+      const previo = nivelPrevio.get(c.estudianteId) || 0;
+      const umbrales = alcanzado && RANGO_NIVEL[alcanzado.nivel] > previo ? [alcanzado] : [];
+      return { ...c, umbrales };
+    })
     .filter((c) => c.umbrales.length > 0);
   if (enRiesgo.length === 0) return;
 
