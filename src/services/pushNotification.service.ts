@@ -1,4 +1,5 @@
 import Usuario from '../models/usuario.model';
+import { logger } from '../utils/logger';
 
 interface NotificacionData {
   token: string;
@@ -32,7 +33,7 @@ class PushNotificationService {
       !process.env.FIREBASE_PRIVATE_KEY ||
       !process.env.FIREBASE_CLIENT_EMAIL
     ) {
-      console.log('Firebase no configurado — notificaciones push desactivadas');
+      logger.info('Firebase no configurado — notificaciones push desactivadas');
       return;
     }
 
@@ -62,7 +63,7 @@ class PushNotificationService {
 
       this.messaging = require('firebase-admin').messaging();
       this.firebaseInitialized = true;
-      console.log('Firebase Admin SDK inicializado correctamente');
+      logger.info('Firebase Admin SDK inicializado correctamente');
     } catch (error) {
       console.error('Error inicializando Firebase Admin SDK — notificaciones push desactivadas:', error);
       this.firebaseInitialized = false;

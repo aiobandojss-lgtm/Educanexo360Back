@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import Asignatura from '../models/asignatura.model';
 import ApiError from '../utils/ApiError';
+import { logger } from '../utils/logger';
 
 interface RequestWithUser extends Request {
   user?: {
@@ -143,7 +144,7 @@ class AsignaturaController {
         updateData.cursoId === null ||
         updateData.cursoId === 'null'
       ) {
-        console.log(`🔄 Desasignando asignatura ${req.params.id} de su curso`);
+        logger.debug(`🔄 Desasignando asignatura ${req.params.id} de su curso`);
 
         // Usar $unset para remover completamente el campo cursoId
         const asignatura = await Asignatura.findOneAndUpdate(
@@ -162,7 +163,7 @@ class AsignaturaController {
           throw new ApiError(404, 'Asignatura no encontrada');
         }
 
-        console.log('✅ Asignatura desasignada del curso exitosamente');
+        logger.debug('✅ Asignatura desasignada del curso exitosamente');
 
         res.json({
           success: true,
@@ -296,7 +297,7 @@ class AsignaturaController {
       }
 
       const { cursoId } = req.params;
-      console.log(`Buscando asignaturas no asignadas al curso ${cursoId}`);
+      logger.debug(`Buscando asignaturas no asignadas al curso ${cursoId}`);
 
       // Primero, obtener todas las asignaturas que ya están asignadas a este curso
       interface AsignaturaDoc {
@@ -308,7 +309,7 @@ class AsignaturaController {
         escuelaId: req.user.escuelaId,
       }).select('_id');
 
-      console.log(`Encontradas ${asignaturasAsignadas.length} asignaturas ya asignadas al curso`);
+      logger.debug(`Encontradas ${asignaturasAsignadas.length} asignaturas ya asignadas al curso`);
 
       // Obtener IDs de asignaturas ya asignadas
       const idsAsignadas = asignaturasAsignadas.map((a: AsignaturaDoc) => a._id.toString());
@@ -330,7 +331,7 @@ class AsignaturaController {
         query._id = { $nin: idsAsignadas };
       }
 
-      console.log('Ejecutando consulta para asignaturas no asignadas:', JSON.stringify(query));
+      logger.debug('Ejecutando consulta para asignaturas no asignadas:', JSON.stringify(query));
 
       const asignaturas = await Asignatura.find(query)
         .populate({
@@ -341,7 +342,7 @@ class AsignaturaController {
         .populate('cursoId', 'nombre grado grupo nivel jornada año_academico')
         .sort({ nombre: 1 });
 
-      console.log(`Encontradas ${asignaturas.length} asignaturas no asignadas al curso`);
+      logger.debug(`Encontradas ${asignaturas.length} asignaturas no asignadas al curso`);
 
       // Transformar datos para asegurar consistencia
       const asignaturasFormateadas = asignaturas.map((asignatura) => {

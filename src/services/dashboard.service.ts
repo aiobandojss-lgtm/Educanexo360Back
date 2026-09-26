@@ -7,6 +7,7 @@ import Usuario from '../models/usuario.model';
 import Curso from '../models/curso.model';
 import Calificacion from '../models/calificacion.model';
 import Asistencia from '../models/asistencia.model';
+import { logger } from '../utils/logger';
 
 export interface DashboardStats {
   mensajesSinLeer: number;
@@ -50,7 +51,7 @@ class DashboardService {
     const fechaReciente = new Date();
     fechaReciente.setDate(fechaActual.getDate() - 7);
 
-    console.log(`🔍 Calculando estadísticas dashboard para usuario ${usuarioId}`);
+    logger.debug(`🔍 Calculando estadísticas dashboard para usuario ${usuarioId}`);
 
     // 🚀 QUERIES EN PARALELO (igual que tu controller pero reutilizable)
     const [mensajesSinLeer, eventosProximos, anunciosRecientes] = await Promise.all([
@@ -70,7 +71,7 @@ class DashboardService {
       anunciosRecientes,
     };
 
-    console.log(`✅ Estadísticas calculadas:`, estadisticas);
+    logger.debug(`✅ Estadísticas calculadas:`, estadisticas);
     return estadisticas;
   }
 

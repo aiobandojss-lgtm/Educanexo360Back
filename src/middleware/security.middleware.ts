@@ -1,6 +1,7 @@
 import helmet from 'helmet';
 import cors from 'cors';
 import { Express } from 'express';
+import { logger } from '../utils/logger';
 
 export const configureSecurityMiddleware = (app: Express) => {
   // Configuración básica de Helmet
@@ -23,7 +24,7 @@ export const configureSecurityMiddleware = (app: Express) => {
       if (allowedDomains.indexOf(origin) !== -1) {
         callback(null, true);
       } else {
-        console.log(`Origen bloqueado por CORS: ${origin}`);
+        logger.debug(`Origen bloqueado por CORS: ${origin}`);
         callback(new Error('No permitido por CORS'));
       }
     },

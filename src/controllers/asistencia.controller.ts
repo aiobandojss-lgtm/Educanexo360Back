@@ -15,6 +15,7 @@ import {
 import AlertaAsistencia from '../models/alertaAsistencia.model';
 import { procesarAlertasAsistenciaCurso } from '../services/alertaAsistencia.service';
 import { numeroPagina, numeroLimite } from '../utils/paginacion';
+import { logger } from '../utils/logger';
 import {
   esRolAdministrativo,
   docenteTieneCurso,
@@ -298,7 +299,7 @@ export const obtenerAsistenciaPorId = async (
       grupo: (asistencia.cursoId as any)?.grupo || '',
     };
 
-    console.log(
+    logger.debug(
       'Estados de estudiantes:',
       estudiantesFormateados.map((e) => e.estado),
     );

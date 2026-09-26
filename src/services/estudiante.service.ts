@@ -4,6 +4,7 @@ import Usuario from '../models/usuario.model';
 import Curso from '../models/curso.model';
 import ApiError from '../utils/ApiError';
 import { escapeRegex } from '../utils/escapeRegex';
+import { logger } from '../utils/logger';
 
 export interface BusquedaEstudianteOptions {
   nombre?: string;
@@ -324,7 +325,7 @@ class EstudianteService {
         { session },
       );
 
-      console.log(`Estudiante ${estudianteId} asociado exitosamente al acudiente ${acudienteId}`);
+      logger.debug(`Estudiante ${estudianteId} asociado exitosamente al acudiente ${acudienteId}`);
     } catch (error) {
       console.error('Error al asociar estudiante y acudiente:', error);
       throw new ApiError(500, 'Error al asociar estudiante y acudiente');

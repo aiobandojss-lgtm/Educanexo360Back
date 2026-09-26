@@ -12,6 +12,7 @@ import {
   safeCacheSet,
 } from '../cache/simpleCache';
 import mongoose from 'mongoose';
+import { logger } from '../utils/logger';
 
 // Interfaces para tipado fuerte
 interface PromedioResult {
@@ -63,14 +64,14 @@ class AcademicService {
     // Buscar en cache primero
     const cached = cache.get<T>(cacheKey);
     if (cached) {
-      console.log(`📋 CACHE HIT: ${cacheKey}`);
+      logger.debug(`📋 CACHE HIT: ${cacheKey}`);
       return cached;
     }
 
     // Si no está en cache, ejecutar función y cachear resultado
     const result = await fetchFunction();
     if (safeCacheSet(cacheKey, result, ttl)) {
-      console.log(`💾 CACHE SET: ${cacheKey} (${ttl}s)`);
+      logger.debug(`💾 CACHE SET: ${cacheKey} (${ttl}s)`);
     }
 
     return result;
@@ -94,7 +95,7 @@ class AcademicService {
     );
 
     return await this.getOrSetCache(cacheKey, 300, async () => {
-      console.log(
+      logger.debug(
         `🔍 Calculando promedio periodo: ${estudianteId}, ${asignaturaId}, ${periodo}, ${año_academico}`,
       );
 
@@ -413,7 +414,7 @@ class AcademicService {
       ]);
 
       if (!resultado.length) {
-        console.log(
+        logger.debug(
           `❌ No se encontraron calificaciones para: ${estudianteId}, ${asignaturaId}, ${periodo}`,
         );
         return null;
@@ -429,7 +430,7 @@ class AcademicService {
         porcentaje_completado: Number(data.porcentaje_completado?.toFixed(2)) || 0,
       };
 
-      console.log(`✅ Promedio calculado:`, promedio);
+      logger.debug(`✅ Promedio calculado:`, promedio);
       return promedio;
     });
   }
@@ -450,7 +451,7 @@ class AcademicService {
     );
 
     return await this.getOrSetCache(cacheKey, 600, async () => {
-      console.log(
+      logger.debug(
         `🔍 Calculando promedio asignatura completa: ${estudianteId}, ${asignaturaId}, ${año_academico}`,
       );
 
@@ -552,7 +553,7 @@ class AcademicService {
         periodos_evaluados: data.periodos_evaluados,
       };
 
-      console.log(`✅ Promedio asignatura calculado:`, promedioAsignatura);
+      logger.debug(`✅ Promedio asignatura calculado:`, promedioAsignatura);
       return promedioAsignatura;
     });
   }
@@ -575,7 +576,7 @@ class AcademicService {
     );
 
     return await this.getOrSetCache(cacheKey, 180, async () => {
-      console.log(
+      logger.debug(
         `🔍 Calculando estadísticas grupo: ${cursoId}, ${asignaturaId}, ${periodo}, ${año_academico}`,
       );
 
@@ -762,14 +763,14 @@ class AcademicService {
       }
 
       const estadisticas = resultado[0];
-      console.log(`✅ Estadísticas grupo calculadas:`, estadisticas);
+      logger.debug(`✅ Estadísticas grupo calculadas:`, estadisticas);
       return estadisticas;
     });
   }
 
   // 🚀 INVALIDACIÓN DE CACHE INTELIGENTE
   invalidarCacheEstudiante(estudianteId: string, asignaturaId?: string, escuelaId?: string) {
-    console.log(`🔄 Invalidando cache académico para estudiante ${estudianteId}`);
+    logger.debug(`🔄 Invalidando cache académico para estudiante ${estudianteId}`);
 
     // Tipos relacionados a invalidar
     const tiposRelacionados = [
@@ -796,12 +797,12 @@ class AcademicService {
       });
     }
 
-    console.log(`✅ Cache académico invalidado para estudiante ${estudianteId}`);
+    logger.debug(`✅ Cache académico invalidado para estudiante ${estudianteId}`);
   }
 
   // 🚀 INVALIDACIÓN DE CACHE POR CURSO
   invalidarCacheCurso(cursoId: string, escuelaId?: string) {
-    console.log(`🔄 Invalidando cache académico para curso ${cursoId}`);
+    logger.debug(`🔄 Invalidando cache académico para curso ${cursoId}`);
 
     const allKeys = cache.keys();
     const keysToDelete = allKeys.filter(
@@ -810,7 +811,7 @@ class AcademicService {
     );
 
     keysToDelete.forEach((key) => cache.del(key));
-    console.log(
+    logger.debug(
       `✅ Cache académico invalidado para curso ${cursoId} - ${keysToDelete.length} keys eliminadas`,
     );
   }
@@ -825,7 +826,7 @@ class AcademicService {
       keysToDelete.forEach((key) => cache.del(key));
     });
 
-    console.log(`🧹 Cache académico completamente limpiado`);
+    logger.debug(`🧹 Cache académico completamente limpiado`);
   }
 }
 

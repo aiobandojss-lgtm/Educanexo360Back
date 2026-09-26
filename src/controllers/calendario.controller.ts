@@ -11,6 +11,7 @@ import fs from 'fs';
 import path from 'path';
 import { EstadoEvento } from '../interfaces/ICalendario';
 import pushNotificationService from '../services/pushNotification.service';
+import { logger } from '../utils/logger';
 
 // Campos editables de un evento (lista blanca: escuelaId, creadorId y archivoAdjunto nunca vienen del cliente)
 const CAMPOS_EVENTO = [
@@ -123,14 +124,14 @@ class CalendarioController {
       // Procesar fechas - MODIFICADO para mejor manejo de zonas horarias
       if (eventoData.fechaInicio) {
         eventoData.fechaInicio = new Date(eventoData.fechaInicio);
-        console.log(`Fecha inicio recibida: ${eventoData.fechaInicio}`);
-        console.log(`Fecha inicio procesada: ${new Date(eventoData.fechaInicio).toISOString()}`);
+        logger.debug(`Fecha inicio recibida: ${eventoData.fechaInicio}`);
+        logger.debug(`Fecha inicio procesada: ${new Date(eventoData.fechaInicio).toISOString()}`);
       }
 
       if (eventoData.fechaFin) {
         eventoData.fechaFin = new Date(eventoData.fechaFin);
-        console.log(`Fecha fin recibida: ${eventoData.fechaFin}`);
-        console.log(`Fecha fin procesada: ${new Date(eventoData.fechaFin).toISOString()}`);
+        logger.debug(`Fecha fin recibida: ${eventoData.fechaFin}`);
+        logger.debug(`Fecha fin procesada: ${new Date(eventoData.fechaFin).toISOString()}`);
       }
 
       // Procesar invitados
@@ -200,7 +201,7 @@ class CalendarioController {
 
       const { inicio, fin, cursoId, tipo, estado } = req.query;
 
-      console.log('🔍 DEPURACIÓN - Parámetros de consulta:', {
+      logger.debug('🔍 DEPURACIÓN - Parámetros de consulta:', {
         inicio,
         fin,
         cursoId,
@@ -224,29 +225,29 @@ class CalendarioController {
       ) {
         // Estudiantes, padres y acudientes SOLO ven eventos ACTIVOS
         pipeline.push({ $match: { estado: 'ACTIVO' } });
-        console.log('✅ Usuario estudiante/padre/acudiente - SOLO eventos ACTIVOS');
+        logger.debug('✅ Usuario estudiante/padre/acudiente - SOLO eventos ACTIVOS');
       } else {
         // Administradores y docentes
-        console.log('🔍 Filtro de estado recibido:', estado);
+        logger.debug('🔍 Filtro de estado recibido:', estado);
 
         if (estado === 'ACTIVO') {
           pipeline.push({ $match: { estado: 'ACTIVO' } });
-          console.log('✅ Filtrando: SOLO eventos ACTIVOS');
+          logger.debug('✅ Filtrando: SOLO eventos ACTIVOS');
         } else if (estado === 'PENDIENTE') {
           pipeline.push({ $match: { estado: 'PENDIENTE' } });
-          console.log('✅ Filtrando: SOLO eventos PENDIENTES');
+          logger.debug('✅ Filtrando: SOLO eventos PENDIENTES');
         } else if (estado === 'CANCELADO') {
           pipeline.push({ $match: { estado: 'CANCELADO' } });
-          console.log('✅ Filtrando: SOLO eventos CANCELADOS');
+          logger.debug('✅ Filtrando: SOLO eventos CANCELADOS');
         } else if (estado === 'ALL') {
           // 🚨 CRÍTICO: NO aplicar NINGÚN filtro de estado para mostrar TODOS
-          console.log(
+          logger.debug(
             '✅ TODOS: Sin filtro de estado - Mostrando ACTIVOS + PENDIENTES + CANCELADOS',
           );
         } else {
           // Por defecto (vacío o cualquier otra cosa): SOLO ACTIVOS
           pipeline.push({ $match: { estado: 'ACTIVO' } });
-          console.log('✅ Por defecto: SOLO eventos ACTIVOS');
+          logger.debug('✅ Por defecto: SOLO eventos ACTIVOS');
         }
       }
 
@@ -266,18 +267,18 @@ class CalendarioController {
         if (inicio) {
           const fechaInicio = new Date(inicio as string);
           fechaMatch.fechaFin = { $gte: fechaInicio };
-          console.log(`Filtro inicio: ${fechaInicio.toISOString()}`);
+          logger.debug(`Filtro inicio: ${fechaInicio.toISOString()}`);
         }
 
         if (fin) {
           const fechaFin = new Date(fin as string);
           if (!fechaMatch.fechaInicio) fechaMatch.fechaInicio = {};
           fechaMatch.fechaInicio.$lte = fechaFin;
-          console.log(`Filtro fin: ${fechaFin.toISOString()}`);
+          logger.debug(`Filtro fin: ${fechaFin.toISOString()}`);
         }
 
         pipeline.push({ $match: fechaMatch });
-        console.log('Filtro de fechas aplicado:', JSON.stringify(fechaMatch));
+        logger.debug('Filtro de fechas aplicado:', JSON.stringify(fechaMatch));
       }
 
       // Aplicar filtros específicos según el rol DESPUÉS de los filtros de estado
@@ -340,7 +341,7 @@ class CalendarioController {
       // Añadir ordenamiento
       pipeline.push({ $sort: { fechaInicio: 1 } });
 
-      console.log(
+      logger.debug(
         '🔍 DEPURACIÓN - Pipeline con filtros aplicados:',
         JSON.stringify(pipeline, null, 2),
       );
@@ -360,15 +361,15 @@ class CalendarioController {
       });
 
       // DEBUGGING - Mostrar resultados
-      console.log(`✅ RESULTADO - Eventos encontrados: ${eventos.length}`);
+      logger.debug(`✅ RESULTADO - Eventos encontrados: ${eventos.length}`);
       if (eventos.length > 0) {
-        console.log(
+        logger.debug(
           '✅ RESULTADO - Estados de eventos:',
           eventos.map((e) => ({ id: e._id, titulo: e.titulo, estado: e.estado })),
         );
       } else {
-        console.log('⚠️ RESULTADO - No se encontraron eventos');
-        console.log('⚠️ Pipeline usado:', JSON.stringify(pipeline, null, 2));
+        logger.debug('⚠️ RESULTADO - No se encontraron eventos');
+        logger.debug('⚠️ Pipeline usado:', JSON.stringify(pipeline, null, 2));
       }
 
       // Retornar resultados
@@ -411,7 +412,7 @@ class CalendarioController {
         throw new ApiError(404, 'Evento no encontrado');
       }
 
-      console.log('✅ Evento obtenido:', {
+      logger.debug('✅ Evento obtenido:', {
         id: evento._id,
         titulo: evento.titulo,
         estado: evento.estado,
@@ -572,9 +573,9 @@ class CalendarioController {
   // 🚨 FUNCIÓN MODIFICADA - Eliminar (cancelar) un evento
   async eliminarEvento(req: RequestWithUser, res: Response, next: NextFunction) {
   try {
-    console.log('🗑️ === INICIANDO CANCELACIÓN DE EVENTO ===');
-    console.log(`ID del evento: ${req.params.id}`);
-    console.log(`Usuario: ${req.user?.email} (${req.user?.tipo})`);
+    logger.debug('🗑️ === INICIANDO CANCELACIÓN DE EVENTO ===');
+    logger.debug(`ID del evento: ${req.params.id}`);
+    logger.debug(`Usuario: ${req.user?.email} (${req.user?.tipo})`);
 
     if (!req.user) {
       throw new ApiError(401, 'No autorizado');
@@ -587,12 +588,12 @@ class CalendarioController {
     });
 
     if (!evento) {
-      console.log('❌ Evento no encontrado en la base de datos');
+      logger.debug('❌ Evento no encontrado en la base de datos');
       throw new ApiError(404, 'Evento no encontrado');
     }
 
-    console.log(`✅ Evento encontrado: "${evento.titulo}"`);
-    console.log(`Estado actual: ${evento.estado}`);
+    logger.debug(`✅ Evento encontrado: "${evento.titulo}"`);
+    logger.debug(`Estado actual: ${evento.estado}`);
 
     // 🚨 CAMBIO AQUÍ: Agregar COORDINADOR, RECTOR, DOCENTE y ADMINISTRATIVO a los roles permitidos
     const rolesAdministrativos = ['ADMIN', 'COORDINADOR', 'RECTOR', 'DOCENTE', 'ADMINISTRATIVO'];
@@ -601,21 +602,21 @@ class CalendarioController {
 
     // Verificar permisos: puede eliminar si es el creador O tiene rol administrativo
     if (!esCreador && !tienePermisoAdministrativo) {
-      console.log('❌ Usuario sin permisos para eliminar');
-      console.log(`   - Tipo de usuario: ${req.user.tipo}`);
-      console.log(`   - Es creador: ${esCreador}`);
-      console.log(`   - Tiene permiso administrativo: ${tienePermisoAdministrativo}`);
+      logger.debug('❌ Usuario sin permisos para eliminar');
+      logger.debug(`   - Tipo de usuario: ${req.user.tipo}`);
+      logger.debug(`   - Es creador: ${esCreador}`);
+      logger.debug(`   - Tiene permiso administrativo: ${tienePermisoAdministrativo}`);
       throw new ApiError(403, 'No tienes permiso para eliminar este evento');
     }
 
     // Verificar si ya está cancelado
     if (evento.estado === 'CANCELADO') {
-      console.log('⚠️ El evento ya estaba cancelado');
+      logger.debug('⚠️ El evento ya estaba cancelado');
       throw new ApiError(400, 'El evento ya está cancelado');
     }
 
     // 🚨 CAMBIAR ESTADO A CANCELADO (mantener en BD para historial)
-    console.log('🔄 Cambiando estado del evento a CANCELADO...');
+    logger.debug('🔄 Cambiando estado del evento a CANCELADO...');
     const eventoActualizado = await EventoCalendario.findByIdAndUpdate(
       req.params.id,
       {
@@ -626,14 +627,14 @@ class CalendarioController {
     );
 
     if (!eventoActualizado) {
-      console.log('❌ No se pudo cancelar el evento');
+      logger.debug('❌ No se pudo cancelar el evento');
       throw new ApiError(500, 'Error al cancelar el evento');
     }
 
-    console.log('✅ EVENTO CANCELADO EXITOSAMENTE');
-    console.log(`Título: "${eventoActualizado.titulo}"`);
-    console.log(`Nuevo estado: ${eventoActualizado.estado}`);
-    console.log('🗑️ === CANCELACIÓN COMPLETADA ===');
+    logger.debug('✅ EVENTO CANCELADO EXITOSAMENTE');
+    logger.debug(`Título: "${eventoActualizado.titulo}"`);
+    logger.debug(`Nuevo estado: ${eventoActualizado.estado}`);
+    logger.debug('🗑️ === CANCELACIÓN COMPLETADA ===');
 
     // Respuesta de éxito
     res.json({

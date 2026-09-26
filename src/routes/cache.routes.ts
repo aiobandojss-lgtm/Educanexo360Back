@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { getCacheStats, cache } from '../cache/simpleCache';
 import { authenticate, authorize } from '../middleware/auth.middleware';
+import { logger } from '../utils/logger';
 
 interface AuthenticatedRequest extends Request {
   user?: {
@@ -46,7 +47,7 @@ router.delete(
   (req: AuthenticatedRequest, res: Response) => {
     try {
       cache.flushAll();
-      console.log('🗑️ Cache completamente limpiado por:', req.user?.email);
+      logger.debug('🗑️ Cache completamente limpiado por:', req.user?.email);
       res.json({ success: true, message: 'Cache limpiado exitosamente' });
     } catch (error: any) {
       res.status(500).json({ success: false, error: error.message });

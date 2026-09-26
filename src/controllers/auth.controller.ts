@@ -5,6 +5,7 @@ import emailService from '../services/email.service';
 import crypto from 'crypto';
 import Usuario from '../models/usuario.model';
 import config from '../config/config';
+import { logger } from '../utils/logger';
 
 // Usamos la misma interfaz que está definida en auth.middleware.ts
 interface RequestWithUser extends Request {
@@ -232,7 +233,7 @@ export const authController = {
       };
 
       // Registrar éxito de verificación para debugging
-      console.log(`Token verificado exitosamente para usuario: ${safeUser.email}`);
+      logger.debug(`Token verificado exitosamente para usuario: ${safeUser.email}`);
 
       // Responder con los datos del usuario
       res.json({

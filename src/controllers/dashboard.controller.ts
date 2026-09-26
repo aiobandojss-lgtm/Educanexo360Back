@@ -2,6 +2,7 @@
 import { Request, Response } from 'express';
 import dashboardService from '../services/dashboard.service';
 import { invalidateCache } from '../cache/simpleCache';
+import { logger } from '../utils/logger';
 
 // Interfaz para request autenticado (basada en tu estructura)
 interface AuthenticatedRequest extends Request {
@@ -217,6 +218,6 @@ export const obtenerMetricasAvanzadas = async (
 
 // 🚀 FUNCIÓN: Invalidar cache dashboard (usando TU sistema)
 export const invalidarCacheDashboard = (usuarioId: string, escuelaId: string): void => {
-  console.log(`🔄 Invalidando cache dashboard para usuario ${usuarioId} en escuela ${escuelaId}`);
+  logger.debug(`🔄 Invalidando cache dashboard para usuario ${usuarioId} en escuela ${escuelaId}`);
   invalidateCache('dashboard', usuarioId, escuelaId);
 };

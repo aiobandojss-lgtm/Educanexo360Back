@@ -7,6 +7,7 @@ import pushNotificationService from '../services/pushNotification.service';
 import ApiError from '../utils/ApiError';
 import { EstadoNotificacion, TipoNotificacion } from '../interfaces/INotificacion';
 import { numeroPagina, numeroLimite } from '../utils/paginacion';
+import { logger } from '../utils/logger';
 
 interface RequestWithUser extends Request {
   user?: {
@@ -40,7 +41,7 @@ export class NotificacionController {
         throw new ApiError(400, 'Platform debe ser "ios" o "android"');
       }
 
-      console.log(`📱 Registrando token FCM para usuario: ${req.user._id}`);
+      logger.debug(`📱 Registrando token FCM para usuario: ${req.user._id}`);
 
       // Un token pertenece a un solo dispositivo: quitarlo de cualquier otra cuenta
       // (celular compartido → evita que lleguen push de la cuenta anterior)
@@ -66,7 +67,7 @@ export class NotificacionController {
         throw new ApiError(404, 'Usuario no encontrado');
       }
 
-      console.log(`✅ Token FCM registrado para: ${usuarioActualizado.nombre} ${usuarioActualizado.apellidos}`);
+      logger.debug(`✅ Token FCM registrado para: ${usuarioActualizado.nombre} ${usuarioActualizado.apellidos}`);
 
       res.json({
         success: true,
@@ -142,7 +143,7 @@ export class NotificacionController {
         throw new ApiError(400, 'El usuario no tiene token FCM registrado');
       }
 
-      console.log(`🧪 Enviando notificación de prueba a: ${targetUser.nombre} ${targetUser.apellidos}`);
+      logger.debug(`🧪 Enviando notificación de prueba a: ${targetUser.nombre} ${targetUser.apellidos}`);
 
       const resultado = await pushNotificationService.enviarNotificacion({
         token: targetUser.fcmToken,
@@ -200,7 +201,7 @@ export class NotificacionController {
         hasAttachments = false,
       } = req.body;
 
-      console.log('📤 Enviando notificaciones de mensaje:', {
+      logger.debug('📤 Enviando notificaciones de mensaje:', {
         recipientIds: recipientIds?.length,
         messageId,
         priority,

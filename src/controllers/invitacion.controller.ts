@@ -4,6 +4,7 @@ import { TipoInvitacion, EstadoInvitacion } from '../models/invitacion.model';
 import { catchAsync } from '../utils/catchAsync';
 import ApiError from '../utils/ApiError';
 import { numeroPagina, numeroLimite } from '../utils/paginacion';
+import { logger } from '../utils/logger';
 
 interface CustomRequest extends Request {
   user?: {
@@ -21,7 +22,7 @@ interface CustomRequest extends Request {
 
 export const crearInvitacion = catchAsync(
   async (req: CustomRequest, res: Response, next: NextFunction) => {
-    console.log('Creando invitación, datos de usuario:', req.user);
+    logger.debug('Creando invitación, datos de usuario:', req.user);
     const { tipo, cursoId, estudianteId, cantidadUsos, fechaExpiracion, datosAdicionales } =
       req.body;
 
@@ -36,7 +37,7 @@ export const crearInvitacion = catchAsync(
       throw new ApiError(403, 'No tiene una escuela asociada');
     }
 
-    console.log('Datos para crear invitación:', {
+    logger.debug('Datos para crear invitación:', {
       tipo,
       escuelaId,
       creadorId,
@@ -131,9 +132,9 @@ export const obtenerInvitacionesEscuela = catchAsync(
     const pagina = numeroPagina(req.query.pagina);
     const limite = numeroLimite(req.query.limite, 10);
 
-    console.log('Obteniendo invitaciones con escuelaId:', escuelaId);
-    console.log('Estado filtro:', estado);
-    console.log('Pagina:', pagina, 'Limite:', limite);
+    logger.debug('Obteniendo invitaciones con escuelaId:', escuelaId);
+    logger.debug('Estado filtro:', estado);
+    logger.debug('Pagina:', pagina, 'Limite:', limite);
 
     const resultado = await invitacionService.obtenerInvitacionesEscuela(
       escuelaId,
@@ -142,7 +143,7 @@ export const obtenerInvitacionesEscuela = catchAsync(
       limite,
     );
 
-    console.log('Invitaciones encontradas:', resultado.invitaciones.length);
+    logger.debug('Invitaciones encontradas:', resultado.invitaciones.length);
 
     res.status(200).json({
       success: true,

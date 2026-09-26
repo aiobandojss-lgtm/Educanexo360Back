@@ -16,9 +16,11 @@ import {
   invalidateCache,
   invalidateRelatedCache,
   safeCacheSet,
+  invalidarCacheUsuarios,
 } from '../cache/simpleCache';
 import config from '../config/config';
 import { aArregloDeIds, obtenerCursosDocente } from '../utils/accesoAcademico';
+import { logger } from '../utils/logger';
 
 class MensajeService {
   // 🚀 CACHE HELPER: Crear clave de cache consistente
@@ -34,13 +36,13 @@ class MensajeService {
   ): Promise<T> {
     const cached = cache.get<T>(cacheKey);
     if (cached) {
-      console.log(`📋 CACHE HIT: ${cacheKey}`);
+      logger.debug(`📋 CACHE HIT: ${cacheKey}`);
       return cached;
     }
 
     const result = await fetchFunction();
     if (safeCacheSet(cacheKey, result, ttl)) {
-      console.log(`💾 CACHE SET: ${cacheKey} (${ttl}s)`);
+      logger.debug(`💾 CACHE SET: ${cacheKey} (${ttl}s)`);
     }
 
     return result;
@@ -68,7 +70,7 @@ class MensajeService {
    */
   async getPosiblesDestinatarios(userId: string, escuelaId: string, query: string = '') {
     try {
-      console.log(`🔍 getPosiblesDestinatarios: userId=${userId}, query='${query}'`);
+      logger.debug(`🔍 getPosiblesDestinatarios: userId=${userId}, query='${query}'`);
 
       // Validar IDs
       if (!mongoose.isValidObjectId(userId) || !mongoose.isValidObjectId(escuelaId)) {
@@ -144,7 +146,7 @@ class MensajeService {
           },
         ]);
 
-        console.log(`✅ Destinatarios encontrados: ${resultado.length}`);
+        logger.debug(`✅ Destinatarios encontrados: ${resultado.length}`);
         return resultado;
       });
     } catch (error) {
@@ -239,7 +241,7 @@ class MensajeService {
           }
         }
 
-        console.log(`✅ Cursos encontrados: ${resultado.length}`);
+        logger.debug(`✅ Cursos encontrados: ${resultado.length}`);
         return resultado;
       });
     } catch (error) {
@@ -390,6 +392,13 @@ class MensajeService {
       // 🔄 INVALIDAR CACHE RELACIONADO
       this.invalidarCacheMensajes(user._id, user.escuelaId);
 
+      // Dashboard de los destinatarios (conteo de no leídos): una sola pasada por la caché
+      invalidarCacheUsuarios(
+        ['dashboard', 'dashboard_rol', 'dashboard_completo'],
+        [...destinatariosFinales, ...destinatariosCcFinales].map(String),
+        String(user.escuelaId),
+      );
+
       return nuevoMensaje;
     } catch (error) {
       throw this.handleError(error);
@@ -444,7 +453,7 @@ class MensajeService {
       ...estudiantesIds.map(String),
       ...acudientes.map((a: any) => String(a._id)),
     ];
-    console.log(`✅ Destinatarios de cursos obtenidos: ${destinatarios.length}`);
+    logger.debug(`✅ Destinatarios de cursos obtenidos: ${destinatarios.length}`);
 
     return destinatarios;
   }
@@ -525,7 +534,7 @@ class MensajeService {
         }
       }
 
-      console.log(`✅ Notificaciones enviadas a ${usuarios.length} destinatarios`);
+      logger.debug(`✅ Notificaciones enviadas a ${usuarios.length} destinatarios`);
     } catch (error) {
       console.error('Error enviando notificaciones en batch:', error);
       // No lanzar error para no afectar la creación del mensaje
@@ -538,7 +547,7 @@ class MensajeService {
   async enviarCopiaAcudientes(estudianteId: string, datos: any, usuarioOrigen: any) {
     try {
       if (!mongoose.isValidObjectId(estudianteId)) {
-        console.log(`[WARNING] ID de estudiante inválido: ${estudianteId}`);
+        logger.debug(`[WARNING] ID de estudiante inválido: ${estudianteId}`);
         return null;
       }
 
@@ -553,7 +562,7 @@ class MensajeService {
       const cached = cache.get<any[]>(cacheKey);
       let acudientes: any[];
       if (cached && cached.length > 0) {
-        console.log(`📋 CACHE HIT: ${cacheKey}`);
+        logger.debug(`📋 CACHE HIT: ${cacheKey}`);
         acudientes = cached;
       } else {
         // Consultas simples por colegio (antes: $lookup con $expr sobre todos los colegios)
@@ -575,13 +584,13 @@ class MensajeService {
         // Solo cachear si hay resultados
         if (acudientes.length > 0) {
           if (safeCacheSet(cacheKey, acudientes, 300)) {
-            console.log(`💾 CACHE SET: ${cacheKey} (300s)`);
+            logger.debug(`💾 CACHE SET: ${cacheKey} (300s)`);
           }
         }
       }
 
       if (acudientes.length === 0) {
-        console.log(`[INFO] enviarCopiaAcudientes: no se encontraron acudientes para estudiante ${estudianteId}`);
+        logger.debug(`[INFO] enviarCopiaAcudientes: no se encontraron acudientes para estudiante ${estudianteId}`);
         return null;
       }
 
@@ -608,7 +617,7 @@ class MensajeService {
    * 🔄 INVALIDAR CACHE CUANDO SE CREAN/MODIFICAN MENSAJES
    */
   private invalidarCacheMensajes(usuarioId: string, escuelaId: string): void {
-    console.log(`🔄 Invalidando cache de mensajes para usuario ${usuarioId}`);
+    logger.debug(`🔄 Invalidando cache de mensajes para usuario ${usuarioId}`);
 
     // Invalidar cache relacionado
     invalidateRelatedCache('mensajes', usuarioId, escuelaId, [

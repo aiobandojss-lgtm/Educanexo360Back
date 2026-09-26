@@ -19,6 +19,7 @@ import fs from 'fs';
 import path from 'path';
 import pushNotificationService from '../services/pushNotification.service';
 import { numeroPagina, numeroLimite } from '../utils/paginacion';
+import { logger } from '../utils/logger';
 
 export const ROLES_CON_BORRADORES = ['ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO', 'DOCENTE'];
 
@@ -56,12 +57,8 @@ export class MensajeController {
         throw new ApiError(401, 'No autorizado');
       }
 
-      // Array para capturar logs de debug
-      const debugLogs: string[] = [];
-      const logDebug = (message: string) => {
-        console.log(message);
-        debugLogs.push(message);
-      };
+      // Logs de depuración solo en el servidor (LOG_LEVEL=debug); antes se devolvían al cliente
+      const logDebug = (message: string) => logger.debug(message);
 
       // Validar IDs
       if (!mongoose.isValidObjectId(req.user._id)) {
@@ -460,7 +457,6 @@ export class MensajeController {
       return res.json({
         success: true,
         data: destinatarios,
-        debug: debugLogs,
       });
     } catch (error: any) {
       console.error('[DEBUG ERROR] Error general al obtener destinatarios:', error);
@@ -493,12 +489,12 @@ export class MensajeController {
       }
 
       // ===== DEBUG: Ver EXACTAMENTE qué llega =====
-      console.log('=== DEBUG DESTINATARIOS ===');
-      console.log('req.body completo:', JSON.stringify(req.body, null, 2));
-      console.log('req.files:', req.files ? req.files.length : 0);
-      console.log('Tipo de destinatarios:', typeof req.body.destinatarios);
-      console.log('Valor destinatarios:', req.body.destinatarios);
-      console.log('Es array destinatarios:', Array.isArray(req.body.destinatarios));
+      logger.debug('=== DEBUG DESTINATARIOS ===');
+      logger.debug('req.body completo:', JSON.stringify(req.body, null, 2));
+      logger.debug('req.files:', req.files ? req.files.length : 0);
+      logger.debug('Tipo de destinatarios:', typeof req.body.destinatarios);
+      logger.debug('Valor destinatarios:', req.body.destinatarios);
+      logger.debug('Es array destinatarios:', Array.isArray(req.body.destinatarios));
 
       // ===== EXTRACCIÓN MEJORADA DE DESTINATARIOS =====
       let destinatariosArray: string[] = [];
@@ -506,23 +502,23 @@ export class MensajeController {
 
       // Procesar destinatarios - manejo robusto para FormData y JSON
       if (req.body.destinatarios) {
-        console.log('Procesando destinatarios...');
+        logger.debug('Procesando destinatarios...');
 
         if (typeof req.body.destinatarios === 'string') {
           try {
             // Intentar parsear como JSON primero
             destinatariosArray = JSON.parse(req.body.destinatarios);
-            console.log('Destinatarios parseados desde JSON:', destinatariosArray);
+            logger.debug('Destinatarios parseados desde JSON:', destinatariosArray);
           } catch (error) {
             // Si falla, asumir que es un solo ID
             destinatariosArray = [req.body.destinatarios];
-            console.log('Destinatarios como string único:', destinatariosArray);
+            logger.debug('Destinatarios como string único:', destinatariosArray);
           }
         } else if (Array.isArray(req.body.destinatarios)) {
           destinatariosArray = req.body.destinatarios;
-          console.log('Destinatarios como array directo:', destinatariosArray);
+          logger.debug('Destinatarios como array directo:', destinatariosArray);
         } else {
-          console.log('Destinatarios en formato desconocido, usando array vacío');
+          logger.debug('Destinatarios en formato desconocido, usando array vacío');
           destinatariosArray = [];
         }
       }
@@ -540,27 +536,27 @@ export class MensajeController {
         }
       }
 
-      console.log('Destinatarios finales (string array):', destinatariosArray);
-      console.log('Destinatarios CC finales (string array):', destinatariosCcArray);
+      logger.debug('Destinatarios finales (string array):', destinatariosArray);
+      logger.debug('Destinatarios CC finales (string array):', destinatariosCcArray);
 
       // ===== CONVERSIÓN A OBJECTID CON DEBUG =====
       const destinatariosObjectIds: mongoose.Types.ObjectId[] = [];
       if (destinatariosArray.length > 0) {
-        console.log('Convirtiendo destinatarios a ObjectId...');
+        logger.debug('Convirtiendo destinatarios a ObjectId...');
 
         for (let i = 0; i < destinatariosArray.length; i++) {
           const dest = destinatariosArray[i];
-          console.log(`Destinatario ${i}: "${dest}" (tipo: ${typeof dest})`);
+          logger.debug(`Destinatario ${i}: "${dest}" (tipo: ${typeof dest})`);
 
           if (dest && typeof dest === 'string' && dest.trim() !== '') {
             if (mongoose.isValidObjectId(dest)) {
               destinatariosObjectIds.push(new mongoose.Types.ObjectId(dest));
-              console.log(`✓ Destinatario ${i} válido agregado`);
+              logger.debug(`✓ Destinatario ${i} válido agregado`);
             } else {
-              console.log(`✗ Destinatario ${i} no es ObjectId válido: ${dest}`);
+              logger.debug(`✗ Destinatario ${i} no es ObjectId válido: ${dest}`);
             }
           } else {
-            console.log(`✗ Destinatario ${i} vacío o inválido`);
+            logger.debug(`✗ Destinatario ${i} vacío o inválido`);
           }
         }
       }
@@ -574,8 +570,8 @@ export class MensajeController {
         }
       }
 
-      console.log('Destinatarios ObjectId finales:', destinatariosObjectIds.length);
-      console.log('Destinatarios CC ObjectId finales:', destinatariosCcObjectIds.length);
+      logger.debug('Destinatarios ObjectId finales:', destinatariosObjectIds.length);
+      logger.debug('Destinatarios CC ObjectId finales:', destinatariosCcObjectIds.length);
 
       // ===== RESTO DE LA LÓGICA (sin cambios) =====
       const {
@@ -607,7 +603,7 @@ export class MensajeController {
           throw new ApiError(404, 'Borrador no encontrado');
         }
 
-        console.log(
+        logger.debug(
           'Actualizando borrador existente con destinatarios:',
           destinatariosObjectIds.length,
         );
@@ -622,17 +618,17 @@ export class MensajeController {
 
         // ===== MANEJO MEJORADO DE ADJUNTOS =====
         if (req.files && req.files.length > 0) {
-          console.log('Se enviaron nuevos adjuntos, reemplazando adjuntos anteriores...');
+          logger.debug('Se enviaron nuevos adjuntos, reemplazando adjuntos anteriores...');
 
           // PASO 1: Eliminar adjuntos anteriores de GridFS (opcional, para limpiar espacio)
           if (borrador.adjuntos && borrador.adjuntos.length > 0) {
             const bucket = gridfsManager.getBucket();
             if (bucket) {
-              console.log(`Eliminando ${borrador.adjuntos.length} adjuntos anteriores...`);
+              logger.debug(`Eliminando ${borrador.adjuntos.length} adjuntos anteriores...`);
               for (const adjuntoAnterior of borrador.adjuntos) {
                 try {
                   await bucket.delete(adjuntoAnterior.fileId);
-                  console.log(`Adjunto eliminado: ${adjuntoAnterior.nombre}`);
+                  logger.debug(`Adjunto eliminado: ${adjuntoAnterior.nombre}`);
                 } catch (deleteError) {
                   console.warn(
                     `No se pudo eliminar adjunto ${adjuntoAnterior.nombre}:`,
@@ -693,10 +689,10 @@ export class MensajeController {
 
           // PASO 3: REEMPLAZAR (no concatenar) los adjuntos
           borrador.adjuntos = nuevosAdjuntos; // ← CAMBIO CLAVE: Reemplazar en lugar de concatenar
-          console.log(`Adjuntos reemplazados: ${nuevosAdjuntos.length} nuevos adjuntos`);
+          logger.debug(`Adjuntos reemplazados: ${nuevosAdjuntos.length} nuevos adjuntos`);
         } else {
           // Si no se enviaron nuevos archivos, mantener los adjuntos existentes
-          console.log(
+          logger.debug(
             'No se enviaron nuevos adjuntos, manteniendo adjuntos existentes:',
             borrador.adjuntos?.length || 0,
           );
@@ -705,7 +701,7 @@ export class MensajeController {
         await borrador.save();
       } else {
         // ===== CREAR NUEVO BORRADOR =====
-        console.log('Creando nuevo borrador con destinatarios:', destinatariosObjectIds.length);
+        logger.debug('Creando nuevo borrador con destinatarios:', destinatariosObjectIds.length);
 
         // PASO 1: Crear borrador básico SIN adjuntos pero CON destinatarios
         const borradorData = {
@@ -722,7 +718,7 @@ export class MensajeController {
           adjuntos: [],
         };
 
-        console.log('Datos para crear borrador:', {
+        logger.debug('Datos para crear borrador:', {
           ...borradorData,
           destinatarios: `${borradorData.destinatarios.length} destinatarios`,
           destinatariosCc: `${borradorData.destinatariosCc.length} destinatarios CC`,
@@ -730,12 +726,12 @@ export class MensajeController {
 
         const borradorBasico = await Mensaje.create(borradorData);
 
-        console.log('Borrador creado con ID:', borradorBasico._id);
-        console.log('Destinatarios guardados:', borradorBasico.destinatarios.length);
+        logger.debug('Borrador creado con ID:', borradorBasico._id);
+        logger.debug('Destinatarios guardados:', borradorBasico.destinatarios.length);
 
         // PASO 2: Si hay adjuntos, procesarlos y actualizar el borrador
         if (req.files && req.files.length > 0) {
-          console.log('Procesando adjuntos para borrador nuevo...');
+          logger.debug('Procesando adjuntos para borrador nuevo...');
 
           const adjuntos = [];
 
@@ -797,8 +793,8 @@ export class MensajeController {
         borrador = borradorBasico;
       }
 
-      console.log('=== ANTES DE POPULAR ===');
-      console.log('Borrador final destinatarios:', borrador.destinatarios.length);
+      logger.debug('=== ANTES DE POPULAR ===');
+      logger.debug('Borrador final destinatarios:', borrador.destinatarios.length);
 
       // Poblar información para la respuesta
       await borrador.populate([
@@ -807,8 +803,8 @@ export class MensajeController {
         { path: 'destinatariosCc', select: 'nombre apellidos email tipo' },
       ]);
 
-      console.log('=== DESPUÉS DE POPULAR ===');
-      console.log('Borrador final destinatarios:', borrador.destinatarios.length);
+      logger.debug('=== DESPUÉS DE POPULAR ===');
+      logger.debug('Borrador final destinatarios:', borrador.destinatarios.length);
 
       res.status(200).json({
         success: true,
@@ -1090,11 +1086,11 @@ export class MensajeController {
         throw new ApiError(403, 'Solo los acudientes y estudiantes pueden acceder a esta funcionalidad');
       }
 
-      console.log(`[DEBUG] Obteniendo destinatarios para ${req.user.tipo} ID: ${req.user._id}`);
+      logger.debug(`[DEBUG] Obteniendo destinatarios para ${req.user.tipo} ID: ${req.user._id}`);
 
       // Si es un estudiante, usar lógica compleja similar a acudiente
       if (req.user.tipo === 'ESTUDIANTE') {
-        console.log(`[DEBUG] Usuario estudiante - obteniendo destinatarios con información contextual`);
+        logger.debug(`[DEBUG] Usuario estudiante - obteniendo destinatarios con información contextual`);
         
         try {
           // Para estudiantes: usar lógica similar a acudientes pero para SUS propios cursos
@@ -1109,7 +1105,7 @@ export class MensajeController {
             })
             .select('_id nombre grado seccion director_grupo grupo jornada nivel estudiantes');
 
-          console.log(`[DEBUG] Cursos del estudiante encontrados: ${cursosEstudiante.length}`);
+          logger.debug(`[DEBUG] Cursos del estudiante encontrados: ${cursosEstudiante.length}`);
 
           if (cursosEstudiante.length === 0) {
             // Si no hay cursos, solo mostrar personal administrativo
@@ -1160,7 +1156,7 @@ export class MensajeController {
             })
             .select('_id nombre docenteId cursoId');
 
-          console.log(`[DEBUG] Asignaturas encontradas: ${asignaturas.length}`);
+          logger.debug(`[DEBUG] Asignaturas encontradas: ${asignaturas.length}`);
 
           // 4. Mapear información de asignaturas y SOLO agregar docentes de estas asignaturas
           const asignaturasMap = new Map<string, { nombre: string; docenteId: string | null }>();
@@ -1205,7 +1201,7 @@ export class MensajeController {
             estado: 'ACTIVO',
           }).select('_id nombre apellidos email tipo');
 
-          console.log(`[DEBUG] Docentes encontrados: ${docentes.length}`);
+          logger.debug(`[DEBUG] Docentes encontrados: ${docentes.length}`);
 
           // 7. Mapear asignaturas y cursos por docente
           const docenteAsignaturas = new Map<string, Set<string>>();
@@ -1295,7 +1291,7 @@ export class MensajeController {
             }
           });
 
-          console.log(`[DEBUG] Total destinatarios para estudiante: ${destinatariosFinales.length}`);
+          logger.debug(`[DEBUG] Total destinatarios para estudiante: ${destinatariosFinales.length}`);
 
           return res.json({
             success: true,
@@ -1381,7 +1377,7 @@ export class MensajeController {
         });
       }
 
-      console.log(`[DEBUG] Estudiantes asociados: ${estudiantesIds.length}`);
+      logger.debug(`[DEBUG] Estudiantes asociados: ${estudiantesIds.length}`);
 
       // Obtener información de los estudiantes
       const estudiantes = (await Usuario.find({
@@ -1401,7 +1397,7 @@ export class MensajeController {
 
       // *** CAMBIO IMPORTANTE: Buscar cursos directamente por los IDs de estudiantes ***
       const estudiantesIdsString = estudiantes.map((est) => est._id.toString());
-      console.log(
+      logger.debug(
         `[DEBUG] Buscando cursos para los estudiantes: ${estudiantesIdsString.join(', ')}`,
       );
 
@@ -1417,7 +1413,7 @@ export class MensajeController {
           '_id nombre grado seccion director_grupo grupo jornada nivel estudiantes',
         )) as ICurso[];
 
-      console.log(`[DEBUG] Cursos encontrados: ${cursos.length}`);
+      logger.debug(`[DEBUG] Cursos encontrados: ${cursos.length}`);
 
       // Recolectar los IDs de cursos
       const cursosIds = new Set<string>();
@@ -1429,7 +1425,7 @@ export class MensajeController {
 
       // Si no hay cursos, solo mostrar personal administrativo (no docentes)
       if (cursosIds.size === 0) {
-        console.log(
+        logger.debug(
           '[DEBUG] No se encontraron cursos, obteniendo solo personal administrativo (sin docentes)',
         );
 
@@ -1476,7 +1472,7 @@ export class MensajeController {
       });
 
       // *** CAMBIO IMPORTANTE: Buscar asignaturas directamente por cursoId en lugar de usar campo asignaturas ***
-      console.log(
+      logger.debug(
         `[DEBUG] Buscando asignaturas para los cursos: ${Array.from(cursosIds).join(', ')}`,
       );
 
@@ -1489,10 +1485,10 @@ export class MensajeController {
         })
         .select('_id nombre docenteId cursoId')) as IAsignatura[];
 
-      console.log(`[DEBUG] Asignaturas encontradas por consulta directa: ${asignaturas.length}`);
+      logger.debug(`[DEBUG] Asignaturas encontradas por consulta directa: ${asignaturas.length}`);
 
       if (asignaturas.length > 0) {
-        console.log(
+        logger.debug(
           '[DEBUG] Ejemplo de primera asignatura:',
           JSON.stringify({
             id: asignaturas[0]._id.toString(),
@@ -1539,7 +1535,7 @@ export class MensajeController {
       });
 
       // Log para debugging
-      console.log(`[DEBUG] Docentes encontrados (IDs): ${Array.from(docentesIds).join(', ')}`);
+      logger.debug(`[DEBUG] Docentes encontrados (IDs): ${Array.from(docentesIds).join(', ')}`);
 
       // Obtener información de coordinadores, administrativos y directivos de la escuela
       const personalAdministrativo = (await Usuario.find({
@@ -1555,12 +1551,12 @@ export class MensajeController {
         estado: 'ACTIVO',
       }).select('_id nombre apellidos email tipo')) as IUsuario[];
 
-      console.log(`[DEBUG] Docentes recuperados de la base de datos: ${docentes.length}`);
+      logger.debug(`[DEBUG] Docentes recuperados de la base de datos: ${docentes.length}`);
 
       if (docentes.length > 0) {
-        console.log('[DEBUG] Lista de docentes encontrados:');
+        logger.debug('[DEBUG] Lista de docentes encontrados:');
         docentes.forEach((docente) => {
-          console.log(`- ${docente._id.toString()}: ${docente.nombre} ${docente.apellidos}`);
+          logger.debug(`- ${docente._id.toString()}: ${docente.nombre} ${docente.apellidos}`);
         });
       }
 
@@ -1715,7 +1711,7 @@ export class MensajeController {
         }
       });
 
-      console.log(`[DEBUG] Total destinatarios encontrados: ${destinatariosFinales.length}`);
+      logger.debug(`[DEBUG] Total destinatarios encontrados: ${destinatariosFinales.length}`);
 
       return res.json({
         success: true,
@@ -1739,7 +1735,7 @@ export class MensajeController {
         throw new ApiError(401, 'No autorizado');
       }
 
-      console.log(
+      logger.debug(
         `[DEBUG] Obteniendo cursos disponibles para usuario: ${req.user._id}, tipo: ${req.user.tipo}`,
       );
 
@@ -1755,7 +1751,7 @@ export class MensajeController {
 
       // 1. ADMIN, RECTOR, COORDINADOR, ADMINISTRATIVO: pueden ver todos los cursos
       if (['ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'].includes(req.user.tipo)) {
-        console.log('[DEBUG] Usuario administrativo - Mostrando todos los cursos');
+        logger.debug('[DEBUG] Usuario administrativo - Mostrando todos los cursos');
 
         // Obtener todos los cursos de la escuela
         cursos = await mongoose
@@ -1775,7 +1771,7 @@ export class MensajeController {
 
       // 2. DOCENTES: solo pueden ver cursos donde dictan asignaturas
       else if (req.user.tipo === 'DOCENTE') {
-        console.log('[DEBUG] Usuario docente - Obteniendo cursos donde dicta asignaturas');
+        logger.debug('[DEBUG] Usuario docente - Obteniendo cursos donde dicta asignaturas');
 
         // 2.1 Primero, buscar cursos donde es director de grupo
         const cursosDirigidos = await mongoose
@@ -1809,7 +1805,7 @@ export class MensajeController {
         });
 
         if (cursosIds.size === 0) {
-          console.log('[DEBUG] Docente no tiene cursos asignados');
+          logger.debug('[DEBUG] Docente no tiene cursos asignados');
           return res.json({
             success: true,
             data: [],
@@ -1882,7 +1878,7 @@ export class MensajeController {
         };
       });
 
-      console.log(`[DEBUG] Cursos encontrados: ${cursosFormateados.length}`);
+      logger.debug(`[DEBUG] Cursos encontrados: ${cursosFormateados.length}`);
 
       return res.json({
         success: true,
@@ -2049,7 +2045,7 @@ export class MensajeController {
       // 🔥 NUEVA FUNCIONALIDAD: ENVIAR NOTIFICACIONES PUSH AUTOMÁTICAMENTE
       if (estado !== EstadoMensaje.BORRADOR) {
         try {
-          console.log('📱 Enviando notificaciones push automáticas...');
+          logger.debug('📱 Enviando notificaciones push automáticas...');
           
           const senderName = `${req.user.nombre} ${req.user.apellidos}`;
           const isUrgent = prioridad === PrioridadMensaje.ALTA || 
@@ -2093,7 +2089,7 @@ export class MensajeController {
             }
           }
           
-          console.log(`✅ Notificaciones push enviadas: ${pushEnviadas}/${allRecipients.length}`);
+          logger.debug(`✅ Notificaciones push enviadas: ${pushEnviadas}/${allRecipients.length}`);
         } catch (error) {
           console.error('❌ Error enviando notificaciones push:', error);
           // No lanzar error para no afectar la creación del mensaje
@@ -2936,13 +2932,13 @@ export class MensajeController {
 
       // Mejorar mensaje de error para depuración
       if (!esDestinatario && !esDestinatarioCc && !esRemitente) {
-        console.log(
+        logger.debug(
           `[DEBUG] Usuario ${req.user._id} (${req.user.tipo}) no puede marcar mensaje ${id}`,
         );
-        console.log(
+        logger.debug(
           `[DEBUG] Es remitente: ${esRemitente}, Es destinatario: ${esDestinatario}, Es destinatarioCc: ${esDestinatarioCc}`,
         );
-        console.log(`[DEBUG] Mensaje.remitente: ${mensaje.remitente}`);
+        logger.debug(`[DEBUG] Mensaje.remitente: ${mensaje.remitente}`);
         throw new ApiError(
           403,
           'No tiene permisos para cambiar el estado de lectura de este mensaje',
@@ -3062,7 +3058,7 @@ export class MensajeController {
     const limit = numeroLimite(req.query.limit, 3, 50);
     const userId = req.user._id;
 
-    console.log(`📬 Obteniendo últimos ${limit} mensajes para usuario: ${userId}`);
+    logger.debug(`📬 Obteniendo últimos ${limit} mensajes para usuario: ${userId}`);
 
     // Buscar mensajes donde el usuario es destinatario Y no ha leído
     const mensajes = await Mensaje.find({
@@ -3076,7 +3072,7 @@ export class MensajeController {
       .select('asunto contenido createdAt fechaEnvio remitente') // ← Agregar createdAt
       .lean();
 
-    console.log(`✅ Encontrados ${mensajes.length} mensajes sin leer`);
+    logger.debug(`✅ Encontrados ${mensajes.length} mensajes sin leer`);
 
     // Formatear respuesta con preview y tiempo relativo
     const formatted = mensajes.map((mensaje: any) => {
@@ -3093,13 +3089,13 @@ export class MensajeController {
         : 'Sin contenido';
       
       // 🔍 DEBUG: Ver qué fechas tiene el mensaje
-      console.log(`🔍 Mensaje ${mensaje._id}:`);
-      console.log(`   fechaEnvio: ${mensaje.fechaEnvio}`);
-      console.log(`   createdAt: ${mensaje.createdAt}`);
+      logger.debug(`🔍 Mensaje ${mensaje._id}:`);
+      logger.debug(`   fechaEnvio: ${mensaje.fechaEnvio}`);
+      logger.debug(`   createdAt: ${mensaje.createdAt}`);
       
       // Usar createdAt si no hay fechaEnvio
       const fechaReal = mensaje.fechaEnvio || mensaje.createdAt;
-      console.log(`   ✅ Fecha a usar: ${fechaReal}`);
+      logger.debug(`   ✅ Fecha a usar: ${fechaReal}`);
       
       // Calcular tiempo relativo
       const ahora = new Date();
@@ -3107,7 +3103,7 @@ export class MensajeController {
       const diffMs = ahora.getTime() - fechaMensaje.getTime();
       const diffMinutos = Math.floor(diffMs / 60000);
       
-      console.log(`   ⏱️ Diferencia en minutos: ${diffMinutos}`);
+      logger.debug(`   ⏱️ Diferencia en minutos: ${diffMinutos}`);
       
       let tiempoRelativo: string;
       if (diffMinutos < 1) {
@@ -3122,7 +3118,7 @@ export class MensajeController {
         tiempoRelativo = `Hace ${dias} ${dias === 1 ? 'día' : 'días'}`;
       }
 
-      console.log(`   ⏰ Tiempo calculado: ${tiempoRelativo}`);
+      logger.debug(`   ⏰ Tiempo calculado: ${tiempoRelativo}`);
 
       const resultado = {
         id: mensaje._id,
@@ -3138,12 +3134,12 @@ export class MensajeController {
         tiempoRelativo: tiempoRelativo
       };
       
-      console.log(`   📦 Resultado:`, JSON.stringify(resultado, null, 2));
+      logger.debug(`   📦 Resultado:`, JSON.stringify(resultado, null, 2));
       
       return resultado;
     });
 
-    console.log(`📤 Enviando ${formatted.length} mensajes formateados`);
+    logger.debug(`📤 Enviando ${formatted.length} mensajes formateados`);
 
     res.json({
       success: true,
@@ -3289,7 +3285,7 @@ export class MensajeController {
           );
         }
         
-        console.log('✅ Notificaciones push enviadas para respuesta');
+        logger.debug('✅ Notificaciones push enviadas para respuesta');
       } catch (error) {
         console.error('❌ Error enviando push para respuesta:', error);
       }

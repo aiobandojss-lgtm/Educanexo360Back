@@ -1,7 +1,6 @@
 import express, { Request, Response, NextFunction } from 'express';
 import notificacionController from '../controllers/notificacion.controller';
 import { authenticate, authorize } from '../middleware/auth.middleware';
-import { cacheMiddleware } from '../cache/simpleCache';
 import { validate } from '../middleware/validate.middleware';
 import {
   registrarTokenValidation,
@@ -92,7 +91,7 @@ router.post('/test-push', authorize('SUPER_ADMIN', 'ADMIN'), (req: any, res: Res
 // Rutas existentes para usuarios normales
 router.get(
   '/',
-  cacheMiddleware('notificaciones'),
+  // Sin caché: por usuario; quedaba obsoleta para los destinatarios de nuevas notificaciones
   (req: any, res: Response, next: NextFunction) => {
     notificacionController.obtenerNotificaciones(req, res, next);
   },

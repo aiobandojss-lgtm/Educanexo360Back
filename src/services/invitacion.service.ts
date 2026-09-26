@@ -4,6 +4,7 @@ import ApiError from '../utils/ApiError';
 import { generarCodigoAleatorio } from '../utils/codigoUtils';
 import Curso from '../models/curso.model';
 import Usuario from '../models/usuario.model';
+import { logger } from '../utils/logger';
 
 class InvitacionService {
   /**
@@ -71,16 +72,16 @@ class InvitacionService {
     fechaExpiracion?: Date;
     datosAdicionales?: any;
   }) {
-    console.log('Datos recibidos:', JSON.stringify(data));
+    logger.debug('Datos recibidos:', JSON.stringify(data));
 
     // Si se proporciona un cursoId, validar que pertenezca a la escuela
     if (data.cursoId) {
       const curso = await Curso.findOne({ _id: data.cursoId, escuelaId: data.escuelaId });
 
-      console.log('Curso encontrado:', curso ? JSON.stringify(curso) : 'Curso no encontrado');
+      logger.debug('Curso encontrado:', curso ? JSON.stringify(curso) : 'Curso no encontrado');
 
       if (curso) {
-        console.log('Comparando escuelas:', {
+        logger.debug('Comparando escuelas:', {
           cursoEscuelaId: curso.escuelaId.toString(),
           requestEscuelaId: data.escuelaId,
           sonIguales: curso.escuelaId.toString() === data.escuelaId,

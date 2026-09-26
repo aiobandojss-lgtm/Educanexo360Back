@@ -10,6 +10,7 @@ import { estudianteService } from './estudiante.service';
 import ApiError from '../utils/ApiError';
 import { generarPasswordAleatoria } from '../utils/passwordUtils';
 import mongoose from 'mongoose';
+import { logger } from '../utils/logger';
 
 class RegistroService {
   /**
@@ -32,7 +33,7 @@ Por favor, revise la solicitud en el panel de administración.
         `,
       });
 
-      console.log(`Notificación enviada para la solicitud ${solicitud._id}`);
+      logger.debug(`Notificación enviada para la solicitud ${solicitud._id}`);
     } catch (error) {
       console.error('Error al enviar notificación de nueva solicitud:', error);
     }
@@ -178,7 +179,7 @@ Por favor, revise la solicitud en el panel de administración.
    * Aprueba una solicitud de registro - VERSIÓN CORREGIDA
    */
   async aprobarSolicitud(solicitudId: string, usuarioAdminId: string, escuelaId: string) {
-    console.log(`Iniciando aprobación de solicitud ${solicitudId} por admin ${usuarioAdminId}`);
+    logger.debug(`Iniciando aprobación de solicitud ${solicitudId} por admin ${usuarioAdminId}`);
 
     // Solo solicitudes de la escuela del administrador
     const solicitud = await SolicitudRegistro.findOne({ _id: solicitudId, escuelaId });
@@ -203,7 +204,7 @@ Por favor, revise la solicitud en el panel de administración.
         solicitud.email,
       );
 
-      console.log('Credenciales de acudiente generadas con éxito');
+      logger.debug('Credenciales de acudiente generadas con éxito');
 
       // 1. CREAR ACUDIENTE
       const acudiente = new Usuario({
@@ -227,7 +228,7 @@ Por favor, revise la solicitud en el panel de administración.
       });
 
       await acudiente.save({ session });
-      console.log(`Acudiente creado con ID: ${acudiente._id}`);
+      logger.debug(`Acudiente creado con ID: ${acudiente._id}`);
 
       // Convertir acudiente._id a string con tipo explícito para evitar errores
       const acudienteId = (acudiente._id as unknown as Types.ObjectId).toString();
@@ -242,7 +243,7 @@ Por favor, revise la solicitud en el panel de administración.
 
         if (estData.esExistente && estData.estudianteExistenteId) {
           // ASOCIAR ESTUDIANTE EXISTENTE
-          console.log(`Procesando estudiante existente: ${estData.estudianteExistenteId}`);
+          logger.debug(`Procesando estudiante existente: ${estData.estudianteExistenteId}`);
 
           // Verificar que puede ser asociado
           const verificacion = await estudianteService.puedeAsociarAcudiente(
@@ -283,7 +284,7 @@ Por favor, revise la solicitud en el panel de administración.
           }
         } else {
           // CREAR NUEVO ESTUDIANTE
-          console.log(`Creando nuevo estudiante: ${estData.nombre} ${estData.apellidos}`);
+          logger.debug(`Creando nuevo estudiante: ${estData.nombre} ${estData.apellidos}`);
 
           const credenciales = this.generarCredencialesUnicas(
             estData.nombre,
@@ -336,7 +337,7 @@ Por favor, revise la solicitud en el panel de administración.
           });
 
           await estudiante.save({ session });
-          console.log(`Estudiante creado con ID: ${estudiante._id}`);
+          logger.debug(`Estudiante creado con ID: ${estudiante._id}`);
 
           // Actualizar curso con addToSet para evitar duplicados
           try {
@@ -345,7 +346,7 @@ Por favor, revise la solicitud en el panel de administración.
               { $addToSet: { estudiantes: estudiante._id } },
               { session, new: true },
             );
-            console.log(`Estudiante añadido al curso ${estData.cursoId}`);
+            logger.debug(`Estudiante añadido al curso ${estData.cursoId}`);
           } catch (error) {
             console.error('Error al añadir estudiante al curso:', error);
           }
@@ -388,7 +389,7 @@ Por favor, revise la solicitud en el panel de administración.
 
       // Confirmar transacción
       await session.commitTransaction();
-      console.log('Transacción completada exitosamente');
+      logger.debug('Transacción completada exitosamente');
 
       // 5. Enviar email con credenciales
       await this.enviarCorreoConfirmacion(
@@ -514,17 +515,17 @@ El equipo de EducaNexo360`,
         filtro.escuelaId = escuelaIdObj;
       }
 
-      console.log('Filtro usado para buscar solicitudes:', JSON.stringify(filtro));
+      logger.debug('Filtro usado para buscar solicitudes:', JSON.stringify(filtro));
 
       const total = await SolicitudRegistro.countDocuments(filtro);
-      console.log(`Total de solicitudes PENDIENTES con filtro: ${total}`);
+      logger.debug(`Total de solicitudes PENDIENTES con filtro: ${total}`);
 
       const solicitudes = await SolicitudRegistro.find(filtro)
         .sort({ fechaSolicitud: -1 })
         .skip(skip)
         .limit(limite);
 
-      console.log(`Solicitudes encontradas: ${solicitudes.length}`);
+      logger.debug(`Solicitudes encontradas: ${solicitudes.length}`);
 
       return {
         total,

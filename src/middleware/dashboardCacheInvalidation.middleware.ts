@@ -1,6 +1,7 @@
 // src/middleware/dashboardCacheInvalidation.middleware.ts
 import { Request, Response, NextFunction } from 'express';
 import { invalidateCache } from '../cache/simpleCache';
+import { logger } from '../utils/logger';
 
 interface AuthenticatedRequest extends Request {
   user?: {
@@ -29,7 +30,7 @@ export const invalidateDashboardCache = () => {
 
         try {
           // Log para debugging
-          console.log(
+          logger.debug(
             `🔄 Invalidando cache dashboard - Usuario: ${usuarioId}, Escuela: ${escuelaId}`,
           );
 
@@ -38,7 +39,7 @@ export const invalidateDashboardCache = () => {
 
           // Si es admin, invalidar también mensajes y notificaciones que podrían afectar dashboard
           if (['ADMIN', 'RECTOR', 'COORDINADOR'].includes(req.user.tipo)) {
-            console.log(`🔄 Usuario admin - Invalidando caches adicionales`);
+            logger.debug(`🔄 Usuario admin - Invalidando caches adicionales`);
             invalidateCache('mensajes', usuarioId, escuelaId);
             invalidateCache('notificaciones', usuarioId, escuelaId);
           }
@@ -76,14 +77,14 @@ export const invalidarCacheManual = (req: AuthenticatedRequest, res: Response): 
   try {
     if (type === 'dashboard' && usuarioId && escuelaId) {
       invalidateCache('dashboard', usuarioId, escuelaId);
-      console.log(`✅ Cache dashboard invalidado para usuario ${usuarioId}`);
+      logger.debug(`✅ Cache dashboard invalidado para usuario ${usuarioId}`);
     } else if (type === 'all' && escuelaId) {
       // Invalidar múltiples tipos de cache para la escuela
       invalidateCache('dashboard', req.user._id, escuelaId);
       invalidateCache('mensajes', req.user._id, escuelaId);
       invalidateCache('anuncios', req.user._id, escuelaId);
       invalidateCache('notificaciones', req.user._id, escuelaId);
-      console.log(`✅ Múltiples caches invalidados para escuela ${escuelaId}`);
+      logger.debug(`✅ Múltiples caches invalidados para escuela ${escuelaId}`);
     } else {
       res.status(400).json({
         success: false,

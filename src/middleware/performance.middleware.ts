@@ -3,6 +3,7 @@
 import compression from 'compression';
 import { Express, Request, Response, NextFunction, RequestHandler } from 'express';
 import NodeCache from 'node-cache';
+import { logger } from '../utils/logger';
 
 // Caché en memoria para consultas frecuentes
 const appCache = new NodeCache({ stdTTL: 300, checkperiod: 60 }); // 5 minutos de TTL por defecto
@@ -57,7 +58,7 @@ export const responseTimeMiddleware = (req: Request, res: Response, next: NextFu
 
   res.on('finish', () => {
     const duration = Date.now() - start;
-    console.log(`${req.method} ${req.originalUrl} - ${duration}ms`);
+    logger.debug(`${req.method} ${req.originalUrl} - ${duration}ms`);
     // Podríamos almacenar estas métricas para análisis
   });
 

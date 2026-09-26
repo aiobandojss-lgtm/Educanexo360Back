@@ -5,6 +5,7 @@ import axios from 'axios';
 import config from '../../config/config';
 import crypto from 'crypto';
 import { jwtConfig } from '../../config/jwt.config';
+import { logger } from '../../utils/logger';
 
 interface JwtPayload {
   sub: string;
@@ -60,42 +61,42 @@ class AuthService {
   async login(email: string, password: string) {
     // Convertir email a minúsculas para búsqueda insensible a mayúsculas
     const emailLowerCase = email.toLowerCase();
-    console.log(`Intentando login con email: ${emailLowerCase}`);
+    logger.debug(`Intentando login con email: ${emailLowerCase}`);
 
     // Buscar usuario por email
     const user = await Usuario.findOne({ email: emailLowerCase });
 
     if (!user) {
-      console.log(`Usuario no encontrado para email: ${emailLowerCase}`);
+      logger.debug(`Usuario no encontrado para email: ${emailLowerCase}`);
       throw new ApiError(401, 'Credenciales inválidas');
     }
 
-    console.log(`Usuario encontrado: ${user._id} (${user.tipo}), estado: ${user.estado}`);
+    logger.debug(`Usuario encontrado: ${user._id} (${user.tipo}), estado: ${user.estado}`);
 
     // Verificar que el usuario esté activo
     if (user.estado !== 'ACTIVO') {
-      console.log(`Usuario con estado inactivo: ${user.estado}`);
+      logger.debug(`Usuario con estado inactivo: ${user.estado}`);
       throw new ApiError(401, 'Usuario inactivo');
     }
 
     // Verificar contraseña
-    console.log('Verificando contraseña...');
+    logger.debug('Verificando contraseña...');
     try {
       const isPasswordMatch = await user.compararPassword(password);
 
       if (!isPasswordMatch) {
-        console.log('Contraseña incorrecta');
+        logger.debug('Contraseña incorrecta');
         throw new ApiError(401, 'Credenciales inválidas');
       }
 
-      console.log('Contraseña correcta, login exitoso');
+      logger.debug('Contraseña correcta, login exitoso');
     } catch (error) {
       console.error('Error durante la validación de contraseña:', error);
       throw new ApiError(401, 'Error en la validación de credenciales');
     }
 
     // Si llegamos aquí, la autenticación fue exitosa
-    console.log('Generando tokens de autenticación');
+    logger.debug('Generando tokens de autenticación');
     const tokens = this.generateTokens(user);
 
     return {

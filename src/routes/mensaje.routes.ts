@@ -9,7 +9,6 @@ import multer from 'multer';
 import { sanitizeFilename } from '../utils/sanitizeFilename';
 import { TipoUsuario } from '../interfaces/IUsuario';
 
-import { cacheMiddleware } from '../cache/simpleCache';
 import { invalidateOnMensaje } from '../middleware/dashboardCacheInvalidation.middleware';
 import { sanitizeNoSQL } from '../middleware/sanitize.middleware';
 
@@ -166,7 +165,8 @@ router.post(
   },
 );
 
-router.get('/', cacheMiddleware('mensajes'), (req: any, res: Response, next: NextFunction) => {
+// Sin caché: la bandeja es por usuario y quedaba obsoleta hasta 2 min para los destinatarios
+router.get('/', (req: any, res: Response, next: NextFunction) => {
   mensajeController.obtenerTodos(req, res, next);
 });
 

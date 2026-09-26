@@ -4,6 +4,7 @@ import nodemailer from 'nodemailer';
 import path from 'path';
 import config from '../config/config';
 import fs from 'fs';
+import { logger } from '../utils/logger';
 
 // Constante para deshabilitar temporalmente el envío de correos
 // Cambiar a false cuando se quiera habilitar nuevamente
@@ -27,12 +28,12 @@ class EmailService {
   private readonly DAILY_LIMIT = 250; // Límite diario para evitar excesos
 
   constructor() {
-    console.log('🔧 Inicializando servicio de correo con configuración:');
-    console.log(`🔧 Host: ${config.email.host}`);
-    console.log(`🔧 Puerto: ${config.email.port}`);
-    console.log(`🔧 Usuario: ${config.email.user}`);
-    console.log(`🔧 Seguro: ${config.email.secure}`);
-    console.log(`🔧 Remitente: ${config.email.senderName} <${config.email.senderEmail}>`);
+    logger.debug('🔧 Inicializando servicio de correo con configuración:');
+    logger.debug(`🔧 Host: ${config.email.host}`);
+    logger.debug(`🔧 Puerto: ${config.email.port}`);
+    logger.debug(`🔧 Usuario: ${config.email.user}`);
+    logger.debug(`🔧 Seguro: ${config.email.secure}`);
+    logger.debug(`🔧 Remitente: ${config.email.senderName} <${config.email.senderEmail}>`);
 
     // En producción, usar un servicio real como Sendgrid, Mailgun, etc.
     // Para desarrollo, utilizar servicio fake (ethereal.email)
@@ -58,7 +59,7 @@ class EmailService {
   private async verificarConexion() {
     try {
       const verificacion = await this.transporter.verify();
-      console.log('✅ Conexión al servidor SMTP verificada:', verificacion);
+      logger.debug('✅ Conexión al servidor SMTP verificada:', verificacion);
     } catch (error) {
       console.error('❌ Error al verificar conexión SMTP:', error);
       console.error('⚠️ Revisa tu configuración de email en las variables de entorno');
@@ -81,8 +82,8 @@ class EmailService {
     attachments?: any[];
   }): Promise<boolean> {
     try {
-      console.log('📧 DEPURACIÓN: Intentando enviar email a:', options.to);
-      console.log('📧 DEPURACIÓN: Asunto:', options.subject);
+      logger.debug('📧 DEPURACIÓN: Intentando enviar email a:', options.to);
+      logger.debug('📧 DEPURACIÓN: Asunto:', options.subject);
 
       // Verificar límite diario
       if (new Date().getDate() !== this.lastCountReset.getDate()) {
@@ -99,11 +100,11 @@ class EmailService {
 
       // Si el envío de correos está deshabilitado, simular envío exitoso
       if (DISABLE_EMAIL_SENDING) {
-        console.log(
+        logger.debug(
           '📧 [EMAIL DESHABILITADO] No se envió el correo pero se simula respuesta exitosa',
         );
-        console.log('📧 Destinatario:', options.to);
-        console.log('📧 Asunto:', options.subject);
+        logger.debug('📧 Destinatario:', options.to);
+        logger.debug('📧 Asunto:', options.subject);
         return true; // Simular éxito
       }
 
@@ -116,11 +117,11 @@ class EmailService {
             '../templates/emails',
             `${options.template}.html`,
           );
-          console.log('📧 DEPURACIÓN: Buscando plantilla en:', templatePath);
+          logger.debug('📧 DEPURACIÓN: Buscando plantilla en:', templatePath);
 
           if (fs.existsSync(templatePath)) {
             html = fs.readFileSync(templatePath, 'utf8');
-            console.log('📧 DEPURACIÓN: Plantilla cargada correctamente');
+            logger.debug('📧 DEPURACIÓN: Plantilla cargada correctamente');
 
             // Reemplazar variables en la plantilla
             if (options.context) {
@@ -147,7 +148,7 @@ class EmailService {
         attachments: options.attachments,
       };
 
-      console.log('📧 DEPURACIÓN: Opciones finales del correo:', {
+      logger.debug('📧 DEPURACIÓN: Opciones finales del correo:', {
         from: mailOptions.from,
         to: mailOptions.to,
         subject: mailOptions.subject,
@@ -157,10 +158,10 @@ class EmailService {
       });
 
       // Enviar email
-      console.log('📧 DEPURACIÓN: Enviando correo...');
+      logger.debug('📧 DEPURACIÓN: Enviando correo...');
       const info = await this.transporter.sendMail(mailOptions);
-      console.log('✅ Email enviado exitosamente. ID:', info.messageId);
-      console.log('✅ Información adicional:', info);
+      logger.debug('✅ Email enviado exitosamente. ID:', info.messageId);
+      logger.debug('✅ Información adicional:', info);
 
       // Incrementar contador diario
       this.dailyEmailCount++;
@@ -215,7 +216,7 @@ class EmailService {
       url: string;
     },
   ): Promise<boolean> {
-    console.log(`📧 Preparando notificación de mensaje para: ${to}`);
+    logger.debug(`📧 Preparando notificación de mensaje para: ${to}`);
 
     // Texto simple para clientes que no soportan HTML
     const text =
@@ -275,7 +276,7 @@ class EmailService {
       expirationTime: string;
     },
   ): Promise<boolean> {
-    console.log(`📧 Preparando correo de recuperación de contraseña para: ${to}`);
+    logger.debug(`📧 Preparando correo de recuperación de contraseña para: ${to}`);
 
     // Texto simple para clientes que no soportan HTML
     const text =

@@ -1,4 +1,5 @@
 import NodeCache from 'node-cache';
+import { logger } from '../utils/logger';
 
 // Cache configurado para máximo rendimiento
 const cache = new NodeCache({
@@ -91,7 +92,7 @@ export function cacheMiddleware(cacheType: string) {
     // Buscar en cache
     const cached = cache.get(cacheKey);
     if (cached) {
-      console.log(`📋 CACHE HIT: ${cacheType} (${config.desc})`);
+      logger.debug(`📋 CACHE HIT: ${cacheType} (${config.desc})`);
       return res.json(cached);
     }
 
@@ -101,7 +102,7 @@ export function cacheMiddleware(cacheType: string) {
       if (res.statusCode === 200 && data) {
         // Un fallo del caché (p. ej. ECACHEFULL) nunca debe tumbar la respuesta: solo no se cachea
         if (safeCacheSet(cacheKey, data, config.ttl)) {
-          console.log(`💾 CACHE SET: ${cacheType} (${config.ttl}s) - Key: ${cacheKey}`);
+          logger.debug(`💾 CACHE SET: ${cacheType} (${config.ttl}s) - Key: ${cacheKey}`);
         }
       }
       originalJson.call(this, data);
@@ -135,10 +136,32 @@ export function invalidateCache(cacheType: string, userId: string, escuelaId: st
 
   keys.forEach((key) => {
     cache.del(key);
-    console.log(`🗑️ CACHE INVALIDATED: ${key}`);
+    logger.debug(`🗑️ CACHE INVALIDATED: ${key}`);
   });
 
-  console.log(`🔄 Cache invalidado para ${cacheType} - Usuario: ${userId}`);
+  logger.debug(`🔄 Cache invalidado para ${cacheType} - Usuario: ${userId}`);
+}
+
+/**
+ * Invalida varios tipos de caché para MUCHOS usuarios en una sola pasada por las llaves
+ * (p. ej. el dashboard de los destinatarios de un mensaje masivo). Llave: tipo_usuario_escuela_query.
+ */
+export function invalidarCacheUsuarios(tipos: string[], usuarioIds: string[], escuelaId: string): number {
+  if (usuarioIds.length === 0 || tipos.length === 0) return 0;
+  const sufijos = new Set(usuarioIds.map((id) => `${id}_${escuelaId}`));
+  // Tipos más largos primero: 'dashboard_rol' no debe confundirse con 'dashboard'
+  const ordenados = [...tipos].sort((a, b) => b.length - a.length);
+  let borradas = 0;
+  for (const llave of cache.keys()) {
+    const tipo = ordenados.find((t) => llave.startsWith(`${t}_`));
+    if (!tipo) continue;
+    const resto = llave.slice(tipo.length + 1).split('_');
+    if (sufijos.has(`${resto[0]}_${resto[1]}`)) {
+      cache.del(llave);
+      borradas++;
+    }
+  }
+  return borradas;
 }
 
 // 🚀 NUEVA FUNCIÓN: Invalidar cache de dashboard cuando hay cambios académicos
@@ -155,7 +178,7 @@ export function invalidateDashboardCache(userId: string, escuelaId: string): voi
     invalidateCache(type, userId, escuelaId);
   });
 
-  console.log(`🔄 Dashboard cache completamente invalidado para usuario ${userId}`);
+  logger.debug(`🔄 Dashboard cache completamente invalidado para usuario ${userId}`);
 }
 
 // Función para ver estadísticas del cache (mejorada)
@@ -185,7 +208,7 @@ export function clearExpiredCache(): void {
   const beforeCount = cache.keys().length;
   cache.flushAll();
   const afterCount = cache.keys().length;
-  console.log(`🧹 Cache limpio: ${beforeCount - afterCount} keys eliminadas`);
+  logger.debug(`🧹 Cache limpio: ${beforeCount - afterCount} keys eliminadas`);
 }
 
 // Exportar cache también
