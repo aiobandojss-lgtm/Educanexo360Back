@@ -345,25 +345,45 @@ export const actualizarAsistencia = async (
 
     // Actualizar solo los campos permitidos
     if (Array.isArray(estudiantes)) {
-      // Solo estudiantes del curso del registro, y solo campos permitidos
+      // Permitidos: los que YA están en el registro (conserva la historia de estudiantes trasladados)
+      // o los que están hoy en el curso. El id se normaliza: puede llegar poblado ({ _id, ... }).
       const curso = await Curso.findOne({ _id: asistencia.cursoId, escuelaId: req.user.escuelaId })
         .select('estudiantes')
         .lean();
-      const idsCurso = new Set((curso?.estudiantes || []).map((e: any) => String(e)));
+      const idsPermitidos = new Set<string>([
+        ...(curso?.estudiantes || []).map((e: any) => String(e)),
+        ...(asistencia.estudiantes || []).map((e: any) => idDe(e.estudianteId)),
+      ]);
 
-      estudiantes = estudiantes.filter((est: any) => idsCurso.has(String(est?.estudianteId)));
+      estudiantes = estudiantes
+        .filter((est: any) => est && est.estudianteId && idsPermitidos.has(idDe(est.estudianteId)))
+        .map((est: any) => ({ ...est, estudianteId: idDe(est.estudianteId) }));
 
-      // Añadir registradoPor y fechaRegistro a cada estudiante actualizado
-      const estudiantesActualizados = estudiantes.map((est: any) => ({
-        estudianteId: est.estudianteId,
+      // MERGE por estudianteId: se actualizan los enviados y se CONSERVAN los no enviados
+      // (antes se reemplazaba el arreglo completo y se perdían entradas históricas).
+      const enviados = new Map<string, any>(estudiantes.map((est: any) => [est.estudianteId, est]));
+      const ahora = new Date();
+      const actualizar = (est: any) => ({
         estado: est.estado,
         justificacion: est.justificacion,
         observaciones: est.observaciones,
         registradoPor: req.user!._id,
-        fechaRegistro: new Date(),
-      }));
+        fechaRegistro: ahora,
+      });
 
-      asistencia.estudiantes = estudiantesActualizados;
+      const existentes = new Set<string>();
+      (asistencia.estudiantes || []).forEach((entrada: any) => {
+        const k = idDe(entrada.estudianteId);
+        existentes.add(k);
+        const est = enviados.get(k);
+        if (est) Object.assign(entrada, actualizar(est));
+      });
+      // Nuevos del curso que aún no tenían entrada en el registro
+      estudiantes
+        .filter((est: any) => !existentes.has(est.estudianteId))
+        .forEach((est: any) => {
+          asistencia.estudiantes.push({ estudianteId: est.estudianteId, ...actualizar(est) } as any);
+        });
     }
 
     if (observacionesGenerales !== undefined) {
