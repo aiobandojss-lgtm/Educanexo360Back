@@ -4,9 +4,25 @@ import { estudianteService } from '../services/estudiante.service'; // IMPORT CO
 import ApiError from '../utils/ApiError';
 import { queryString } from '../utils/accesoAcademico';
 
+// Declarado aquí con la MISMA forma que src/@types: ts-node (npm run dev) no carga la augmentación global.
+interface RequestWithUser extends Request {
+  user?: {
+    _id: string;
+    escuelaId: string;
+    tipo: string;
+    email: string;
+    nombre: string;
+    apellidos: string;
+    estado: string;
+    permisos: string[];
+    perfilRolId?: string;
+  };
+}
+
 // escuelaId SIEMPRE del usuario autenticado (nunca del cliente). Las rutas solo admiten
 // ADMIN/RECTOR/COORDINADOR, que siempre tienen escuela.
-const escuelaDelUsuario = (req: Request): string | undefined => req.user?.escuelaId || undefined;
+const escuelaDelUsuario = (req: Request): string | undefined =>
+  (req as RequestWithUser).user?.escuelaId || undefined;
 
 /**
  * Busca estudiantes existentes para asociación con acudientes

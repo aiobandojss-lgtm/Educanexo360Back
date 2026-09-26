@@ -4,8 +4,21 @@ import { EstadoSolicitud } from '../models/solicitud-registro.model';
 import { catchAsync } from '../utils/catchAsync';
 import ApiError from '../utils/ApiError';
 
-// El middleware authenticate coloca el usuario en req.user (no en req.usuario)
-type CustomRequest = Request;
+// El middleware authenticate coloca el usuario en req.user (no en req.usuario).
+// Declarado aquí con la MISMA forma que src/@types: ts-node (npm run dev) no carga la augmentación global.
+interface CustomRequest extends Request {
+  user?: {
+    _id: string;
+    escuelaId: string;
+    tipo: string;
+    email: string;
+    nombre: string;
+    apellidos: string;
+    estado: string;
+    permisos: string[];
+    perfilRolId?: string;
+  };
+}
 
 // Filtro de escuela obligatorio: sin escuelaId no se puede operar sobre solicitudes
 const obtenerEscuelaId = (req: CustomRequest): string => {
