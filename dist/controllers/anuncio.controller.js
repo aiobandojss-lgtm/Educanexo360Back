@@ -44,6 +44,7 @@ const mongodb_1 = require("mongodb");
 const fs = __importStar(require("fs"));
 const escapeRegex_1 = require("../utils/escapeRegex");
 const pushNotification_service_1 = __importDefault(require("../services/pushNotification.service"));
+const paginacion_1 = require("../utils/paginacion");
 class AnuncioController {
     async crear(req, res, next) {
         try {
@@ -80,8 +81,8 @@ class AnuncioController {
             if (!req.user) {
                 throw new ApiError_1.default(401, 'No autorizado');
             }
-            const pagina = parseInt(req.query.pagina) || 1;
-            const limite = parseInt(req.query.limite) || 10;
+            const pagina = (0, paginacion_1.numeroPagina)(req.query.pagina);
+            const limite = (0, paginacion_1.numeroLimite)(req.query.limite, 10);
             const skip = (pagina - 1) * limite;
             const filters = { escuelaId: req.user.escuelaId };
             if (req.query.soloDestacados === 'true') {

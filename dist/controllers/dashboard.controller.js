@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.invalidarCacheDashboard = exports.obtenerMetricasAvanzadas = exports.obtenerEventosHoy = exports.obtenerResumenCompleto = exports.obtenerResumenPorRol = exports.obtenerEstadisticasDashboard = void 0;
 const dashboard_service_1 = __importDefault(require("../services/dashboard.service"));
 const simpleCache_1 = require("../cache/simpleCache");
+const logger_1 = require("../utils/logger");
 const obtenerEstadisticasDashboard = async (req, res) => {
     try {
         const usuario = req.user;
@@ -164,7 +165,7 @@ const obtenerMetricasAvanzadas = async (req, res) => {
 };
 exports.obtenerMetricasAvanzadas = obtenerMetricasAvanzadas;
 const invalidarCacheDashboard = (usuarioId, escuelaId) => {
-    console.log(`🔄 Invalidando cache dashboard para usuario ${usuarioId} en escuela ${escuelaId}`);
+    logger_1.logger.debug(`🔄 Invalidando cache dashboard para usuario ${usuarioId} en escuela ${escuelaId}`);
     (0, simpleCache_1.invalidateCache)('dashboard', usuarioId, escuelaId);
 };
 exports.invalidarCacheDashboard = invalidarCacheDashboard;

@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MensajeController = exports.ROLES_CON_BORRADORES = void 0;
 const mongoose_1 = __importDefault(require("mongoose"));
+const promises_1 = require("stream/promises");
 const mensaje_model_1 = __importDefault(require("../models/mensaje.model"));
 const usuario_model_1 = __importDefault(require("../models/usuario.model"));
 const gridfs_1 = __importDefault(require("../config/gridfs"));
@@ -15,6 +16,8 @@ const IMensaje_1 = require("../interfaces/IMensaje");
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const pushNotification_service_1 = __importDefault(require("../services/pushNotification.service"));
+const paginacion_1 = require("../utils/paginacion");
+const logger_1 = require("../utils/logger");
 exports.ROLES_CON_BORRADORES = ['ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO', 'DOCENTE'];
 class MensajeController {
     async getPosiblesDestinatarios(req, res, next) {
@@ -22,11 +25,7 @@ class MensajeController {
             if (!req.user) {
                 throw new ApiError_1.default(401, 'No autorizado');
             }
-            const debugLogs = [];
-            const logDebug = (message) => {
-                console.log(message);
-                debugLogs.push(message);
-            };
+            const logDebug = (message) => logger_1.logger.debug(message);
             if (!mongoose_1.default.isValidObjectId(req.user._id)) {
                 throw new ApiError_1.default(400, 'ID de usuario inválido');
             }
@@ -312,7 +311,6 @@ class MensajeController {
             return res.json({
                 success: true,
                 data: destinatarios,
-                debug: debugLogs,
             });
         }
         catch (error) {
@@ -337,32 +335,32 @@ class MensajeController {
             if (!exports.ROLES_CON_BORRADORES.includes(req.user.tipo)) {
                 throw new ApiError_1.default(403, 'No tiene permisos para guardar borradores');
             }
-            console.log('=== DEBUG DESTINATARIOS ===');
-            console.log('req.body completo:', JSON.stringify(req.body, null, 2));
-            console.log('req.files:', req.files ? req.files.length : 0);
-            console.log('Tipo de destinatarios:', typeof req.body.destinatarios);
-            console.log('Valor destinatarios:', req.body.destinatarios);
-            console.log('Es array destinatarios:', Array.isArray(req.body.destinatarios));
+            logger_1.logger.debug('=== DEBUG DESTINATARIOS ===');
+            logger_1.logger.debug('req.body completo:', JSON.stringify(req.body, null, 2));
+            logger_1.logger.debug('req.files:', req.files ? req.files.length : 0);
+            logger_1.logger.debug('Tipo de destinatarios:', typeof req.body.destinatarios);
+            logger_1.logger.debug('Valor destinatarios:', req.body.destinatarios);
+            logger_1.logger.debug('Es array destinatarios:', Array.isArray(req.body.destinatarios));
             let destinatariosArray = [];
             let destinatariosCcArray = [];
             if (req.body.destinatarios) {
-                console.log('Procesando destinatarios...');
+                logger_1.logger.debug('Procesando destinatarios...');
                 if (typeof req.body.destinatarios === 'string') {
                     try {
                         destinatariosArray = JSON.parse(req.body.destinatarios);
-                        console.log('Destinatarios parseados desde JSON:', destinatariosArray);
+                        logger_1.logger.debug('Destinatarios parseados desde JSON:', destinatariosArray);
                     }
                     catch (error) {
                         destinatariosArray = [req.body.destinatarios];
-                        console.log('Destinatarios como string único:', destinatariosArray);
+                        logger_1.logger.debug('Destinatarios como string único:', destinatariosArray);
                     }
                 }
                 else if (Array.isArray(req.body.destinatarios)) {
                     destinatariosArray = req.body.destinatarios;
-                    console.log('Destinatarios como array directo:', destinatariosArray);
+                    logger_1.logger.debug('Destinatarios como array directo:', destinatariosArray);
                 }
                 else {
-                    console.log('Destinatarios en formato desconocido, usando array vacío');
+                    logger_1.logger.debug('Destinatarios en formato desconocido, usando array vacío');
                     destinatariosArray = [];
                 }
             }
@@ -379,25 +377,25 @@ class MensajeController {
                     destinatariosCcArray = req.body.destinatariosCc;
                 }
             }
-            console.log('Destinatarios finales (string array):', destinatariosArray);
-            console.log('Destinatarios CC finales (string array):', destinatariosCcArray);
+            logger_1.logger.debug('Destinatarios finales (string array):', destinatariosArray);
+            logger_1.logger.debug('Destinatarios CC finales (string array):', destinatariosCcArray);
             const destinatariosObjectIds = [];
             if (destinatariosArray.length > 0) {
-                console.log('Convirtiendo destinatarios a ObjectId...');
+                logger_1.logger.debug('Convirtiendo destinatarios a ObjectId...');
                 for (let i = 0; i < destinatariosArray.length; i++) {
                     const dest = destinatariosArray[i];
-                    console.log(`Destinatario ${i}: "${dest}" (tipo: ${typeof dest})`);
+                    logger_1.logger.debug(`Destinatario ${i}: "${dest}" (tipo: ${typeof dest})`);
                     if (dest && typeof dest === 'string' && dest.trim() !== '') {
                         if (mongoose_1.default.isValidObjectId(dest)) {
                             destinatariosObjectIds.push(new mongoose_1.default.Types.ObjectId(dest));
-                            console.log(`✓ Destinatario ${i} válido agregado`);
+                            logger_1.logger.debug(`✓ Destinatario ${i} válido agregado`);
                         }
                         else {
-                            console.log(`✗ Destinatario ${i} no es ObjectId válido: ${dest}`);
+                            logger_1.logger.debug(`✗ Destinatario ${i} no es ObjectId válido: ${dest}`);
                         }
                     }
                     else {
-                        console.log(`✗ Destinatario ${i} vacío o inválido`);
+                        logger_1.logger.debug(`✗ Destinatario ${i} vacío o inválido`);
                     }
                 }
             }
@@ -409,8 +407,8 @@ class MensajeController {
                     }
                 }
             }
-            console.log('Destinatarios ObjectId finales:', destinatariosObjectIds.length);
-            console.log('Destinatarios CC ObjectId finales:', destinatariosCcObjectIds.length);
+            logger_1.logger.debug('Destinatarios ObjectId finales:', destinatariosObjectIds.length);
+            logger_1.logger.debug('Destinatarios CC ObjectId finales:', destinatariosCcObjectIds.length);
             const { asunto = '(Sin asunto)', contenido = '', prioridad = IMensaje_1.PrioridadMensaje.NORMAL, etiquetas = [], } = req.body;
             const prioridadesValidas = ['ALTA', 'NORMAL', 'BAJA'];
             const prioridadFinal = prioridadesValidas.includes(prioridad)
@@ -427,7 +425,7 @@ class MensajeController {
                 if (!borrador) {
                     throw new ApiError_1.default(404, 'Borrador no encontrado');
                 }
-                console.log('Actualizando borrador existente con destinatarios:', destinatariosObjectIds.length);
+                logger_1.logger.debug('Actualizando borrador existente con destinatarios:', destinatariosObjectIds.length);
                 borrador.asunto = asunto;
                 borrador.contenido = contenido;
                 borrador.prioridad = prioridadFinal;
@@ -435,15 +433,15 @@ class MensajeController {
                 borrador.destinatariosCc = destinatariosCcObjectIds;
                 borrador.etiquetas = Array.isArray(etiquetas) ? etiquetas : [etiquetas].filter(Boolean);
                 if (req.files && req.files.length > 0) {
-                    console.log('Se enviaron nuevos adjuntos, reemplazando adjuntos anteriores...');
+                    logger_1.logger.debug('Se enviaron nuevos adjuntos, reemplazando adjuntos anteriores...');
                     if (borrador.adjuntos && borrador.adjuntos.length > 0) {
                         const bucket = gridfs_1.default.getBucket();
                         if (bucket) {
-                            console.log(`Eliminando ${borrador.adjuntos.length} adjuntos anteriores...`);
+                            logger_1.logger.debug(`Eliminando ${borrador.adjuntos.length} adjuntos anteriores...`);
                             for (const adjuntoAnterior of borrador.adjuntos) {
                                 try {
                                     await bucket.delete(adjuntoAnterior.fileId);
-                                    console.log(`Adjunto eliminado: ${adjuntoAnterior.nombre}`);
+                                    logger_1.logger.debug(`Adjunto eliminado: ${adjuntoAnterior.nombre}`);
                                 }
                                 catch (deleteError) {
                                     console.warn(`No se pudo eliminar adjunto ${adjuntoAnterior.nombre}:`, deleteError);
@@ -471,9 +469,7 @@ class MensajeController {
                                 uploadedBy: req.user._id,
                             },
                         });
-                        const fileContent = fs_1.default.readFileSync(file.path);
-                        uploadStream.write(fileContent);
-                        uploadStream.end();
+                        await (0, promises_1.pipeline)(fs_1.default.createReadStream(file.path), uploadStream);
                         nuevosAdjuntos.push({
                             nombre: file.originalname,
                             tipo: file.mimetype,
@@ -489,15 +485,15 @@ class MensajeController {
                         }
                     }
                     borrador.adjuntos = nuevosAdjuntos;
-                    console.log(`Adjuntos reemplazados: ${nuevosAdjuntos.length} nuevos adjuntos`);
+                    logger_1.logger.debug(`Adjuntos reemplazados: ${nuevosAdjuntos.length} nuevos adjuntos`);
                 }
                 else {
-                    console.log('No se enviaron nuevos adjuntos, manteniendo adjuntos existentes:', borrador.adjuntos?.length || 0);
+                    logger_1.logger.debug('No se enviaron nuevos adjuntos, manteniendo adjuntos existentes:', borrador.adjuntos?.length || 0);
                 }
                 await borrador.save();
             }
             else {
-                console.log('Creando nuevo borrador con destinatarios:', destinatariosObjectIds.length);
+                logger_1.logger.debug('Creando nuevo borrador con destinatarios:', destinatariosObjectIds.length);
                 const borradorData = {
                     remitente: new mongoose_1.default.Types.ObjectId(req.user._id),
                     destinatarios: destinatariosObjectIds,
@@ -511,16 +507,16 @@ class MensajeController {
                     escuelaId: new mongoose_1.default.Types.ObjectId(req.user.escuelaId),
                     adjuntos: [],
                 };
-                console.log('Datos para crear borrador:', {
+                logger_1.logger.debug('Datos para crear borrador:', {
                     ...borradorData,
                     destinatarios: `${borradorData.destinatarios.length} destinatarios`,
                     destinatariosCc: `${borradorData.destinatariosCc.length} destinatarios CC`,
                 });
                 const borradorBasico = await mensaje_model_1.default.create(borradorData);
-                console.log('Borrador creado con ID:', borradorBasico._id);
-                console.log('Destinatarios guardados:', borradorBasico.destinatarios.length);
+                logger_1.logger.debug('Borrador creado con ID:', borradorBasico._id);
+                logger_1.logger.debug('Destinatarios guardados:', borradorBasico.destinatarios.length);
                 if (req.files && req.files.length > 0) {
-                    console.log('Procesando adjuntos para borrador nuevo...');
+                    logger_1.logger.debug('Procesando adjuntos para borrador nuevo...');
                     const adjuntos = [];
                     const totalSize = req.files.reduce((sum, file) => sum + file.size, 0);
                     const MAX_TOTAL_SIZE = 15 * 1024 * 1024;
@@ -544,9 +540,7 @@ class MensajeController {
                                     uploadedBy: req.user._id,
                                 },
                             });
-                            const fileContent = fs_1.default.readFileSync(file.path);
-                            uploadStream.write(fileContent);
-                            uploadStream.end();
+                            await (0, promises_1.pipeline)(fs_1.default.createReadStream(file.path), uploadStream);
                             adjuntos.push({
                                 nombre: file.originalname,
                                 tipo: file.mimetype,
@@ -571,15 +565,15 @@ class MensajeController {
                 }
                 borrador = borradorBasico;
             }
-            console.log('=== ANTES DE POPULAR ===');
-            console.log('Borrador final destinatarios:', borrador.destinatarios.length);
+            logger_1.logger.debug('=== ANTES DE POPULAR ===');
+            logger_1.logger.debug('Borrador final destinatarios:', borrador.destinatarios.length);
             await borrador.populate([
                 { path: 'remitente', select: 'nombre apellidos email tipo' },
                 { path: 'destinatarios', select: 'nombre apellidos email tipo' },
                 { path: 'destinatariosCc', select: 'nombre apellidos email tipo' },
             ]);
-            console.log('=== DESPUÉS DE POPULAR ===');
-            console.log('Borrador final destinatarios:', borrador.destinatarios.length);
+            logger_1.logger.debug('=== DESPUÉS DE POPULAR ===');
+            logger_1.logger.debug('Borrador final destinatarios:', borrador.destinatarios.length);
             res.status(200).json({
                 success: true,
                 data: borrador,
@@ -709,8 +703,8 @@ class MensajeController {
             if (!exports.ROLES_CON_BORRADORES.includes(req.user.tipo)) {
                 throw new ApiError_1.default(403, 'No tiene permisos para usar borradores');
             }
-            const pagina = parseInt(req.query.pagina || '1', 10);
-            const limite = parseInt(req.query.limite || '20', 10);
+            const pagina = (0, paginacion_1.numeroPagina)(req.query.pagina);
+            const limite = (0, paginacion_1.numeroLimite)(req.query.limite, 20);
             const skip = (pagina - 1) * limite;
             const borradores = await mensaje_model_1.default.find({
                 remitente: req.user._id,
@@ -787,9 +781,9 @@ class MensajeController {
             if (req.user.tipo !== 'ACUDIENTE' && req.user.tipo !== 'ESTUDIANTE') {
                 throw new ApiError_1.default(403, 'Solo los acudientes y estudiantes pueden acceder a esta funcionalidad');
             }
-            console.log(`[DEBUG] Obteniendo destinatarios para ${req.user.tipo} ID: ${req.user._id}`);
+            logger_1.logger.debug(`[DEBUG] Obteniendo destinatarios para ${req.user.tipo} ID: ${req.user._id}`);
             if (req.user.tipo === 'ESTUDIANTE') {
-                console.log(`[DEBUG] Usuario estudiante - obteniendo destinatarios con información contextual`);
+                logger_1.logger.debug(`[DEBUG] Usuario estudiante - obteniendo destinatarios con información contextual`);
                 try {
                     const cursosEstudiante = await mongoose_1.default
                         .model('Curso')
@@ -799,7 +793,7 @@ class MensajeController {
                         estado: { $ne: 'INACTIVO' },
                     })
                         .select('_id nombre grado seccion director_grupo grupo jornada nivel estudiantes');
-                    console.log(`[DEBUG] Cursos del estudiante encontrados: ${cursosEstudiante.length}`);
+                    logger_1.logger.debug(`[DEBUG] Cursos del estudiante encontrados: ${cursosEstudiante.length}`);
                     if (cursosEstudiante.length === 0) {
                         const personalEscuela = await usuario_model_1.default.find({
                             escuelaId: req.user.escuelaId,
@@ -840,7 +834,7 @@ class MensajeController {
                         estado: 'ACTIVO',
                     })
                         .select('_id nombre docenteId cursoId');
-                    console.log(`[DEBUG] Asignaturas encontradas: ${asignaturas.length}`);
+                    logger_1.logger.debug(`[DEBUG] Asignaturas encontradas: ${asignaturas.length}`);
                     const asignaturasMap = new Map();
                     const asignaturasPorCurso = new Map();
                     asignaturas.forEach((asignatura) => {
@@ -874,7 +868,7 @@ class MensajeController {
                         tipo: 'DOCENTE',
                         estado: 'ACTIVO',
                     }).select('_id nombre apellidos email tipo');
-                    console.log(`[DEBUG] Docentes encontrados: ${docentes.length}`);
+                    logger_1.logger.debug(`[DEBUG] Docentes encontrados: ${docentes.length}`);
                     const docenteAsignaturas = new Map();
                     const docenteCursos = new Map();
                     asignaturas.forEach((asignatura) => {
@@ -946,7 +940,7 @@ class MensajeController {
                             });
                         }
                     });
-                    console.log(`[DEBUG] Total destinatarios para estudiante: ${destinatariosFinales.length}`);
+                    logger_1.logger.debug(`[DEBUG] Total destinatarios para estudiante: ${destinatariosFinales.length}`);
                     return res.json({
                         success: true,
                         data: destinatariosFinales,
@@ -979,7 +973,7 @@ class MensajeController {
                     message: 'No tiene estudiantes asociados',
                 });
             }
-            console.log(`[DEBUG] Estudiantes asociados: ${estudiantesIds.length}`);
+            logger_1.logger.debug(`[DEBUG] Estudiantes asociados: ${estudiantesIds.length}`);
             const estudiantes = (await usuario_model_1.default.find({
                 _id: { $in: estudiantesIds },
                 tipo: 'ESTUDIANTE',
@@ -990,7 +984,7 @@ class MensajeController {
                 estudiantesNombres.set(estudiante._id.toString(), `${estudiante.nombre || ''} ${estudiante.apellidos || ''}`);
             });
             const estudiantesIdsString = estudiantes.map((est) => est._id.toString());
-            console.log(`[DEBUG] Buscando cursos para los estudiantes: ${estudiantesIdsString.join(', ')}`);
+            logger_1.logger.debug(`[DEBUG] Buscando cursos para los estudiantes: ${estudiantesIdsString.join(', ')}`);
             const cursos = (await mongoose_1.default
                 .model('Curso')
                 .find({
@@ -999,7 +993,7 @@ class MensajeController {
                 estado: { $ne: 'INACTIVO' },
             })
                 .select('_id nombre grado seccion director_grupo grupo jornada nivel estudiantes'));
-            console.log(`[DEBUG] Cursos encontrados: ${cursos.length}`);
+            logger_1.logger.debug(`[DEBUG] Cursos encontrados: ${cursos.length}`);
             const cursosIds = new Set();
             cursos.forEach((curso) => {
                 if (curso._id) {
@@ -1007,7 +1001,7 @@ class MensajeController {
                 }
             });
             if (cursosIds.size === 0) {
-                console.log('[DEBUG] No se encontraron cursos, obteniendo solo personal administrativo (sin docentes)');
+                logger_1.logger.debug('[DEBUG] No se encontraron cursos, obteniendo solo personal administrativo (sin docentes)');
                 const personalEscuela = (await usuario_model_1.default.find({
                     escuelaId: req.user.escuelaId,
                     tipo: { $in: ['ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'] },
@@ -1039,7 +1033,7 @@ class MensajeController {
                     directorGrupoInfo.set(curso.director_grupo.toString(), nombreCurso);
                 }
             });
-            console.log(`[DEBUG] Buscando asignaturas para los cursos: ${Array.from(cursosIds).join(', ')}`);
+            logger_1.logger.debug(`[DEBUG] Buscando asignaturas para los cursos: ${Array.from(cursosIds).join(', ')}`);
             const asignaturas = (await mongoose_1.default
                 .model('Asignatura')
                 .find({
@@ -1047,9 +1041,9 @@ class MensajeController {
                 estado: 'ACTIVO',
             })
                 .select('_id nombre docenteId cursoId'));
-            console.log(`[DEBUG] Asignaturas encontradas por consulta directa: ${asignaturas.length}`);
+            logger_1.logger.debug(`[DEBUG] Asignaturas encontradas por consulta directa: ${asignaturas.length}`);
             if (asignaturas.length > 0) {
-                console.log('[DEBUG] Ejemplo de primera asignatura:', JSON.stringify({
+                logger_1.logger.debug('[DEBUG] Ejemplo de primera asignatura:', JSON.stringify({
                     id: asignaturas[0]._id.toString(),
                     nombre: asignaturas[0].nombre,
                     docenteId: asignaturas[0].docenteId
@@ -1081,7 +1075,7 @@ class MensajeController {
                     }
                 }
             });
-            console.log(`[DEBUG] Docentes encontrados (IDs): ${Array.from(docentesIds).join(', ')}`);
+            logger_1.logger.debug(`[DEBUG] Docentes encontrados (IDs): ${Array.from(docentesIds).join(', ')}`);
             const personalAdministrativo = (await usuario_model_1.default.find({
                 escuelaId: req.user.escuelaId,
                 tipo: { $in: ['ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'] },
@@ -1092,11 +1086,11 @@ class MensajeController {
                 tipo: 'DOCENTE',
                 estado: 'ACTIVO',
             }).select('_id nombre apellidos email tipo'));
-            console.log(`[DEBUG] Docentes recuperados de la base de datos: ${docentes.length}`);
+            logger_1.logger.debug(`[DEBUG] Docentes recuperados de la base de datos: ${docentes.length}`);
             if (docentes.length > 0) {
-                console.log('[DEBUG] Lista de docentes encontrados:');
+                logger_1.logger.debug('[DEBUG] Lista de docentes encontrados:');
                 docentes.forEach((docente) => {
-                    console.log(`- ${docente._id.toString()}: ${docente.nombre} ${docente.apellidos}`);
+                    logger_1.logger.debug(`- ${docente._id.toString()}: ${docente.nombre} ${docente.apellidos}`);
                 });
             }
             const docenteAsignaturas = new Map();
@@ -1201,7 +1195,7 @@ class MensajeController {
                     });
                 }
             });
-            console.log(`[DEBUG] Total destinatarios encontrados: ${destinatariosFinales.length}`);
+            logger_1.logger.debug(`[DEBUG] Total destinatarios encontrados: ${destinatariosFinales.length}`);
             return res.json({
                 success: true,
                 data: destinatariosFinales,
@@ -1218,14 +1212,14 @@ class MensajeController {
             if (!req.user) {
                 throw new ApiError_1.default(401, 'No autorizado');
             }
-            console.log(`[DEBUG] Obteniendo cursos disponibles para usuario: ${req.user._id}, tipo: ${req.user.tipo}`);
+            logger_1.logger.debug(`[DEBUG] Obteniendo cursos disponibles para usuario: ${req.user._id}, tipo: ${req.user.tipo}`);
             const rolesMasivos = ['ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO', 'DOCENTE'];
             if (!rolesMasivos.includes(req.user.tipo)) {
                 throw new ApiError_1.default(403, 'No tiene permisos para enviar mensajes masivos');
             }
             let cursos = [];
             if (['ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'].includes(req.user.tipo)) {
-                console.log('[DEBUG] Usuario administrativo - Mostrando todos los cursos');
+                logger_1.logger.debug('[DEBUG] Usuario administrativo - Mostrando todos los cursos');
                 cursos = await mongoose_1.default
                     .model('Curso')
                     .find({
@@ -1241,7 +1235,7 @@ class MensajeController {
                     .sort({ grado: 1, seccion: 1 });
             }
             else if (req.user.tipo === 'DOCENTE') {
-                console.log('[DEBUG] Usuario docente - Obteniendo cursos donde dicta asignaturas');
+                logger_1.logger.debug('[DEBUG] Usuario docente - Obteniendo cursos donde dicta asignaturas');
                 const cursosDirigidos = await mongoose_1.default
                     .model('Curso')
                     .find({
@@ -1266,7 +1260,7 @@ class MensajeController {
                     }
                 });
                 if (cursosIds.size === 0) {
-                    console.log('[DEBUG] Docente no tiene cursos asignados');
+                    logger_1.logger.debug('[DEBUG] Docente no tiene cursos asignados');
                     return res.json({
                         success: true,
                         data: [],
@@ -1323,7 +1317,7 @@ class MensajeController {
                     infoAdicional,
                 };
             });
-            console.log(`[DEBUG] Cursos encontrados: ${cursosFormateados.length}`);
+            logger_1.logger.debug(`[DEBUG] Cursos encontrados: ${cursosFormateados.length}`);
             return res.json({
                 success: true,
                 data: cursosFormateados,
@@ -1366,9 +1360,7 @@ class MensajeController {
                             uploadedBy: req.user._id,
                         },
                     });
-                    const fileContent = fs_1.default.readFileSync(file.path);
-                    uploadStream.write(fileContent);
-                    uploadStream.end();
+                    await (0, promises_1.pipeline)(fs_1.default.createReadStream(file.path), uploadStream);
                     adjuntos.push({
                         nombre: file.originalname,
                         tipo: file.mimetype,
@@ -1445,7 +1437,7 @@ class MensajeController {
             const nuevoMensaje = await mensaje_service_1.default.crearMensaje(datosMensaje, req.user);
             if (estado !== IMensaje_1.EstadoMensaje.BORRADOR) {
                 try {
-                    console.log('📱 Enviando notificaciones push automáticas...');
+                    logger_1.logger.debug('📱 Enviando notificaciones push automáticas...');
                     const senderName = `${req.user.nombre} ${req.user.apellidos}`;
                     const isUrgent = prioridad === IMensaje_1.PrioridadMensaje.ALTA ||
                         asunto.toLowerCase().includes('urgente') ||
@@ -1469,7 +1461,7 @@ class MensajeController {
                             console.error(`❌ Error enviando push a ${recipientId}:`, error);
                         }
                     }
-                    console.log(`✅ Notificaciones push enviadas: ${pushEnviadas}/${allRecipients.length}`);
+                    logger_1.logger.debug(`✅ Notificaciones push enviadas: ${pushEnviadas}/${allRecipients.length}`);
                 }
                 catch (error) {
                     console.error('❌ Error enviando notificaciones push:', error);
@@ -1507,20 +1499,32 @@ class MensajeController {
                 throw new ApiError_1.default(401, 'No autorizado');
             }
             const { tipo, bandeja = 'recibidos', pagina = 1, limite = 20, busqueda, desde, hasta, } = req.query;
-            const opciones = {
-                pagina: parseInt(pagina, 10),
-                limite: parseInt(limite, 10),
-            };
+            const paginaNum = Math.max(parseInt(pagina, 10) || 1, 1);
+            const limiteNum = Math.min(Math.max(parseInt(limite, 10) || 20, 1), 100);
+            const opciones = { pagina: paginaNum, limite: limiteNum };
             const usuarioId = new mongoose_1.default.Types.ObjectId(req.user._id);
             const escuelaId = new mongoose_1.default.Types.ObjectId(req.user.escuelaId);
-            const pipeline = [
-                {
-                    $match: {
-                        escuelaId: escuelaId,
-                    },
-                },
-            ];
-            if (tipo) {
+            if (bandeja === 'borradores' && !exports.ROLES_CON_BORRADORES.includes(req.user.tipo)) {
+                return res.json({
+                    success: true,
+                    data: [],
+                    meta: { total: 0, pagina: opciones.pagina, limite: opciones.limite, totalPaginas: 0 },
+                    message: 'No tiene permisos para acceder a borradores',
+                });
+            }
+            const comoDestinatario = [{ destinatarios: usuarioId }, { destinatariosCc: usuarioId }];
+            const matchInicial = { escuelaId };
+            if (bandeja === 'recibidos') {
+                matchInicial.$or = comoDestinatario;
+            }
+            else if (bandeja === 'enviados' || bandeja === 'borradores') {
+                matchInicial.remitente = usuarioId;
+            }
+            else {
+                matchInicial.$or = [{ remitente: usuarioId }, ...comoDestinatario];
+            }
+            const pipeline = [{ $match: matchInicial }];
+            if (typeof tipo === 'string' && tipo) {
                 pipeline.push({ $match: { tipo } });
             }
             if (desde || hasta) {
@@ -1538,7 +1542,7 @@ class MensajeController {
                 }
                 pipeline.push({ $match: matchFecha });
             }
-            if (busqueda) {
+            if (typeof busqueda === 'string' && busqueda) {
                 const regex = new RegExp((0, escapeRegex_1.escapeRegex)(busqueda), 'i');
                 pipeline.push({
                     $match: {
@@ -1549,8 +1553,8 @@ class MensajeController {
             pipeline.push({
                 $addFields: {
                     esRemitente: { $eq: ['$remitente', usuarioId] },
-                    esDestinatario: { $in: [usuarioId, '$destinatarios'] },
-                    esDestinatarioCc: { $in: [usuarioId, '$destinatariosCc'] },
+                    esDestinatario: { $in: [usuarioId, { $ifNull: ['$destinatarios', []] }] },
+                    esDestinatarioCc: { $in: [usuarioId, { $ifNull: ['$destinatariosCc', []] }] },
                     estadoUsuario: {
                         $let: {
                             vars: {
@@ -1585,19 +1589,6 @@ class MensajeController {
                 matchBandeja.esCopiaAcudiente = { $ne: true };
             }
             else if (bandeja === 'borradores') {
-                if (!exports.ROLES_CON_BORRADORES.includes(req.user.tipo)) {
-                    return res.json({
-                        success: true,
-                        data: [],
-                        meta: {
-                            total: 0,
-                            pagina: opciones.pagina,
-                            limite: opciones.limite,
-                            totalPaginas: 0,
-                        },
-                        message: 'No tiene permisos para acceder a borradores',
-                    });
-                }
                 matchBandeja.esRemitente = true;
                 matchBandeja.tipo = IMensaje_1.TipoMensaje.BORRADOR;
             }
@@ -1617,68 +1608,111 @@ class MensajeController {
                 ];
                 matchBandeja.estadoUsuario = IMensaje_1.EstadoMensaje.ELIMINADO;
             }
-            pipeline.push({ $match: matchBandeja });
+            pipeline.push({ $match: matchBandeja }, { $sort: { createdAt: -1 } });
+            const proyeccionUsuario = (prefijo) => ({
+                _id: `${prefijo}._id`,
+                nombre: `${prefijo}.nombre`,
+                apellidos: `${prefijo}.apellidos`,
+                email: `${prefijo}.email`,
+                tipo: `${prefijo}.tipo`,
+                perfil: { foto: `${prefijo}.perfil.foto` },
+            });
             pipeline.push({
-                $lookup: {
-                    from: 'usuarios',
-                    localField: 'remitente',
-                    foreignField: '_id',
-                    as: 'remitenteInfo',
-                },
-            }, {
-                $lookup: {
-                    from: 'usuarios',
-                    localField: 'destinatarios',
-                    foreignField: '_id',
-                    as: 'destinatariosInfo',
-                },
-            }, {
-                $addFields: {
-                    remitente: { $arrayElemAt: ['$remitenteInfo', 0] },
-                    destinatarios: '$destinatariosInfo',
-                },
-            }, {
-                $addFields: {
-                    remitente: {
-                        $cond: [
-                            { $ifNull: ['$remitente._id', false] },
-                            {
-                                _id: '$remitente._id',
-                                nombre: '$remitente.nombre',
-                                apellidos: '$remitente.apellidos',
-                                email: '$remitente.email',
-                                tipo: '$remitente.tipo',
-                                perfil: { foto: '$remitente.perfil.foto' },
-                            },
-                            '$$REMOVE',
-                        ],
-                    },
-                    destinatarios: {
-                        $map: {
-                            input: '$destinatarios',
-                            as: 'd',
-                            in: {
-                                _id: '$$d._id',
-                                nombre: '$$d.nombre',
-                                apellidos: '$$d.apellidos',
-                                email: '$$d.email',
-                                tipo: '$$d.tipo',
-                                perfil: { foto: '$$d.perfil.foto' },
+                $facet: {
+                    datos: [
+                        { $skip: (opciones.pagina - 1) * opciones.limite },
+                        { $limit: opciones.limite },
+                        {
+                            $addFields: {
+                                totalDestinatarios: { $size: { $ifNull: ['$destinatarios', []] } },
+                                leido: {
+                                    $cond: [
+                                        '$esRemitente',
+                                        { $gt: [{ $size: { $ifNull: ['$lecturas', []] } }, 0] },
+                                        { $in: [usuarioId, { $ifNull: ['$lecturas.usuarioId', []] }] },
+                                    ],
+                                },
+                                estadosUsuarios: {
+                                    $filter: {
+                                        input: { $ifNull: ['$estadosUsuarios', []] },
+                                        as: 'e',
+                                        cond: { $eq: ['$$e.usuarioId', usuarioId] },
+                                    },
+                                },
+                                lecturas: {
+                                    $filter: {
+                                        input: { $ifNull: ['$lecturas', []] },
+                                        as: 'l',
+                                        cond: { $eq: ['$$l.usuarioId', usuarioId] },
+                                    },
+                                },
+                                destinatarios: {
+                                    $cond: [
+                                        '$esRemitente',
+                                        { $slice: [{ $ifNull: ['$destinatarios', []] }, 3] },
+                                        {
+                                            $cond: [
+                                                {
+                                                    $and: [
+                                                        { $eq: ['$tipo', IMensaje_1.TipoMensaje.INDIVIDUAL] },
+                                                        { $lte: [{ $size: { $ifNull: ['$destinatarios', []] } }, 10] },
+                                                    ],
+                                                },
+                                                { $ifNull: ['$destinatarios', []] },
+                                                {
+                                                    $filter: {
+                                                        input: { $ifNull: ['$destinatarios', []] },
+                                                        as: 'd',
+                                                        cond: { $eq: ['$$d', usuarioId] },
+                                                    },
+                                                },
+                                            ],
+                                        },
+                                    ],
+                                },
                             },
                         },
-                    },
-                },
-            }, {
-                $project: {
-                    remitenteInfo: 0,
-                    destinatariosInfo: 0,
+                        {
+                            $lookup: {
+                                from: 'usuarios',
+                                localField: 'remitente',
+                                foreignField: '_id',
+                                as: 'remitenteInfo',
+                                pipeline: [{ $project: { nombre: 1, apellidos: 1, email: 1, tipo: 1, 'perfil.foto': 1 } }],
+                            },
+                        },
+                        {
+                            $lookup: {
+                                from: 'usuarios',
+                                localField: 'destinatarios',
+                                foreignField: '_id',
+                                as: 'destinatariosInfo',
+                                pipeline: [{ $project: { nombre: 1, apellidos: 1, email: 1, tipo: 1, 'perfil.foto': 1 } }],
+                            },
+                        },
+                        {
+                            $addFields: {
+                                remitente: {
+                                    $let: {
+                                        vars: { r: { $arrayElemAt: ['$remitenteInfo', 0] } },
+                                        in: {
+                                            $cond: [{ $ifNull: ['$$r._id', false] }, proyeccionUsuario('$$r'), '$$REMOVE'],
+                                        },
+                                    },
+                                },
+                                destinatarios: {
+                                    $map: { input: '$destinatariosInfo', as: 'd', in: proyeccionUsuario('$$d') },
+                                },
+                            },
+                        },
+                        { $project: { remitenteInfo: 0, destinatariosInfo: 0 } },
+                    ],
+                    total: [{ $count: 'total' }],
                 },
             });
-            const totalPipeline = [...pipeline];
-            const countResult = await mensaje_model_1.default.aggregate([...totalPipeline, { $count: 'total' }]);
-            const total = countResult.length > 0 ? countResult[0].total : 0;
-            pipeline.push({ $sort: { createdAt: -1 } }, { $skip: (opciones.pagina - 1) * opciones.limite }, { $limit: opciones.limite });
-            const mensajes = await mensaje_model_1.default.aggregate(pipeline);
+            const [resultado] = await mensaje_model_1.default.aggregate(pipeline);
+            const mensajes = resultado?.datos || [];
+            const total = resultado?.total?.[0]?.total || 0;
             return res.json({
                 success: true,
                 data: mensajes,
@@ -1717,43 +1751,60 @@ class MensajeController {
                     { destinatariosCc: userObjId },
                 ],
             };
-            const mensaje = await mensaje_model_1.default.findOne(matchQuery).populate([
-                { path: 'remitente', select: 'nombre apellidos email tipo' },
-                { path: 'destinatarios', select: 'nombre apellidos email tipo' },
-                { path: 'destinatariosCc', select: 'nombre apellidos email tipo' },
-                { path: 'mensajeOriginalId' },
-            ]);
+            const mensaje = await mensaje_model_1.default.findOne(matchQuery)
+                .populate({
+                path: 'mensajeOriginalId',
+                select: '-destinatarios -destinatariosCc -estadosUsuarios -lecturas',
+            })
+                .lean();
             if (!mensaje) {
                 throw new ApiError_1.default(404, 'Mensaje no encontrado');
             }
-            if (mensaje.destinatarios && Array.isArray(mensaje.destinatarios)) {
-                const destinatarioIds = mensaje.destinatarios
-                    .filter((d) => d && d._id)
-                    .map((d) => d._id.toString());
-                const destinatariosCcIds = mensaje.destinatariosCc && Array.isArray(mensaje.destinatariosCc)
-                    ? mensaje.destinatariosCc
-                        .filter((d) => d && d._id)
-                        .map((d) => d._id.toString())
-                    : [];
-                const userIdStr = req.user._id.toString();
-                if (destinatarioIds.includes(userIdStr) || destinatariosCcIds.includes(userIdStr)) {
-                    const lecturas = mensaje.lecturas || [];
-                    const yaLeido = lecturas.some((l) => l && l.usuarioId && l.usuarioId.toString() === userIdStr);
-                    if (!yaLeido) {
-                        await mensaje_model_1.default.updateOne({ _id: id }, {
-                            $push: {
-                                lecturas: {
-                                    usuarioId: userObjId,
-                                    fechaLectura: new Date(),
-                                },
-                            },
-                        });
-                    }
+            const userIdStr = req.user._id.toString();
+            const esRemitente = String(mensaje.remitente) === userIdStr;
+            const idsDest = (mensaje.destinatarios || []).map(String);
+            const idsCc = (mensaje.destinatariosCc || []).map(String);
+            const esDestinatario = idsDest.includes(userIdStr) || idsCc.includes(userIdStr);
+            const verTodos = esRemitente || (mensaje.tipo === IMensaje_1.TipoMensaje.INDIVIDUAL && idsDest.length + idsCc.length <= 10);
+            const visiblesDest = verTodos ? idsDest : idsDest.filter((d) => d === userIdStr);
+            const visiblesCc = verTodos ? idsCc : idsCc.filter((d) => d === userIdStr);
+            const personas = await usuario_model_1.default.find({
+                _id: { $in: [String(mensaje.remitente), ...visiblesDest, ...visiblesCc] },
+            })
+                .select('nombre apellidos email tipo')
+                .lean();
+            const porId = new Map(personas.map((p) => [String(p._id), p]));
+            const sinEmail = (id) => {
+                const p = porId.get(id);
+                return p ? { _id: p._id, nombre: p.nombre, apellidos: p.apellidos, tipo: p.tipo } : null;
+            };
+            const lecturas = mensaje.lecturas || [];
+            let lecturasRespuesta = lecturas;
+            if (esDestinatario) {
+                const propia = lecturas.filter((l) => l?.usuarioId && String(l.usuarioId) === userIdStr);
+                if (propia.length === 0) {
+                    const nueva = { usuarioId: userObjId, fechaLectura: new Date() };
+                    await mensaje_model_1.default.updateOne({ _id: id, 'lecturas.usuarioId': { $ne: userObjId } }, { $push: { lecturas: nueva } });
+                    propia.push(nueva);
                 }
+                lecturasRespuesta = esRemitente ? [...lecturas, ...propia.filter((l) => !lecturas.includes(l))] : propia;
             }
+            const remitente = porId.get(String(mensaje.remitente));
+            const respuesta = {
+                ...mensaje,
+                remitente: remitente
+                    ? { _id: remitente._id, nombre: remitente.nombre, apellidos: remitente.apellidos, email: remitente.email, tipo: remitente.tipo }
+                    : mensaje.remitente,
+                destinatarios: visiblesDest.map(sinEmail).filter(Boolean),
+                destinatariosCc: visiblesCc.map(sinEmail).filter(Boolean),
+                totalDestinatarios: idsDest.length,
+                totalDestinatariosCc: idsCc.length,
+                lecturas: lecturasRespuesta,
+                estadosUsuarios: (mensaje.estadosUsuarios || []).filter((e) => String(e.usuarioId) === userIdStr),
+            };
             res.json({
                 success: true,
-                data: mensaje,
+                data: respuesta,
             });
         }
         catch (error) {
@@ -2015,16 +2066,26 @@ class MensajeController {
             if (!bucket) {
                 throw new ApiError_1.default(500, 'Servicio de archivos no disponible');
             }
-            const documentoCursor = bucket.find({ _id: new mongoose_1.default.Types.ObjectId(adjuntoId) });
-            const documentoCount = await documentoCursor.count();
-            if (documentoCount === 0) {
+            const [documento] = await bucket.find({ _id: new mongoose_1.default.Types.ObjectId(adjuntoId) }).limit(1).toArray();
+            if (!documento) {
                 throw new ApiError_1.default(404, 'Archivo no encontrado en el sistema');
             }
+            const nombreArchivo = String(adjunto.nombre || 'archivo');
+            const nombreAscii = nombreArchivo.replace(/[^\x20-\x7E]|"/g, '_');
             res.set({
                 'Content-Type': adjunto.tipo,
-                'Content-Disposition': `attachment; filename="${adjunto.nombre}"`,
+                'Content-Disposition': `attachment; filename="${nombreAscii}"; filename*=UTF-8''${encodeURIComponent(nombreArchivo)}`,
             });
             const downloadStream = bucket.openDownloadStream(new mongoose_1.default.Types.ObjectId(adjuntoId));
+            downloadStream.on('error', (error) => {
+                console.error('Error en stream de descarga GridFS:', error);
+                if (!res.headersSent) {
+                    next(new ApiError_1.default(500, 'Error al descargar el archivo'));
+                }
+                else {
+                    res.end();
+                }
+            });
             downloadStream.pipe(res);
         }
         catch (error) {
@@ -2066,9 +2127,9 @@ class MensajeController {
                     return destId === req.user._id.toString();
                 });
             if (!esDestinatario && !esDestinatarioCc && !esRemitente) {
-                console.log(`[DEBUG] Usuario ${req.user._id} (${req.user.tipo}) no puede marcar mensaje ${id}`);
-                console.log(`[DEBUG] Es remitente: ${esRemitente}, Es destinatario: ${esDestinatario}, Es destinatarioCc: ${esDestinatarioCc}`);
-                console.log(`[DEBUG] Mensaje.remitente: ${mensaje.remitente}`);
+                logger_1.logger.debug(`[DEBUG] Usuario ${req.user._id} (${req.user.tipo}) no puede marcar mensaje ${id}`);
+                logger_1.logger.debug(`[DEBUG] Es remitente: ${esRemitente}, Es destinatario: ${esDestinatario}, Es destinatarioCc: ${esDestinatarioCc}`);
+                logger_1.logger.debug(`[DEBUG] Mensaje.remitente: ${mensaje.remitente}`);
                 throw new ApiError_1.default(403, 'No tiene permisos para cambiar el estado de lectura de este mensaje');
             }
             if (leido) {
@@ -2149,9 +2210,9 @@ class MensajeController {
             if (!req.user) {
                 throw new ApiError_1.default(401, 'No autorizado');
             }
-            const limit = parseInt(req.query.limit) || 3;
+            const limit = (0, paginacion_1.numeroLimite)(req.query.limit, 3, 50);
             const userId = req.user._id;
-            console.log(`📬 Obteniendo últimos ${limit} mensajes para usuario: ${userId}`);
+            logger_1.logger.debug(`📬 Obteniendo últimos ${limit} mensajes para usuario: ${userId}`);
             const mensajes = await mensaje_model_1.default.find({
                 destinatarios: userId,
                 tipo: { $ne: IMensaje_1.TipoMensaje.BORRADOR },
@@ -2162,7 +2223,7 @@ class MensajeController {
                 .populate('remitente', 'nombre apellidos')
                 .select('asunto contenido createdAt fechaEnvio remitente')
                 .lean();
-            console.log(`✅ Encontrados ${mensajes.length} mensajes sin leer`);
+            logger_1.logger.debug(`✅ Encontrados ${mensajes.length} mensajes sin leer`);
             const formatted = mensajes.map((mensaje) => {
                 const remitente = mensaje.remitente;
                 const nombre = remitente?.nombre || '';
@@ -2171,16 +2232,16 @@ class MensajeController {
                 const preview = mensaje.contenido
                     ? mensaje.contenido.substring(0, 50).trim() + '...'
                     : 'Sin contenido';
-                console.log(`🔍 Mensaje ${mensaje._id}:`);
-                console.log(`   fechaEnvio: ${mensaje.fechaEnvio}`);
-                console.log(`   createdAt: ${mensaje.createdAt}`);
+                logger_1.logger.debug(`🔍 Mensaje ${mensaje._id}:`);
+                logger_1.logger.debug(`   fechaEnvio: ${mensaje.fechaEnvio}`);
+                logger_1.logger.debug(`   createdAt: ${mensaje.createdAt}`);
                 const fechaReal = mensaje.fechaEnvio || mensaje.createdAt;
-                console.log(`   ✅ Fecha a usar: ${fechaReal}`);
+                logger_1.logger.debug(`   ✅ Fecha a usar: ${fechaReal}`);
                 const ahora = new Date();
                 const fechaMensaje = new Date(fechaReal);
                 const diffMs = ahora.getTime() - fechaMensaje.getTime();
                 const diffMinutos = Math.floor(diffMs / 60000);
-                console.log(`   ⏱️ Diferencia en minutos: ${diffMinutos}`);
+                logger_1.logger.debug(`   ⏱️ Diferencia en minutos: ${diffMinutos}`);
                 let tiempoRelativo;
                 if (diffMinutos < 1) {
                     tiempoRelativo = 'Justo ahora';
@@ -2196,7 +2257,7 @@ class MensajeController {
                     const dias = Math.floor(diffMinutos / 1440);
                     tiempoRelativo = `Hace ${dias} ${dias === 1 ? 'día' : 'días'}`;
                 }
-                console.log(`   ⏰ Tiempo calculado: ${tiempoRelativo}`);
+                logger_1.logger.debug(`   ⏰ Tiempo calculado: ${tiempoRelativo}`);
                 const resultado = {
                     id: mensaje._id,
                     remitente: {
@@ -2210,10 +2271,10 @@ class MensajeController {
                     fechaEnvio: fechaReal,
                     tiempoRelativo: tiempoRelativo
                 };
-                console.log(`   📦 Resultado:`, JSON.stringify(resultado, null, 2));
+                logger_1.logger.debug(`   📦 Resultado:`, JSON.stringify(resultado, null, 2));
                 return resultado;
             });
-            console.log(`📤 Enviando ${formatted.length} mensajes formateados`);
+            logger_1.logger.debug(`📤 Enviando ${formatted.length} mensajes formateados`);
             res.json({
                 success: true,
                 data: formatted
@@ -2271,9 +2332,7 @@ class MensajeController {
                             uploadedBy: req.user._id,
                         },
                     });
-                    const fileContent = fs_1.default.readFileSync(file.path);
-                    uploadStream.write(fileContent);
-                    uploadStream.end();
+                    await (0, promises_1.pipeline)(fs_1.default.createReadStream(file.path), uploadStream);
                     adjuntos.push({
                         nombre: file.originalname,
                         tipo: file.mimetype,
@@ -2321,7 +2380,7 @@ class MensajeController {
                 for (const recipientId of destinatarios) {
                     await pushNotification_service_1.default.notificarNuevoMensaje(recipientId, senderName, datosRespuesta.asunto, respuesta._id.toString(), 'NORMAL');
                 }
-                console.log('✅ Notificaciones push enviadas para respuesta');
+                logger_1.logger.debug('✅ Notificaciones push enviadas para respuesta');
             }
             catch (error) {
                 console.error('❌ Error enviando push para respuesta:', error);
@@ -2385,8 +2444,8 @@ class MensajeController {
                 remitenteId,
                 desde,
                 hasta,
-                pagina: pagina ? parseInt(pagina, 10) : 1,
-                limite: limite ? parseInt(limite, 10) : 20,
+                pagina: (0, paginacion_1.numeroPagina)(pagina),
+                limite: (0, paginacion_1.numeroLimite)(limite, 20),
             });
             res.status(200).json({ success: true, ...result });
         }

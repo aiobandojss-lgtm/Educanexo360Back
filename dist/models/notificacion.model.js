@@ -91,9 +91,8 @@ const NotificacionSchema = new mongoose_1.Schema({
 }, {
     timestamps: true,
 });
+NotificacionSchema.index({ usuarioId: 1, createdAt: -1 });
 NotificacionSchema.index({ usuarioId: 1, estado: 1 });
 NotificacionSchema.index({ escuelaId: 1 });
-NotificacionSchema.index({ tipo: 1 });
-NotificacionSchema.index({ createdAt: -1 });
 exports.default = mongoose_1.default.model('Notificacion', NotificacionSchema);
 //# sourceMappingURL=notificacion.model.js.map

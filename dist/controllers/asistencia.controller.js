@@ -13,6 +13,8 @@ const pushNotification_service_1 = __importDefault(require("../services/pushNoti
 const IAsistencia_1 = require("../interfaces/IAsistencia");
 const alertaAsistencia_model_1 = __importDefault(require("../models/alertaAsistencia.model"));
 const alertaAsistencia_service_1 = require("../services/alertaAsistencia.service");
+const paginacion_1 = require("../utils/paginacion");
+const logger_1 = require("../utils/logger");
 const accesoAcademico_1 = require("../utils/accesoAcademico");
 const idDe = (valor) => String(valor?._id ?? valor);
 const docentePuedeVerRegistro = async (user, asistencia) => idDe(asistencia.docenteId) === String(user._id) ||
@@ -87,8 +89,8 @@ const obtenerAsistencias = async (req, res, next) => {
         const hasta = (0, accesoAcademico_1.queryString)(req.query.hasta);
         const docenteId = (0, accesoAcademico_1.queryString)(req.query.docenteId);
         const finalizado = (0, accesoAcademico_1.queryString)(req.query.finalizado);
-        const page = (0, accesoAcademico_1.queryString)(req.query.page) || 1;
-        const limit = (0, accesoAcademico_1.queryString)(req.query.limit) || 10;
+        const page = (0, paginacion_1.numeroPagina)(req.query.page);
+        const limit = (0, paginacion_1.numeroLimite)(req.query.limit, 10);
         const skip = (Number(page) - 1) * Number(limit);
         const query = { escuelaId: req.user.escuelaId };
         if (cursoId)
@@ -182,7 +184,7 @@ const obtenerAsistenciaPorId = async (req, res, next) => {
             grado: asistencia.cursoId?.grado || '',
             grupo: asistencia.cursoId?.grupo || '',
         };
-        console.log('Estados de estudiantes:', estudiantesFormateados.map((e) => e.estado));
+        logger_1.logger.debug('Estados de estudiantes:', estudiantesFormateados.map((e) => e.estado));
         return res.status(200).json({
             success: true,
             data: respuesta,
@@ -304,9 +306,13 @@ const finalizarAsistencia = async (req, res, next) => {
             const cursoId = asistencia.cursoId.toString();
             const escuelaId = req.user.escuelaId.toString();
             const periodoId = asistencia.periodoId?.toString();
-            for (const entrada of asistencia.estudiantes ?? []) {
-                (0, alertaAsistencia_service_1.triggerAlertasAsistencia)(entrada.estudianteId.toString(), cursoId, escuelaId, docenteId, periodoId).catch((err) => console.error('[AlertaAsistencia]', err));
-            }
+            (0, alertaAsistencia_service_1.procesarAlertasAsistenciaCurso)({
+                estudianteIds: (asistencia.estudiantes ?? []).map((entrada) => entrada.estudianteId.toString()),
+                cursoId,
+                escuelaId,
+                docenteId,
+                periodoId,
+            }).catch((err) => console.error('[AlertaAsistencia]', err));
         });
         return res.status(200).json({
             success: true,
@@ -686,44 +692,81 @@ const obtenerResumen = async (req, res, next) => {
         if (esRolPersonal) {
             query['estudiantes.estudianteId'] = { $in: estudiantesPermitidos };
         }
-        if (fechaInicio || fechaFin) {
-            query.fecha = {};
-            if (fechaInicio)
-                query.fecha.$gte = new Date(fechaInicio);
-            if (fechaFin)
-                query.fecha.$lte = new Date(fechaFin);
+        query.fecha = {};
+        if (fechaInicio)
+            query.fecha.$gte = new Date(fechaInicio);
+        if (fechaFin)
+            query.fecha.$lte = new Date(fechaFin);
+        if (!fechaInicio && !fechaFin) {
+            const hoy = new Date();
+            query.fecha.$gte = new Date(Date.UTC(hoy.getUTCFullYear(), hoy.getUTCMonth(), 1));
         }
         if (req.user.tipo === 'DOCENTE') {
             query.docenteId = req.user._id;
         }
-        const registros = await asistencia_model_1.default.find(query)
-            .populate('cursoId', 'nombre nivel grado grupo')
-            .populate('asignaturaId', 'nombre codigo')
-            .populate('docenteId', 'nombre apellidos')
-            .select('fecha cursoId asignaturaId docenteId estudiantes createdAt finalizado');
-        if (esRolPersonal) {
-            const permitidos = new Set(estudiantesPermitidos);
-            registros.forEach((registro) => {
-                registro.estudiantes = registro.estudiantes.filter((est) => permitidos.has(String(est.estudianteId)));
-            });
-        }
-        const resumen = registros.map((registro) => {
-            const totalEstudiantes = registro.estudiantes.length;
-            const presentes = registro.estudiantes.filter((est) => est.estado === IAsistencia_1.EstadoAsistencia.PRESENTE).length;
-            const ausentes = registro.estudiantes.filter((est) => est.estado === IAsistencia_1.EstadoAsistencia.AUSENTE).length;
-            const tardes = registro.estudiantes.filter((est) => est.estado === IAsistencia_1.EstadoAsistencia.TARDANZA).length;
-            const justificados = registro.estudiantes.filter((est) => est.estado === IAsistencia_1.EstadoAsistencia.JUSTIFICADO).length;
-            const permisos = registro.estudiantes.filter((est) => est.estado === IAsistencia_1.EstadoAsistencia.PERMISO).length;
+        const oid = (v) => (v instanceof mongoose_1.default.Types.ObjectId ? v : new mongoose_1.default.Types.ObjectId(String(v)));
+        const matchAgg = { escuelaId: oid(query.escuelaId) };
+        if (query.cursoId)
+            matchAgg.cursoId = oid(query.cursoId);
+        if (query.docenteId)
+            matchAgg.docenteId = oid(query.docenteId);
+        if (query.fecha)
+            matchAgg.fecha = query.fecha;
+        const permitidosOid = estudiantesPermitidos.filter((id) => mongoose_1.default.isValidObjectId(id)).map(oid);
+        if (esRolPersonal)
+            matchAgg['estudiantes.estudianteId'] = { $in: permitidosOid };
+        const entradas = esRolPersonal
+            ? { $filter: { input: '$estudiantes', as: 'e', cond: { $in: ['$$e.estudianteId', permitidosOid] } } }
+            : '$estudiantes';
+        const contar = (estado) => ({
+            $size: { $filter: { input: '$entradas', as: 'e', cond: { $eq: ['$$e.estado', estado] } } },
+        });
+        const filas = await asistencia_model_1.default.aggregate([
+            { $match: matchAgg },
+            { $sort: { fecha: 1 } },
+            { $project: { fecha: 1, cursoId: 1, asignaturaId: 1, docenteId: 1, createdAt: 1, finalizado: 1, entradas } },
+            {
+                $project: {
+                    fecha: 1,
+                    cursoId: 1,
+                    asignaturaId: 1,
+                    docenteId: 1,
+                    createdAt: 1,
+                    finalizado: 1,
+                    totalEstudiantes: { $size: '$entradas' },
+                    presentes: contar(IAsistencia_1.EstadoAsistencia.PRESENTE),
+                    ausentes: contar(IAsistencia_1.EstadoAsistencia.AUSENTE),
+                    tardes: contar(IAsistencia_1.EstadoAsistencia.TARDANZA),
+                    justificados: contar(IAsistencia_1.EstadoAsistencia.JUSTIFICADO),
+                    permisos: contar(IAsistencia_1.EstadoAsistencia.PERMISO),
+                },
+            },
+        ]);
+        const unicos = (campo) => [...new Set(filas.map((f) => f[campo]).filter(Boolean).map(String))];
+        const [cursosInfo, asignaturasInfo, docentesInfo] = await Promise.all([
+            curso_model_1.default.find({ _id: { $in: unicos('cursoId') } }).select('nombre nivel grado grupo').lean(),
+            mongoose_1.default.model('Asignatura').find({ _id: { $in: unicos('asignaturaId') } }).select('nombre codigo').lean(),
+            usuario_model_1.default.find({ _id: { $in: unicos('docenteId') } }).select('nombre apellidos').lean(),
+        ]);
+        const mapa = (docs) => new Map(docs.map((d) => [String(d._id), d]));
+        const cursosMap = mapa(cursosInfo);
+        const asignaturasMap = mapa(asignaturasInfo);
+        const docentesMap = mapa(docentesInfo);
+        const resumen = filas.map((registro) => {
+            const { totalEstudiantes, presentes, ausentes, tardes, justificados, permisos } = registro;
             const porcentajeAsistencia = Math.round(((presentes + justificados) / totalEstudiantes) * 100);
-            const cursoData = registro.cursoId
-                ? registro.cursoId
-                : { nombre: 'Sin curso', grado: '', grupo: '' };
+            const cursoData = (registro.cursoId && cursosMap.get(String(registro.cursoId))) || {
+                nombre: 'Sin curso',
+                grado: '',
+                grupo: '',
+            };
             const asignaturaData = registro.asignaturaId
-                ? registro.asignaturaId
+                ? asignaturasMap.get(String(registro.asignaturaId)) || null
                 : null;
-            const docenteData = registro.docenteId
-                ? registro.docenteId
-                : { nombre: 'Sin nombre', apellidos: '' };
+            const docenteData = (registro.docenteId && docentesMap.get(String(registro.docenteId))) || {
+                nombre: 'Sin nombre',
+                apellidos: '',
+            };
             return {
                 _id: registro._id,
                 fecha: registro.fecha,
@@ -733,10 +776,12 @@ const obtenerResumen = async (req, res, next) => {
                     grado: cursoData.grado || '',
                     grupo: cursoData.grupo || '',
                 },
-                asignatura: asignaturaData ? {
-                    _id: asignaturaData._id || '',
-                    nombre: asignaturaData.nombre || '',
-                } : null,
+                asignatura: asignaturaData
+                    ? {
+                        _id: asignaturaData._id || '',
+                        nombre: asignaturaData.nombre || '',
+                    }
+                    : null,
                 totalEstudiantes,
                 presentes,
                 ausentes,

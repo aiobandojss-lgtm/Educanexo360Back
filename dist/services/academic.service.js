@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const calificacion_model_1 = __importDefault(require("../models/calificacion.model"));
 const simpleCache_1 = require("../cache/simpleCache");
 const mongoose_1 = __importDefault(require("mongoose"));
+const logger_1 = require("../utils/logger");
 class AcademicService {
     createCacheKey(type, ...params) {
         return `${type}_${params.join('_')}`;
@@ -13,19 +14,19 @@ class AcademicService {
     async getOrSetCache(cacheKey, ttl, fetchFunction) {
         const cached = simpleCache_1.cache.get(cacheKey);
         if (cached) {
-            console.log(`📋 CACHE HIT: ${cacheKey}`);
+            logger_1.logger.debug(`📋 CACHE HIT: ${cacheKey}`);
             return cached;
         }
         const result = await fetchFunction();
         if ((0, simpleCache_1.safeCacheSet)(cacheKey, result, ttl)) {
-            console.log(`💾 CACHE SET: ${cacheKey} (${ttl}s)`);
+            logger_1.logger.debug(`💾 CACHE SET: ${cacheKey} (${ttl}s)`);
         }
         return result;
     }
     async calcularPromedioPeriodo(estudianteId, asignaturaId, periodo, año_academico, escuelaId) {
         const cacheKey = this.createCacheKey('promedio_periodo', escuelaId, estudianteId, asignaturaId, periodo.toString(), año_academico);
         return await this.getOrSetCache(cacheKey, 300, async () => {
-            console.log(`🔍 Calculando promedio periodo: ${estudianteId}, ${asignaturaId}, ${periodo}, ${año_academico}`);
+            logger_1.logger.debug(`🔍 Calculando promedio periodo: ${estudianteId}, ${asignaturaId}, ${periodo}, ${año_academico}`);
             const resultado = await calificacion_model_1.default.aggregate([
                 {
                     $match: {
@@ -330,7 +331,7 @@ class AcademicService {
                 },
             ]);
             if (!resultado.length) {
-                console.log(`❌ No se encontraron calificaciones para: ${estudianteId}, ${asignaturaId}, ${periodo}`);
+                logger_1.logger.debug(`❌ No se encontraron calificaciones para: ${estudianteId}, ${asignaturaId}, ${periodo}`);
                 return null;
             }
             const data = resultado[0];
@@ -342,14 +343,14 @@ class AcademicService {
                 logros_evaluados: data.logros_evaluados || 0,
                 porcentaje_completado: Number(data.porcentaje_completado?.toFixed(2)) || 0,
             };
-            console.log(`✅ Promedio calculado:`, promedio);
+            logger_1.logger.debug(`✅ Promedio calculado:`, promedio);
             return promedio;
         });
     }
     async calcularPromedioAsignatura(estudianteId, asignaturaId, año_academico, escuelaId) {
         const cacheKey = this.createCacheKey('promedio_asignatura', escuelaId, estudianteId, asignaturaId, año_academico);
         return await this.getOrSetCache(cacheKey, 600, async () => {
-            console.log(`🔍 Calculando promedio asignatura completa: ${estudianteId}, ${asignaturaId}, ${año_academico}`);
+            logger_1.logger.debug(`🔍 Calculando promedio asignatura completa: ${estudianteId}, ${asignaturaId}, ${año_academico}`);
             const resultado = await calificacion_model_1.default.aggregate([
                 {
                     $match: {
@@ -444,14 +445,14 @@ class AcademicService {
                 promedio_final: Number(data.promedio_final?.toFixed(2)) || 0,
                 periodos_evaluados: data.periodos_evaluados,
             };
-            console.log(`✅ Promedio asignatura calculado:`, promedioAsignatura);
+            logger_1.logger.debug(`✅ Promedio asignatura calculado:`, promedioAsignatura);
             return promedioAsignatura;
         });
     }
     async obtenerEstadisticasGrupo(cursoId, asignaturaId, periodo, año_academico, escuelaId) {
         const cacheKey = this.createCacheKey('estadisticas_grupo', escuelaId, cursoId, asignaturaId, periodo.toString(), año_academico);
         return await this.getOrSetCache(cacheKey, 180, async () => {
-            console.log(`🔍 Calculando estadísticas grupo: ${cursoId}, ${asignaturaId}, ${periodo}, ${año_academico}`);
+            logger_1.logger.debug(`🔍 Calculando estadísticas grupo: ${cursoId}, ${asignaturaId}, ${periodo}, ${año_academico}`);
             const resultado = await calificacion_model_1.default.aggregate([
                 {
                     $match: {
@@ -632,12 +633,12 @@ class AcademicService {
                 };
             }
             const estadisticas = resultado[0];
-            console.log(`✅ Estadísticas grupo calculadas:`, estadisticas);
+            logger_1.logger.debug(`✅ Estadísticas grupo calculadas:`, estadisticas);
             return estadisticas;
         });
     }
     invalidarCacheEstudiante(estudianteId, asignaturaId, escuelaId) {
-        console.log(`🔄 Invalidando cache académico para estudiante ${estudianteId}`);
+        logger_1.logger.debug(`🔄 Invalidando cache académico para estudiante ${estudianteId}`);
         const tiposRelacionados = [
             'promedio_periodo',
             'promedio_asignatura',
@@ -658,14 +659,14 @@ class AcademicService {
                 keysToDelete.forEach((key) => simpleCache_1.cache.del(key));
             });
         }
-        console.log(`✅ Cache académico invalidado para estudiante ${estudianteId}`);
+        logger_1.logger.debug(`✅ Cache académico invalidado para estudiante ${estudianteId}`);
     }
     invalidarCacheCurso(cursoId, escuelaId) {
-        console.log(`🔄 Invalidando cache académico para curso ${cursoId}`);
+        logger_1.logger.debug(`🔄 Invalidando cache académico para curso ${cursoId}`);
         const allKeys = simpleCache_1.cache.keys();
         const keysToDelete = allKeys.filter((key) => (key.includes('estadisticas_grupo') || key.includes('dashboard')) && key.includes(cursoId));
         keysToDelete.forEach((key) => simpleCache_1.cache.del(key));
-        console.log(`✅ Cache académico invalidado para curso ${cursoId} - ${keysToDelete.length} keys eliminadas`);
+        logger_1.logger.debug(`✅ Cache académico invalidado para curso ${cursoId} - ${keysToDelete.length} keys eliminadas`);
     }
     limpiarCacheAcademico() {
         const tiposAcademicos = ['promedio_periodo', 'promedio_asignatura', 'estadisticas_grupo'];
@@ -674,7 +675,7 @@ class AcademicService {
             const keysToDelete = allKeys.filter((key) => key.includes(tipo));
             keysToDelete.forEach((key) => simpleCache_1.cache.del(key));
         });
-        console.log(`🧹 Cache académico completamente limpiado`);
+        logger_1.logger.debug(`🧹 Cache académico completamente limpiado`);
     }
 }
 exports.default = new AcademicService();

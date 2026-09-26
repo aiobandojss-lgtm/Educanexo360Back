@@ -8,6 +8,7 @@ const usuario_model_1 = __importDefault(require("../models/usuario.model"));
 const curso_model_1 = __importDefault(require("../models/curso.model"));
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
 const escapeRegex_1 = require("../utils/escapeRegex");
+const paginacion_1 = require("../utils/paginacion");
 const notificacion_service_1 = __importDefault(require("../services/notificacion.service"));
 const INotificacion_1 = require("../interfaces/INotificacion");
 const perfilPorRutas = (perfil) => {
@@ -40,7 +41,27 @@ class UsuarioController {
                     { email: new RegExp((0, escapeRegex_1.escapeRegex)(searchTerm), 'i') },
                 ];
             }
-            const usuarios = await usuario_model_1.default.find(query).select('-password');
+            const campos = '_id nombre apellidos email tipo estado escuelaId perfilRolId rolBase perfil info_academica createdAt';
+            if (req.query.pagina !== undefined) {
+                const pagina = (0, paginacion_1.numeroPagina)(req.query.pagina);
+                const limite = (0, paginacion_1.numeroLimite)(req.query.limite, 50);
+                const [usuarios, total] = await Promise.all([
+                    usuario_model_1.default.find(query)
+                        .select(campos)
+                        .sort({ apellidos: 1, nombre: 1 })
+                        .skip((pagina - 1) * limite)
+                        .limit(limite)
+                        .lean(),
+                    usuario_model_1.default.countDocuments(query),
+                ]);
+                res.json({
+                    success: true,
+                    data: usuarios,
+                    meta: { total, pagina, limite, totalPaginas: Math.ceil(total / limite) },
+                });
+                return;
+            }
+            const usuarios = await usuario_model_1.default.find(query).select(campos).lean();
             res.json({
                 success: true,
                 data: usuarios,

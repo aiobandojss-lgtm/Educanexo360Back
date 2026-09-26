@@ -110,7 +110,7 @@ LogroSchema.pre('save', async function (next) {
         next(error);
     }
 });
-LogroSchema.index({ asignaturaId: 1, periodo: 1, año_academico: 1 }, { unique: false });
+LogroSchema.index({ asignaturaId: 1, periodo: 1, año_academico: 1, estado: 1 });
 LogroSchema.index({ cursoId: 1 });
 LogroSchema.index({ escuelaId: 1 });
 exports.default = mongoose_1.default.model('Logro', LogroSchema);

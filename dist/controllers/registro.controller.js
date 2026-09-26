@@ -7,6 +7,7 @@ exports.obtenerHistorialSolicitudes = exports.obtenerSolicitudPorId = exports.ob
 const registro_service_1 = __importDefault(require("../services/registro.service"));
 const catchAsync_1 = require("../utils/catchAsync");
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
+const paginacion_1 = require("../utils/paginacion");
 const obtenerEscuelaId = (req) => {
     const escuelaId = req.user?.escuelaId;
     if (!escuelaId) {
@@ -60,8 +61,8 @@ exports.rechazarSolicitud = (0, catchAsync_1.catchAsync)(async (req, res, next) 
 });
 exports.obtenerSolicitudesPendientes = (0, catchAsync_1.catchAsync)(async (req, res, next) => {
     const escuelaId = obtenerEscuelaId(req);
-    const pagina = parseInt(req.query.pagina) || 1;
-    const limite = parseInt(req.query.limite) || 10;
+    const pagina = (0, paginacion_1.numeroPagina)(req.query.pagina);
+    const limite = (0, paginacion_1.numeroLimite)(req.query.limite, 10);
     const resultado = await registro_service_1.default.obtenerSolicitudesPendientes(escuelaId, pagina, limite);
     res.status(200).json({
         success: true,
@@ -82,8 +83,8 @@ exports.obtenerSolicitudPorId = (0, catchAsync_1.catchAsync)(async (req, res, ne
 exports.obtenerHistorialSolicitudes = (0, catchAsync_1.catchAsync)(async (req, res, next) => {
     const escuelaId = obtenerEscuelaId(req);
     const { estado } = req.query;
-    const pagina = parseInt(req.query.pagina) || 1;
-    const limite = parseInt(req.query.limite) || 10;
+    const pagina = (0, paginacion_1.numeroPagina)(req.query.pagina);
+    const limite = (0, paginacion_1.numeroLimite)(req.query.limite, 10);
     const resultado = await registro_service_1.default.obtenerHistorialSolicitudes(escuelaId, estado, pagina, limite);
     res.status(200).json({
         success: true,

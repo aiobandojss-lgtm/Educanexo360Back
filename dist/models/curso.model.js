@@ -92,6 +92,7 @@ const CursoSchema = new mongoose_1.Schema({
 });
 CursoSchema.index({ escuelaId: 1, año_academico: 1 });
 CursoSchema.index({ director_grupo: 1 });
+CursoSchema.index({ escuelaId: 1, estudiantes: 1 });
 CursoSchema.index({ nombre: 1, escuelaId: 1, grado: 1, grupo: 1, jornada: 1 }, { unique: true });
 const Curso = mongoose_1.default.model('Curso', CursoSchema);
 exports.default = Curso;

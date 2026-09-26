@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.configureSecurityMiddleware = void 0;
 const helmet_1 = __importDefault(require("helmet"));
 const cors_1 = __importDefault(require("cors"));
+const logger_1 = require("../utils/logger");
 const configureSecurityMiddleware = (app) => {
     app.use((0, helmet_1.default)());
     const corsOptions = {
@@ -23,7 +24,7 @@ const configureSecurityMiddleware = (app) => {
                 callback(null, true);
             }
             else {
-                console.log(`Origen bloqueado por CORS: ${origin}`);
+                logger_1.logger.debug(`Origen bloqueado por CORS: ${origin}`);
                 callback(new Error('No permitido por CORS'));
             }
         },

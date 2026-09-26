@@ -8,6 +8,7 @@ const nodemailer_1 = __importDefault(require("nodemailer"));
 const path_1 = __importDefault(require("path"));
 const config_1 = __importDefault(require("../config/config"));
 const fs_1 = __importDefault(require("fs"));
+const logger_1 = require("../utils/logger");
 const DISABLE_EMAIL_SENDING = false;
 const DOMINIO_EMAIL_FICTICIO = '@estudiante.educanexo.com';
 function esEmailFicticio(email) {
@@ -18,12 +19,12 @@ class EmailService {
         this.dailyEmailCount = 0;
         this.lastCountReset = new Date();
         this.DAILY_LIMIT = 250;
-        console.log('🔧 Inicializando servicio de correo con configuración:');
-        console.log(`🔧 Host: ${config_1.default.email.host}`);
-        console.log(`🔧 Puerto: ${config_1.default.email.port}`);
-        console.log(`🔧 Usuario: ${config_1.default.email.user}`);
-        console.log(`🔧 Seguro: ${config_1.default.email.secure}`);
-        console.log(`🔧 Remitente: ${config_1.default.email.senderName} <${config_1.default.email.senderEmail}>`);
+        logger_1.logger.debug('🔧 Inicializando servicio de correo con configuración:');
+        logger_1.logger.debug(`🔧 Host: ${config_1.default.email.host}`);
+        logger_1.logger.debug(`🔧 Puerto: ${config_1.default.email.port}`);
+        logger_1.logger.debug(`🔧 Usuario: ${config_1.default.email.user}`);
+        logger_1.logger.debug(`🔧 Seguro: ${config_1.default.email.secure}`);
+        logger_1.logger.debug(`🔧 Remitente: ${config_1.default.email.senderName} <${config_1.default.email.senderEmail}>`);
         this.transporter = nodemailer_1.default.createTransport({
             host: config_1.default.email.host,
             port: config_1.default.email.port,
@@ -41,7 +42,7 @@ class EmailService {
     async verificarConexion() {
         try {
             const verificacion = await this.transporter.verify();
-            console.log('✅ Conexión al servidor SMTP verificada:', verificacion);
+            logger_1.logger.debug('✅ Conexión al servidor SMTP verificada:', verificacion);
         }
         catch (error) {
             console.error('❌ Error al verificar conexión SMTP:', error);
@@ -57,8 +58,8 @@ class EmailService {
     }
     async sendEmail(options) {
         try {
-            console.log('📧 DEPURACIÓN: Intentando enviar email a:', options.to);
-            console.log('📧 DEPURACIÓN: Asunto:', options.subject);
+            logger_1.logger.debug('📧 DEPURACIÓN: Intentando enviar email a:', options.to);
+            logger_1.logger.debug('📧 DEPURACIÓN: Asunto:', options.subject);
             if (new Date().getDate() !== this.lastCountReset.getDate()) {
                 this.dailyEmailCount = 0;
                 this.lastCountReset = new Date();
@@ -68,19 +69,19 @@ class EmailService {
                 return false;
             }
             if (DISABLE_EMAIL_SENDING) {
-                console.log('📧 [EMAIL DESHABILITADO] No se envió el correo pero se simula respuesta exitosa');
-                console.log('📧 Destinatario:', options.to);
-                console.log('📧 Asunto:', options.subject);
+                logger_1.logger.debug('📧 [EMAIL DESHABILITADO] No se envió el correo pero se simula respuesta exitosa');
+                logger_1.logger.debug('📧 Destinatario:', options.to);
+                logger_1.logger.debug('📧 Asunto:', options.subject);
                 return true;
             }
             let html = options.html;
             if (options.template) {
                 try {
                     const templatePath = path_1.default.join(__dirname, '../templates/emails', `${options.template}.html`);
-                    console.log('📧 DEPURACIÓN: Buscando plantilla en:', templatePath);
+                    logger_1.logger.debug('📧 DEPURACIÓN: Buscando plantilla en:', templatePath);
                     if (fs_1.default.existsSync(templatePath)) {
                         html = fs_1.default.readFileSync(templatePath, 'utf8');
-                        console.log('📧 DEPURACIÓN: Plantilla cargada correctamente');
+                        logger_1.logger.debug('📧 DEPURACIÓN: Plantilla cargada correctamente');
                         if (options.context) {
                             Object.keys(options.context).forEach((key) => {
                                 const regex = new RegExp(`{{\\s*${key}\\s*}}`, 'g');
@@ -104,7 +105,7 @@ class EmailService {
                 html: html || '',
                 attachments: options.attachments,
             };
-            console.log('📧 DEPURACIÓN: Opciones finales del correo:', {
+            logger_1.logger.debug('📧 DEPURACIÓN: Opciones finales del correo:', {
                 from: mailOptions.from,
                 to: mailOptions.to,
                 subject: mailOptions.subject,
@@ -112,10 +113,10 @@ class EmailService {
                 htmlLength: mailOptions.html ? mailOptions.html.length : 0,
                 attachmentsCount: mailOptions.attachments ? mailOptions.attachments.length : 0,
             });
-            console.log('📧 DEPURACIÓN: Enviando correo...');
+            logger_1.logger.debug('📧 DEPURACIÓN: Enviando correo...');
             const info = await this.transporter.sendMail(mailOptions);
-            console.log('✅ Email enviado exitosamente. ID:', info.messageId);
-            console.log('✅ Información adicional:', info);
+            logger_1.logger.debug('✅ Email enviado exitosamente. ID:', info.messageId);
+            logger_1.logger.debug('✅ Información adicional:', info);
             this.dailyEmailCount++;
             return true;
         }
@@ -147,7 +148,7 @@ class EmailService {
         }
     }
     async sendMensajeNotification(to, mensajeInfo) {
-        console.log(`📧 Preparando notificación de mensaje para: ${to}`);
+        logger_1.logger.debug(`📧 Preparando notificación de mensaje para: ${to}`);
         const text = `Nuevo mensaje de ${mensajeInfo.remitente}: ${mensajeInfo.asunto}.\n\n` +
             `Recibido: ${mensajeInfo.fecha.toLocaleString()}.\n` +
             `${mensajeInfo.tieneAdjuntos ? 'El mensaje contiene archivos adjuntos.' : ''}\n\n` +
@@ -183,7 +184,7 @@ class EmailService {
         });
     }
     async sendPasswordResetEmail(to, resetInfo) {
-        console.log(`📧 Preparando correo de recuperación de contraseña para: ${to}`);
+        logger_1.logger.debug(`📧 Preparando correo de recuperación de contraseña para: ${to}`);
         const text = `Hola ${resetInfo.nombre},\n\n` +
             `Has solicitado restablecer tu contraseña en EducaNexo360.\n\n` +
             `Por favor, haz clic en el siguiente enlace para establecer una nueva contraseña:\n` +

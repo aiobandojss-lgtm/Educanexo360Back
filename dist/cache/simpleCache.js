@@ -8,10 +8,12 @@ exports.safeCacheSet = safeCacheSet;
 exports.cacheMiddleware = cacheMiddleware;
 exports.invalidateRelatedCache = invalidateRelatedCache;
 exports.invalidateCache = invalidateCache;
+exports.invalidarCacheUsuarios = invalidarCacheUsuarios;
 exports.invalidateDashboardCache = invalidateDashboardCache;
 exports.getCacheStats = getCacheStats;
 exports.clearExpiredCache = clearExpiredCache;
 const node_cache_1 = __importDefault(require("node-cache"));
+const logger_1 = require("../utils/logger");
 const cache = new node_cache_1.default({
     stdTTL: 300,
     checkperiod: 60,
@@ -63,14 +65,14 @@ function cacheMiddleware(cacheType) {
         const cacheKey = `${cacheType}_${userKey}_${queryKey}`;
         const cached = cache.get(cacheKey);
         if (cached) {
-            console.log(`📋 CACHE HIT: ${cacheType} (${config.desc})`);
+            logger_1.logger.debug(`📋 CACHE HIT: ${cacheType} (${config.desc})`);
             return res.json(cached);
         }
         const originalJson = res.json;
         res.json = function (data) {
             if (res.statusCode === 200 && data) {
                 if (safeCacheSet(cacheKey, data, config.ttl)) {
-                    console.log(`💾 CACHE SET: ${cacheType} (${config.ttl}s) - Key: ${cacheKey}`);
+                    logger_1.logger.debug(`💾 CACHE SET: ${cacheType} (${config.ttl}s) - Key: ${cacheKey}`);
                 }
             }
             originalJson.call(this, data);
@@ -90,9 +92,27 @@ function invalidateCache(cacheType, userId, escuelaId) {
     const keys = cache.keys().filter((key) => key.startsWith(pattern));
     keys.forEach((key) => {
         cache.del(key);
-        console.log(`🗑️ CACHE INVALIDATED: ${key}`);
+        logger_1.logger.debug(`🗑️ CACHE INVALIDATED: ${key}`);
     });
-    console.log(`🔄 Cache invalidado para ${cacheType} - Usuario: ${userId}`);
+    logger_1.logger.debug(`🔄 Cache invalidado para ${cacheType} - Usuario: ${userId}`);
+}
+function invalidarCacheUsuarios(tipos, usuarioIds, escuelaId) {
+    if (usuarioIds.length === 0 || tipos.length === 0)
+        return 0;
+    const sufijos = new Set(usuarioIds.map((id) => `${id}_${escuelaId}`));
+    const ordenados = [...tipos].sort((a, b) => b.length - a.length);
+    let borradas = 0;
+    for (const llave of cache.keys()) {
+        const tipo = ordenados.find((t) => llave.startsWith(`${t}_`));
+        if (!tipo)
+            continue;
+        const resto = llave.slice(tipo.length + 1).split('_');
+        if (sufijos.has(`${resto[0]}_${resto[1]}`)) {
+            cache.del(llave);
+            borradas++;
+        }
+    }
+    return borradas;
 }
 function invalidateDashboardCache(userId, escuelaId) {
     const dashboardTypes = [
@@ -105,7 +125,7 @@ function invalidateDashboardCache(userId, escuelaId) {
     dashboardTypes.forEach((type) => {
         invalidateCache(type, userId, escuelaId);
     });
-    console.log(`🔄 Dashboard cache completamente invalidado para usuario ${userId}`);
+    logger_1.logger.debug(`🔄 Dashboard cache completamente invalidado para usuario ${userId}`);
 }
 function getCacheStats() {
     const stats = cache.getStats();
@@ -128,6 +148,6 @@ function clearExpiredCache() {
     const beforeCount = cache.keys().length;
     cache.flushAll();
     const afterCount = cache.keys().length;
-    console.log(`🧹 Cache limpio: ${beforeCount - afterCount} keys eliminadas`);
+    logger_1.logger.debug(`🧹 Cache limpio: ${beforeCount - afterCount} keys eliminadas`);
 }
 //# sourceMappingURL=simpleCache.js.map

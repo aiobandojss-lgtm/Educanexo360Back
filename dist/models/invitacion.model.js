@@ -54,7 +54,6 @@ const InvitacionSchema = new mongoose_1.Schema({
         required: true,
         unique: true,
         trim: true,
-        index: true,
     },
     tipo: {
         type: String,

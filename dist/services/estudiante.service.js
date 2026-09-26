@@ -9,6 +9,7 @@ const usuario_model_1 = __importDefault(require("../models/usuario.model"));
 const curso_model_1 = __importDefault(require("../models/curso.model"));
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
 const escapeRegex_1 = require("../utils/escapeRegex");
+const logger_1 = require("../utils/logger");
 class EstudianteService {
     async buscarEstudiantesExistentes(options) {
         const { escuelaId } = options;
@@ -211,7 +212,7 @@ class EstudianteService {
             await curso_model_1.default.findByIdAndUpdate(cursoId, {
                 $addToSet: { estudiantes: new mongoose_1.Types.ObjectId(estudianteId) },
             }, { session });
-            console.log(`Estudiante ${estudianteId} asociado exitosamente al acudiente ${acudienteId}`);
+            logger_1.logger.debug(`Estudiante ${estudianteId} asociado exitosamente al acudiente ${acudienteId}`);
         }
         catch (error) {
             console.error('Error al asociar estudiante y acudiente:', error);

@@ -118,7 +118,6 @@ const TareaSchema = new mongoose_1.Schema({
         type: mongoose_1.Schema.Types.ObjectId,
         ref: 'Usuario',
         required: true,
-        index: true,
     },
     asignaturaId: {
         type: mongoose_1.Schema.Types.ObjectId,
@@ -130,7 +129,6 @@ const TareaSchema = new mongoose_1.Schema({
         type: mongoose_1.Schema.Types.ObjectId,
         ref: 'Curso',
         required: true,
-        index: true,
     },
     estudiantesIds: [
         {
@@ -184,7 +182,6 @@ const TareaSchema = new mongoose_1.Schema({
         type: mongoose_1.Schema.Types.ObjectId,
         ref: 'Escuela',
         required: true,
-        index: true,
     },
 }, {
     timestamps: true,
@@ -192,6 +189,7 @@ const TareaSchema = new mongoose_1.Schema({
 TareaSchema.index({ escuelaId: 1, estado: 1, fechaLimite: -1 });
 TareaSchema.index({ docenteId: 1, estado: 1 });
 TareaSchema.index({ cursoId: 1, fechaLimite: -1 });
+TareaSchema.index({ cursoId: 1, estado: 1, fechaLimite: -1 });
 TareaSchema.index({ 'entregas.estudianteId': 1 });
 TareaSchema.methods.actualizarEstadosEntregas = function () {
     const ahora = new Date();

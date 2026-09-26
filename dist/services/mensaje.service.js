@@ -36,6 +36,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.construirCopiaAcudiente = void 0;
 const mongoose_1 = __importDefault(require("mongoose"));
 const usuario_model_1 = __importDefault(require("../models/usuario.model"));
 const mensaje_model_1 = __importDefault(require("../models/mensaje.model"));
@@ -49,6 +50,28 @@ const notificacion_service_1 = __importDefault(require("./notificacion.service")
 const simpleCache_1 = require("../cache/simpleCache");
 const config_1 = __importDefault(require("../config/config"));
 const accesoAcademico_1 = require("../utils/accesoAcademico");
+const logger_1 = require("../utils/logger");
+const TIPO_LEGIBLE = {
+    DOCENTE: 'docente',
+    RECTOR: 'rector(a)',
+    COORDINADOR: 'coordinador(a)',
+    ADMINISTRATIVO: 'administrativo(a)',
+    ADMIN: 'administrador(a)',
+    SUPER_ADMIN: 'administrador(a) del sistema',
+    ESTUDIANTE: 'estudiante',
+    ACUDIENTE: 'acudiente',
+};
+const construirCopiaAcudiente = (datos, remitente, estudiante) => {
+    const tipo = TIPO_LEGIBLE[remitente.tipo || ''] || 'personal del colegio';
+    const nombreRemitente = `${remitente.nombre ?? ''} ${remitente.apellidos ?? ''}`.trim();
+    const nombreEstudiante = `${estudiante.nombre ?? ''} ${estudiante.apellidos ?? ''}`.trim();
+    return {
+        asunto: `${datos.asunto} · ${(estudiante.nombre ?? '').trim()}`,
+        contenido: `El/La ${tipo} ${nombreRemitente} le escribió a ${nombreEstudiante}. ` +
+            `Usted recibe este mensaje porque es su acudiente.\n\n${datos.contenido}`,
+    };
+};
+exports.construirCopiaAcudiente = construirCopiaAcudiente;
 class MensajeService {
     createCacheKey(type, ...params) {
         return `${type}_${params.join('_')}`;
@@ -56,12 +79,12 @@ class MensajeService {
     async getOrSetCache(cacheKey, ttl, fetchFunction) {
         const cached = simpleCache_1.cache.get(cacheKey);
         if (cached) {
-            console.log(`📋 CACHE HIT: ${cacheKey}`);
+            logger_1.logger.debug(`📋 CACHE HIT: ${cacheKey}`);
             return cached;
         }
         const result = await fetchFunction();
         if ((0, simpleCache_1.safeCacheSet)(cacheKey, result, ttl)) {
-            console.log(`💾 CACHE SET: ${cacheKey} (${ttl}s)`);
+            logger_1.logger.debug(`💾 CACHE SET: ${cacheKey} (${ttl}s)`);
         }
         return result;
     }
@@ -83,7 +106,7 @@ class MensajeService {
     }
     async getPosiblesDestinatarios(userId, escuelaId, query = '') {
         try {
-            console.log(`🔍 getPosiblesDestinatarios: userId=${userId}, query='${query}'`);
+            logger_1.logger.debug(`🔍 getPosiblesDestinatarios: userId=${userId}, query='${query}'`);
             if (!mongoose_1.default.isValidObjectId(userId) || !mongoose_1.default.isValidObjectId(escuelaId)) {
                 throw new ApiError_1.default(400, 'IDs inválidos');
             }
@@ -152,7 +175,7 @@ class MensajeService {
                         $limit: 50,
                     },
                 ]);
-                console.log(`✅ Destinatarios encontrados: ${resultado.length}`);
+                logger_1.logger.debug(`✅ Destinatarios encontrados: ${resultado.length}`);
                 return resultado;
             });
         }
@@ -237,7 +260,7 @@ class MensajeService {
                         throw new ApiError_1.default(403, 'No tiene permisos para enviar mensajes masivos');
                     }
                 }
-                console.log(`✅ Cursos encontrados: ${resultado.length}`);
+                logger_1.logger.debug(`✅ Cursos encontrados: ${resultado.length}`);
                 return resultado;
             });
         }
@@ -321,10 +344,11 @@ class MensajeService {
             }
             await nuevoMensaje.populate([
                 { path: 'remitente', select: 'nombre apellidos email tipo' },
-                { path: 'destinatarios', select: 'nombre apellidos email tipo' },
-                { path: 'destinatariosCc', select: 'nombre apellidos email tipo' },
+                { path: 'destinatarios', select: 'nombre apellidos tipo' },
+                { path: 'destinatariosCc', select: 'nombre apellidos tipo' },
             ]);
             this.invalidarCacheMensajes(user._id, user.escuelaId);
+            (0, simpleCache_1.invalidarCacheUsuarios)(['dashboard', 'dashboard_rol', 'dashboard_completo'], [...destinatariosFinales, ...destinatariosCcFinales].map(String), String(user.escuelaId));
             return nuevoMensaje;
         }
         catch (error) {
@@ -366,7 +390,7 @@ class MensajeService {
             ...estudiantesIds.map(String),
             ...acudientes.map((a) => String(a._id)),
         ];
-        console.log(`✅ Destinatarios de cursos obtenidos: ${destinatarios.length}`);
+        logger_1.logger.debug(`✅ Destinatarios de cursos obtenidos: ${destinatarios.length}`);
         return destinatarios;
     }
     async enviarNotificacionesEnBatch(mensajeId, destinatariosIds, asunto, remitente, tieneAdjuntos) {
@@ -420,7 +444,7 @@ class MensajeService {
                     await new Promise((resolve) => setTimeout(resolve, 100));
                 }
             }
-            console.log(`✅ Notificaciones enviadas a ${usuarios.length} destinatarios`);
+            logger_1.logger.debug(`✅ Notificaciones enviadas a ${usuarios.length} destinatarios`);
         }
         catch (error) {
             console.error('Error enviando notificaciones en batch:', error);
@@ -429,50 +453,54 @@ class MensajeService {
     async enviarCopiaAcudientes(estudianteId, datos, usuarioOrigen) {
         try {
             if (!mongoose_1.default.isValidObjectId(estudianteId)) {
-                console.log(`[WARNING] ID de estudiante inválido: ${estudianteId}`);
+                logger_1.logger.debug(`[WARNING] ID de estudiante inválido: ${estudianteId}`);
                 return null;
             }
             const escuelaId = String(usuarioOrigen?.escuelaId || '');
             if (!mongoose_1.default.isValidObjectId(escuelaId)) {
                 return null;
             }
+            const estudiante = await usuario_model_1.default.findOne({
+                _id: estudianteId,
+                escuelaId,
+                tipo: 'ESTUDIANTE',
+                estado: 'ACTIVO',
+            })
+                .select('nombre apellidos')
+                .lean();
+            if (!estudiante) {
+                return null;
+            }
             const cacheKey = this.createCacheKey('acudientes', escuelaId, estudianteId);
             const cached = simpleCache_1.cache.get(cacheKey);
             let acudientes;
             if (cached && cached.length > 0) {
-                console.log(`📋 CACHE HIT: ${cacheKey}`);
+                logger_1.logger.debug(`📋 CACHE HIT: ${cacheKey}`);
                 acudientes = cached;
             }
             else {
-                const estudiante = await usuario_model_1.default.exists({
-                    _id: estudianteId,
+                acudientes = await usuario_model_1.default.find({
                     escuelaId,
-                    tipo: 'ESTUDIANTE',
-                    estado: 'ACTIVO',
-                });
-                acudientes = estudiante
-                    ? await usuario_model_1.default.find({
-                        escuelaId,
-                        tipo: 'ACUDIENTE',
-                        'info_academica.estudiantes_asociados': new mongoose_1.default.Types.ObjectId(estudianteId),
-                    })
-                        .select('_id')
-                        .lean()
-                    : [];
+                    tipo: 'ACUDIENTE',
+                    'info_academica.estudiantes_asociados': new mongoose_1.default.Types.ObjectId(estudianteId),
+                })
+                    .select('_id')
+                    .lean();
                 if (acudientes.length > 0) {
                     if ((0, simpleCache_1.safeCacheSet)(cacheKey, acudientes, 300)) {
-                        console.log(`💾 CACHE SET: ${cacheKey} (300s)`);
+                        logger_1.logger.debug(`💾 CACHE SET: ${cacheKey} (300s)`);
                     }
                 }
             }
             if (acudientes.length === 0) {
-                console.log(`[INFO] enviarCopiaAcudientes: no se encontraron acudientes para estudiante ${estudianteId}`);
+                logger_1.logger.debug(`[INFO] enviarCopiaAcudientes: no se encontraron acudientes para estudiante ${estudianteId}`);
                 return null;
             }
+            const copia = (0, exports.construirCopiaAcudiente)({ asunto: datos.asunto, contenido: datos.contenido }, usuarioOrigen || {}, estudiante);
             const mensajeAcudientes = {
                 destinatarios: acudientes.map((a) => a._id.toString()),
-                asunto: `[COPIA] ${datos.asunto}`,
-                contenido: `Este mensaje ha sido enviado automáticamente como copia del mensaje enviado a su acudido.\n\n${datos.contenido}`,
+                asunto: copia.asunto,
+                contenido: copia.contenido,
                 adjuntos: datos.adjuntos || [],
                 tipo: datos.tipo || IMensaje_1.TipoMensaje.INDIVIDUAL,
                 prioridad: datos.prioridad || IMensaje_1.PrioridadMensaje.NORMAL,
@@ -488,7 +516,7 @@ class MensajeService {
         }
     }
     invalidarCacheMensajes(usuarioId, escuelaId) {
-        console.log(`🔄 Invalidando cache de mensajes para usuario ${usuarioId}`);
+        logger_1.logger.debug(`🔄 Invalidando cache de mensajes para usuario ${usuarioId}`);
         (0, simpleCache_1.invalidateRelatedCache)('mensajes', usuarioId, escuelaId, [
             'destinatarios',
             'cursos_destinatarios',

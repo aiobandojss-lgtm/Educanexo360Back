@@ -4,6 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const usuario_model_1 = __importDefault(require("../models/usuario.model"));
+const logger_1 = require("../utils/logger");
 class PushNotificationService {
     constructor() {
         this.firebaseInitialized = false;
@@ -14,7 +15,7 @@ class PushNotificationService {
         if (!process.env.FIREBASE_PROJECT_ID ||
             !process.env.FIREBASE_PRIVATE_KEY ||
             !process.env.FIREBASE_CLIENT_EMAIL) {
-            console.log('Firebase no configurado — notificaciones push desactivadas');
+            logger_1.logger.info('Firebase no configurado — notificaciones push desactivadas');
             return;
         }
         try {
@@ -39,7 +40,7 @@ class PushNotificationService {
             }
             this.messaging = require('firebase-admin').messaging();
             this.firebaseInitialized = true;
-            console.log('Firebase Admin SDK inicializado correctamente');
+            logger_1.logger.info('Firebase Admin SDK inicializado correctamente');
         }
         catch (error) {
             console.error('Error inicializando Firebase Admin SDK — notificaciones push desactivadas:', error);

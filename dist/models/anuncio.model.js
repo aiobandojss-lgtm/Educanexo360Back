@@ -123,9 +123,7 @@ const AnuncioSchema = new mongoose_1.Schema({
 }, {
     timestamps: true,
 });
-AnuncioSchema.index({ escuelaId: 1, estaPublicado: 1 });
+AnuncioSchema.index({ escuelaId: 1, estaPublicado: 1, fechaPublicacion: -1 });
 AnuncioSchema.index({ creador: 1 });
-AnuncioSchema.index({ destacado: 1 });
-AnuncioSchema.index({ fechaPublicacion: -1 });
 exports.default = mongoose_1.default.model('Anuncio', AnuncioSchema);
 //# sourceMappingURL=anuncio.model.js.map

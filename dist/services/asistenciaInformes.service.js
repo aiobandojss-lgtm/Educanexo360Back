@@ -52,6 +52,7 @@ const informeEstudiantesEnRiesgo = async (escuelaId, umbral = 80, cursoId, desde
     }
     const pipeline = [
         { $match: queryBase },
+        { $project: { cursoId: 1, 'estudiantes.estudianteId': 1, 'estudiantes.estado': 1 } },
         { $unwind: '$estudiantes' },
         {
             $group: {
@@ -277,6 +278,16 @@ const informeHistorialEstudiante = async (estudianteId, escuelaId, desde, hasta)
     const contadores = { presentes: 0, ausentes: 0, tardanzas: 0, justificados: 0, permisos: 0 };
     const dias = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
     const historial = [];
+    const idsRegistradores = new Set();
+    for (const registro of registros) {
+        const e = registro.estudiantes.find((x) => x.estudianteId.toString() === estudianteId);
+        if (e?.registradoPor)
+            idsRegistradores.add(e.registradoPor.toString());
+    }
+    const registradores = await usuario_model_1.default.find({ _id: { $in: [...idsRegistradores] } })
+        .select('nombre apellidos')
+        .lean();
+    const registradoresMap = new Map(registradores.map((d) => [d._id.toString(), d]));
     for (const registro of registros) {
         const entrada = registro.estudiantes.find((e) => e.estudianteId.toString() === estudianteId);
         if (!entrada)
@@ -302,7 +313,7 @@ const informeHistorialEstudiante = async (estudianteId, escuelaId, desde, hasta)
         const asignaturaData = registro.asignaturaId;
         let registradoPor = null;
         if (entrada.registradoPor) {
-            const docente = await usuario_model_1.default.findById(entrada.registradoPor).select('nombre apellidos').lean();
+            const docente = registradoresMap.get(entrada.registradoPor.toString());
             if (docente) {
                 registradoPor = { _id: docente._id.toString(), nombre: docente.nombre, apellidos: docente.apellidos };
             }

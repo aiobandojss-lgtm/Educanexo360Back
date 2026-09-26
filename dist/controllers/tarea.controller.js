@@ -46,6 +46,16 @@ const fs = __importStar(require("fs"));
 const escapeRegex_1 = require("../utils/escapeRegex");
 const accesoAcademico_1 = require("../utils/accesoAcademico");
 const idDe = (valor) => String(valor?._id ?? valor);
+const sincronizarEstadosEntregas = async (tarea) => {
+    const antes = new Map(tarea.entregas.map((e) => [String(e._id), e.estado]));
+    tarea.actualizarEstadosEntregas();
+    const cambiadas = tarea.entregas
+        .filter((e) => antes.get(String(e._id)) !== e.estado)
+        .map((e) => e._id);
+    if (cambiadas.length > 0) {
+        await tarea_model_1.default.updateOne({ _id: tarea._id }, { $set: { 'entregas.$[e].estado': 'ATRASADA' } }, { arrayFilters: [{ 'e._id': { $in: cambiadas } }] });
+    }
+};
 const resolverAccesoTarea = async (user, tarea) => {
     const entregas = tarea.entregas || [];
     if ((0, accesoAcademico_1.esRolAdministrativo)(user.tipo))
@@ -77,6 +87,7 @@ const resolverAccesoTarea = async (user, tarea) => {
     return enCurso ? { entregas: [], completo: false } : null;
 };
 const pushNotification_service_1 = __importDefault(require("../services/pushNotification.service"));
+const paginacion_1 = require("../utils/paginacion");
 class TareaController {
     async crear(req, res, next) {
         try {
@@ -162,8 +173,8 @@ class TareaController {
             if (!req.user) {
                 throw new ApiError_1.default(401, 'No autorizado');
             }
-            const pagina = parseInt(req.query.pagina) || 1;
-            const limite = parseInt(req.query.limite) || 10;
+            const pagina = (0, paginacion_1.numeroPagina)(req.query.pagina);
+            const limite = (0, paginacion_1.numeroLimite)(req.query.limite, 10);
             const skip = (pagina - 1) * limite;
             const filters = { escuelaId: req.user.escuelaId };
             let estudiantesVisibles = null;
@@ -253,8 +264,7 @@ class TareaController {
             if (!acceso) {
                 throw new ApiError_1.default(404, 'Tarea no encontrada');
             }
-            tarea.actualizarEstadosEntregas();
-            await tarea.save();
+            await sincronizarEstadosEntregas(tarea);
             if (!acceso.completo) {
                 const tareaObj = tarea.toObject();
                 const visibles = new Set(acceso.entregas.map((e) => idDe(e.estudianteId)));
@@ -537,8 +547,7 @@ class TareaController {
                 !['ADMIN', 'COORDINADOR', 'RECTOR'].includes(req.user.tipo)) {
                 throw new ApiError_1.default(403, 'No tienes permiso para ver las entregas');
             }
-            tarea.actualizarEstadosEntregas();
-            await tarea.save();
+            await sincronizarEstadosEntregas(tarea);
             const estadisticas = tarea.obtenerEstadisticas();
             res.json({
                 success: true,
@@ -785,20 +794,35 @@ class TareaController {
                     }
                 };
             }
-            const tareas = await tarea_model_1.default.find(query)
-                .sort({ fechaLimite: 1 })
-                .populate('docenteId', 'nombre apellidos')
-                .populate('asignaturaId', 'nombre')
-                .populate('cursoId', 'nombre')
-                .lean();
-            const tareasConMiEntrega = tareas.map((tarea) => {
-                const miEntrega = tarea.entregas.find((e) => e.estudianteId.toString() === req.user?._id);
-                return {
-                    ...tarea,
-                    miEntrega,
-                    entregas: undefined,
-                };
-            });
+            const uid = new mongoose_1.default.Types.ObjectId(req.user._id);
+            const matchAgg = {
+                ...query,
+                escuelaId: new mongoose_1.default.Types.ObjectId(req.user.escuelaId),
+                'entregas.estudianteId': uid,
+            };
+            if (matchAgg.entregas?.$elemMatch) {
+                matchAgg.entregas = { $elemMatch: { ...matchAgg.entregas.$elemMatch, estudianteId: uid } };
+            }
+            const tareasAgg = await tarea_model_1.default.aggregate([
+                { $match: matchAgg },
+                { $sort: { fechaLimite: 1 } },
+                {
+                    $addFields: {
+                        miEntrega: {
+                            $arrayElemAt: [
+                                { $filter: { input: '$entregas', as: 'e', cond: { $eq: ['$$e.estudianteId', uid] } } },
+                                0,
+                            ],
+                        },
+                    },
+                },
+                { $project: { entregas: 0 } },
+            ]);
+            const tareasConMiEntrega = await tarea_model_1.default.populate(tareasAgg, [
+                { path: 'docenteId', select: 'nombre apellidos' },
+                { path: 'asignaturaId', select: 'nombre' },
+                { path: 'cursoId', select: 'nombre' },
+            ]);
             res.json({
                 success: true,
                 data: tareasConMiEntrega,
@@ -869,7 +893,9 @@ class TareaController {
             if (asignaturaIdFiltro) {
                 filters.asignaturaId = asignaturaIdFiltro;
             }
-            const tareas = await tarea_model_1.default.find(filters);
+            const tareas = await tarea_model_1.default.find(filters)
+                .select('entregas.fechaEntrega entregas.estado entregas.calificacion')
+                .lean();
             let totalTareas = 0;
             let totalEntregas = 0;
             let entregasATiempo = 0;

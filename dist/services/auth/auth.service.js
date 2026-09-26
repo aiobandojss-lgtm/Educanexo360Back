@@ -10,6 +10,7 @@ const axios_1 = __importDefault(require("axios"));
 const config_1 = __importDefault(require("../../config/config"));
 const crypto_1 = __importDefault(require("crypto"));
 const jwt_config_1 = require("../../config/jwt.config");
+const logger_1 = require("../../utils/logger");
 const apiClient = axios_1.default.create({
     baseURL: config_1.default.frontendUrl || 'http://localhost:3000',
     headers: {
@@ -44,31 +45,31 @@ class AuthService {
     }
     async login(email, password) {
         const emailLowerCase = email.toLowerCase();
-        console.log(`Intentando login con email: ${emailLowerCase}`);
+        logger_1.logger.debug(`Intentando login con email: ${emailLowerCase}`);
         const user = await usuario_model_1.default.findOne({ email: emailLowerCase });
         if (!user) {
-            console.log(`Usuario no encontrado para email: ${emailLowerCase}`);
+            logger_1.logger.debug(`Usuario no encontrado para email: ${emailLowerCase}`);
             throw new ApiError_1.default(401, 'Credenciales inválidas');
         }
-        console.log(`Usuario encontrado: ${user._id} (${user.tipo}), estado: ${user.estado}`);
+        logger_1.logger.debug(`Usuario encontrado: ${user._id} (${user.tipo}), estado: ${user.estado}`);
         if (user.estado !== 'ACTIVO') {
-            console.log(`Usuario con estado inactivo: ${user.estado}`);
+            logger_1.logger.debug(`Usuario con estado inactivo: ${user.estado}`);
             throw new ApiError_1.default(401, 'Usuario inactivo');
         }
-        console.log('Verificando contraseña...');
+        logger_1.logger.debug('Verificando contraseña...');
         try {
             const isPasswordMatch = await user.compararPassword(password);
             if (!isPasswordMatch) {
-                console.log('Contraseña incorrecta');
+                logger_1.logger.debug('Contraseña incorrecta');
                 throw new ApiError_1.default(401, 'Credenciales inválidas');
             }
-            console.log('Contraseña correcta, login exitoso');
+            logger_1.logger.debug('Contraseña correcta, login exitoso');
         }
         catch (error) {
             console.error('Error durante la validación de contraseña:', error);
             throw new ApiError_1.default(401, 'Error en la validación de credenciales');
         }
-        console.log('Generando tokens de autenticación');
+        logger_1.logger.debug('Generando tokens de autenticación');
         const tokens = this.generateTokens(user);
         return {
             user,

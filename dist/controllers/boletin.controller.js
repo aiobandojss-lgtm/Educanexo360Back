@@ -43,22 +43,28 @@ class BoletinController {
                 escuelaId,
                 estado: 'ACTIVO',
             }).populate('docenteId', 'nombre apellidos');
-            const asignaturasData = [];
-            for (const asignatura of asignaturas) {
-                const calificacion = await calificacion_model_1.default.findOne({
+            const idsAsignaturas = asignaturas.map((a) => a._id);
+            const [calificacionesPeriodo, logrosPeriodo] = await Promise.all([
+                calificacion_model_1.default.find({
                     estudianteId,
-                    asignaturaId: asignatura._id,
+                    asignaturaId: { $in: idsAsignaturas },
                     escuelaId,
                     periodo: Number(periodo),
                     año_academico: String(año_academico),
-                });
-                const logros = await logro_model_1.default.find({
-                    asignaturaId: asignatura._id,
+                }),
+                logro_model_1.default.find({
+                    asignaturaId: { $in: idsAsignaturas },
                     escuelaId,
                     periodo: Number(periodo),
                     año_academico: String(año_academico),
                     estado: 'ACTIVO',
-                }).lean();
+                }).lean(),
+            ]);
+            const calificacionPorAsignatura = new Map(calificacionesPeriodo.map((c) => [String(c.asignaturaId), c]));
+            const asignaturasData = [];
+            for (const asignatura of asignaturas) {
+                const calificacion = calificacionPorAsignatura.get(String(asignatura._id)) || null;
+                const logros = logrosPeriodo.filter((l) => String(l.asignaturaId) === String(asignatura._id));
                 const logrosData = [];
                 let calificadosCount = 0;
                 let totalPorcentajeCalificado = 0;
@@ -176,25 +182,30 @@ class BoletinController {
                 estado: 'ACTIVO',
             }).populate('docenteId', 'nombre apellidos');
             const periodos = [1, 2, 3, 4];
+            const calificacionesAño = await calificacion_model_1.default.find({
+                estudianteId,
+                asignaturaId: { $in: asignaturas.map((a) => a._id) },
+                escuelaId,
+                periodo: { $in: periodos },
+                año_academico: String(año_academico),
+            });
+            const calificacionPorClave = new Map(calificacionesAño.map((c) => [`${c.asignaturaId}|${c.periodo}`, c]));
+            const idsLogros = calificacionesAño.flatMap((c) => (c.calificaciones_logros || []).map((cl) => cl.logroId));
+            const logrosCalificadosDocs = await logro_model_1.default.find({ _id: { $in: idsLogros }, escuelaId });
+            const logroPorId = new Map(logrosCalificadosDocs.map((l) => [String(l._id), l]));
             const asignaturasData = [];
             for (const asignatura of asignaturas) {
                 const periodosData = [];
                 let sumaPeriodos = 0;
                 let periodosCalificados = 0;
                 for (const periodo of periodos) {
-                    const calificacion = await calificacion_model_1.default.findOne({
-                        estudianteId,
-                        asignaturaId: asignatura._id,
-                        escuelaId,
-                        periodo,
-                        año_academico: String(año_academico),
-                    });
+                    const calificacion = calificacionPorClave.get(`${asignatura._id}|${periodo}`) || null;
                     const logrosCalificados = [];
                     if (calificacion &&
                         calificacion.calificaciones_logros &&
                         calificacion.calificaciones_logros.length > 0) {
                         for (const calLogro of calificacion.calificaciones_logros) {
-                            const logro = await logro_model_1.default.findOne({ _id: calLogro.logroId, escuelaId });
+                            const logro = logroPorId.get(String(calLogro.logroId));
                             if (logro) {
                                 logrosCalificados.push({
                                     logro: {

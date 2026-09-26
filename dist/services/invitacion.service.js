@@ -43,6 +43,7 @@ const ApiError_1 = __importDefault(require("../utils/ApiError"));
 const codigoUtils_1 = require("../utils/codigoUtils");
 const curso_model_1 = __importDefault(require("../models/curso.model"));
 const usuario_model_1 = __importDefault(require("../models/usuario.model"));
+const logger_1 = require("../utils/logger");
 class InvitacionService {
     async generarCodigoUnico(escuelaId, tipo, cursoId) {
         let prefijo = '';
@@ -81,12 +82,12 @@ class InvitacionService {
         return codigo;
     }
     async crearInvitacion(data) {
-        console.log('Datos recibidos:', JSON.stringify(data));
+        logger_1.logger.debug('Datos recibidos:', JSON.stringify(data));
         if (data.cursoId) {
             const curso = await curso_model_1.default.findOne({ _id: data.cursoId, escuelaId: data.escuelaId });
-            console.log('Curso encontrado:', curso ? JSON.stringify(curso) : 'Curso no encontrado');
+            logger_1.logger.debug('Curso encontrado:', curso ? JSON.stringify(curso) : 'Curso no encontrado');
             if (curso) {
-                console.log('Comparando escuelas:', {
+                logger_1.logger.debug('Comparando escuelas:', {
                     cursoEscuelaId: curso.escuelaId.toString(),
                     requestEscuelaId: data.escuelaId,
                     sonIguales: curso.escuelaId.toString() === data.escuelaId,

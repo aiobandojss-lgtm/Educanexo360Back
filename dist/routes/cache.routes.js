@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const simpleCache_1 = require("../cache/simpleCache");
 const auth_middleware_1 = require("../middleware/auth.middleware");
+const logger_1 = require("../utils/logger");
 const router = (0, express_1.Router)();
 router.get('/stats', auth_middleware_1.authenticate, (0, auth_middleware_1.authorize)('SUPER_ADMIN'), (req, res) => {
     try {
@@ -21,7 +22,7 @@ router.get('/stats', auth_middleware_1.authenticate, (0, auth_middleware_1.autho
 router.delete('/clear', auth_middleware_1.authenticate, (0, auth_middleware_1.authorize)('SUPER_ADMIN'), (req, res) => {
     try {
         simpleCache_1.cache.flushAll();
-        console.log('🗑️ Cache completamente limpiado por:', req.user?.email);
+        logger_1.logger.debug('🗑️ Cache completamente limpiado por:', req.user?.email);
         res.json({ success: true, message: 'Cache limpiado exitosamente' });
     }
     catch (error) {

@@ -7,8 +7,10 @@ exports.obtenerInvitacionesEscuela = exports.obtenerInvitacionPorId = exports.re
 const invitacion_service_1 = __importDefault(require("../services/invitacion.service"));
 const catchAsync_1 = require("../utils/catchAsync");
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
+const paginacion_1 = require("../utils/paginacion");
+const logger_1 = require("../utils/logger");
 exports.crearInvitacion = (0, catchAsync_1.catchAsync)(async (req, res, next) => {
-    console.log('Creando invitación, datos de usuario:', req.user);
+    logger_1.logger.debug('Creando invitación, datos de usuario:', req.user);
     const { tipo, cursoId, estudianteId, cantidadUsos, fechaExpiracion, datosAdicionales } = req.body;
     const escuelaId = req.user?.tipo === 'SUPER_ADMIN' && req.body.escuelaId
         ? String(req.body.escuelaId)
@@ -17,7 +19,7 @@ exports.crearInvitacion = (0, catchAsync_1.catchAsync)(async (req, res, next) =>
     if (!escuelaId) {
         throw new ApiError_1.default(403, 'No tiene una escuela asociada');
     }
-    console.log('Datos para crear invitación:', {
+    logger_1.logger.debug('Datos para crear invitación:', {
         tipo,
         escuelaId,
         creadorId,
@@ -78,13 +80,13 @@ exports.obtenerInvitacionPorId = (0, catchAsync_1.catchAsync)(async (req, res, n
 exports.obtenerInvitacionesEscuela = (0, catchAsync_1.catchAsync)(async (req, res, next) => {
     const escuelaId = req.user?.escuelaId;
     const estado = typeof req.query.estado === 'string' ? req.query.estado : undefined;
-    const pagina = parseInt(req.query.pagina) || 1;
-    const limite = parseInt(req.query.limite) || 10;
-    console.log('Obteniendo invitaciones con escuelaId:', escuelaId);
-    console.log('Estado filtro:', estado);
-    console.log('Pagina:', pagina, 'Limite:', limite);
+    const pagina = (0, paginacion_1.numeroPagina)(req.query.pagina);
+    const limite = (0, paginacion_1.numeroLimite)(req.query.limite, 10);
+    logger_1.logger.debug('Obteniendo invitaciones con escuelaId:', escuelaId);
+    logger_1.logger.debug('Estado filtro:', estado);
+    logger_1.logger.debug('Pagina:', pagina, 'Limite:', limite);
     const resultado = await invitacion_service_1.default.obtenerInvitacionesEscuela(escuelaId, estado, pagina, limite);
-    console.log('Invitaciones encontradas:', resultado.invitaciones.length);
+    logger_1.logger.debug('Invitaciones encontradas:', resultado.invitaciones.length);
     res.status(200).json({
         success: true,
         data: resultado,

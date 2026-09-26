@@ -10,20 +10,28 @@ const notificacion_service_1 = __importDefault(require("../services/notificacion
 const pushNotification_service_1 = __importDefault(require("../services/pushNotification.service"));
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
 const INotificacion_1 = require("../interfaces/INotificacion");
+const paginacion_1 = require("../utils/paginacion");
+const logger_1 = require("../utils/logger");
 class NotificacionController {
     async registrarTokenFCM(req, res, next) {
         try {
             if (!req.user) {
                 throw new ApiError_1.default(401, 'No autorizado');
             }
-            const { fcmToken, platform, deviceInfo } = req.body;
+            const { fcmToken, deviceInfo } = req.body;
+            if (fcmToken === null) {
+                await usuario_model_1.default.updateOne({ _id: req.user._id }, { $set: { fcmToken: null, fcmTokenUpdatedAt: new Date() }, $unset: { platform: '' } });
+                res.json({ success: true, message: 'Token FCM eliminado', data: { tokenRegistered: false } });
+                return;
+            }
             if (!fcmToken) {
                 throw new ApiError_1.default(400, 'Token FCM es requerido');
             }
-            if (!platform || !['ios', 'android'].includes(platform)) {
+            const platform = req.body.platform || 'android';
+            if (!['ios', 'android'].includes(platform)) {
                 throw new ApiError_1.default(400, 'Platform debe ser "ios" o "android"');
             }
-            console.log(`📱 Registrando token FCM para usuario: ${req.user._id}`);
+            logger_1.logger.debug(`📱 Registrando token FCM para usuario: ${req.user._id}`);
             await usuario_model_1.default.updateMany({ fcmToken, _id: { $ne: req.user._id } }, { $set: { fcmToken: null, fcmTokenUpdatedAt: new Date() } });
             const usuarioActualizado = await usuario_model_1.default.findByIdAndUpdate(req.user._id, {
                 $set: {
@@ -36,7 +44,7 @@ class NotificacionController {
             if (!usuarioActualizado) {
                 throw new ApiError_1.default(404, 'Usuario no encontrado');
             }
-            console.log(`✅ Token FCM registrado para: ${usuarioActualizado.nombre} ${usuarioActualizado.apellidos}`);
+            logger_1.logger.debug(`✅ Token FCM registrado para: ${usuarioActualizado.nombre} ${usuarioActualizado.apellidos}`);
             res.json({
                 success: true,
                 message: 'Token FCM registrado exitosamente',
@@ -97,7 +105,7 @@ class NotificacionController {
             if (!targetUser?.fcmToken) {
                 throw new ApiError_1.default(400, 'El usuario no tiene token FCM registrado');
             }
-            console.log(`🧪 Enviando notificación de prueba a: ${targetUser.nombre} ${targetUser.apellidos}`);
+            logger_1.logger.debug(`🧪 Enviando notificación de prueba a: ${targetUser.nombre} ${targetUser.apellidos}`);
             const resultado = await pushNotification_service_1.default.enviarNotificacion({
                 token: targetUser.fcmToken,
                 titulo,
@@ -142,7 +150,7 @@ class NotificacionController {
                 throw new ApiError_1.default(401, 'No autorizado');
             }
             const { recipientIds, messageId, title, body, priority = 'NORMAL', hasAttachments = false, } = req.body;
-            console.log('📤 Enviando notificaciones de mensaje:', {
+            logger_1.logger.debug('📤 Enviando notificaciones de mensaje:', {
                 recipientIds: recipientIds?.length,
                 messageId,
                 priority,
@@ -227,8 +235,8 @@ class NotificacionController {
             }
             const { estado = 'todas', pagina = 1, limite = 20, tipo } = req.query;
             const opciones = {
-                pagina: parseInt(pagina, 10),
-                limite: parseInt(limite, 10),
+                pagina: (0, paginacion_1.numeroPagina)(pagina),
+                limite: (0, paginacion_1.numeroLimite)(limite, 20),
             };
             const filtro = {
                 usuarioId: req.user._id,

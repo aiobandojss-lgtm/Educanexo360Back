@@ -49,6 +49,7 @@ const estudiante_service_1 = require("./estudiante.service");
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
 const passwordUtils_1 = require("../utils/passwordUtils");
 const mongoose_2 = __importDefault(require("mongoose"));
+const logger_1 = require("../utils/logger");
 class RegistroService {
     async notificarNuevaSolicitud(solicitud) {
         try {
@@ -65,7 +66,7 @@ Estudiantes: ${solicitud.estudiantes.length}
 Por favor, revise la solicitud en el panel de administración.
         `,
             });
-            console.log(`Notificación enviada para la solicitud ${solicitud._id}`);
+            logger_1.logger.debug(`Notificación enviada para la solicitud ${solicitud._id}`);
         }
         catch (error) {
             console.error('Error al enviar notificación de nueva solicitud:', error);
@@ -138,7 +139,7 @@ Por favor, revise la solicitud en el panel de administración.
         };
     }
     async aprobarSolicitud(solicitudId, usuarioAdminId, escuelaId) {
-        console.log(`Iniciando aprobación de solicitud ${solicitudId} por admin ${usuarioAdminId}`);
+        logger_1.logger.debug(`Iniciando aprobación de solicitud ${solicitudId} por admin ${usuarioAdminId}`);
         const solicitud = await solicitud_registro_model_1.default.findOne({ _id: solicitudId, escuelaId });
         if (!solicitud) {
             throw new ApiError_1.default(404, 'Solicitud no encontrada');
@@ -150,7 +151,7 @@ Por favor, revise la solicitud en el panel de administración.
         session.startTransaction();
         try {
             const acudienteCredenciales = this.generarCredencialesUnicas(solicitud.nombre, solicitud.apellidos, solicitud.email);
-            console.log('Credenciales de acudiente generadas con éxito');
+            logger_1.logger.debug('Credenciales de acudiente generadas con éxito');
             const acudiente = new usuario_model_1.default({
                 nombre: solicitud.nombre,
                 apellidos: solicitud.apellidos,
@@ -171,7 +172,7 @@ Por favor, revise la solicitud en el panel de administración.
                 permisos: [],
             });
             await acudiente.save({ session });
-            console.log(`Acudiente creado con ID: ${acudiente._id}`);
+            logger_1.logger.debug(`Acudiente creado con ID: ${acudiente._id}`);
             const acudienteId = acudiente._id.toString();
             const estudiantesParaEmail = [];
             const estudiantesCreados = [];
@@ -179,7 +180,7 @@ Por favor, revise la solicitud en el panel de administración.
             for (let i = 0; i < solicitud.estudiantes.length; i++) {
                 const estData = solicitud.estudiantes[i];
                 if (estData.esExistente && estData.estudianteExistenteId) {
-                    console.log(`Procesando estudiante existente: ${estData.estudianteExistenteId}`);
+                    logger_1.logger.debug(`Procesando estudiante existente: ${estData.estudianteExistenteId}`);
                     const verificacion = await estudiante_service_1.estudianteService.puedeAsociarAcudiente(estData.estudianteExistenteId.toString(), solicitud.email, solicitud.escuelaId.toString());
                     if (!verificacion.puede) {
                         throw new ApiError_1.default(400, `No se puede asociar el estudiante: ${verificacion.razon}`);
@@ -199,7 +200,7 @@ Por favor, revise la solicitud en el panel de administración.
                     }
                 }
                 else {
-                    console.log(`Creando nuevo estudiante: ${estData.nombre} ${estData.apellidos}`);
+                    logger_1.logger.debug(`Creando nuevo estudiante: ${estData.nombre} ${estData.apellidos}`);
                     const credenciales = this.generarCredencialesUnicas(estData.nombre, estData.apellidos, estData.email || null, estData.codigo_estudiante || null);
                     let cursoInfo = {
                         grado: '',
@@ -241,10 +242,10 @@ Por favor, revise la solicitud en el panel de administración.
                         permisos: [],
                     });
                     await estudiante.save({ session });
-                    console.log(`Estudiante creado con ID: ${estudiante._id}`);
+                    logger_1.logger.debug(`Estudiante creado con ID: ${estudiante._id}`);
                     try {
                         await curso_model_1.default.findByIdAndUpdate(estData.cursoId, { $addToSet: { estudiantes: estudiante._id } }, { session, new: true });
-                        console.log(`Estudiante añadido al curso ${estData.cursoId}`);
+                        logger_1.logger.debug(`Estudiante añadido al curso ${estData.cursoId}`);
                     }
                     catch (error) {
                         console.error('Error al añadir estudiante al curso:', error);
@@ -270,7 +271,7 @@ Por favor, revise la solicitud en el panel de administración.
             solicitud.usuariosCreados = [acudiente._id, ...estudiantesCreados];
             await solicitud.save({ session });
             await session.commitTransaction();
-            console.log('Transacción completada exitosamente');
+            logger_1.logger.debug('Transacción completada exitosamente');
             await this.enviarCorreoConfirmacion(acudienteCredenciales.email, `${solicitud.nombre} ${solicitud.apellidos}`, acudienteCredenciales.password, estudiantesParaEmail);
             return {
                 mensaje: 'Solicitud aprobada exitosamente',
@@ -353,14 +354,14 @@ El equipo de EducaNexo360`,
             if (escuelaIdObj) {
                 filtro.escuelaId = escuelaIdObj;
             }
-            console.log('Filtro usado para buscar solicitudes:', JSON.stringify(filtro));
+            logger_1.logger.debug('Filtro usado para buscar solicitudes:', JSON.stringify(filtro));
             const total = await solicitud_registro_model_1.default.countDocuments(filtro);
-            console.log(`Total de solicitudes PENDIENTES con filtro: ${total}`);
+            logger_1.logger.debug(`Total de solicitudes PENDIENTES con filtro: ${total}`);
             const solicitudes = await solicitud_registro_model_1.default.find(filtro)
                 .sort({ fechaSolicitud: -1 })
                 .skip(skip)
                 .limit(limite);
-            console.log(`Solicitudes encontradas: ${solicitudes.length}`);
+            logger_1.logger.debug(`Solicitudes encontradas: ${solicitudes.length}`);
             return {
                 total,
                 pagina,

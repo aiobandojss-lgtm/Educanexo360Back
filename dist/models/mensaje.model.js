@@ -240,14 +240,11 @@ MensajeSchema.pre('save', function (next) {
         next(error);
     }
 });
-MensajeSchema.index({ remitente: 1 });
-MensajeSchema.index({ destinatarios: 1 });
-MensajeSchema.index({ escuelaId: 1 });
-MensajeSchema.index({ estado: 1 });
-MensajeSchema.index({ createdAt: -1 });
+MensajeSchema.index({ destinatarios: 1, createdAt: -1 });
+MensajeSchema.index({ destinatariosCc: 1 });
+MensajeSchema.index({ remitente: 1, createdAt: -1 });
+MensajeSchema.index({ escuelaId: 1, remitente: 1, createdAt: -1 });
 MensajeSchema.index({ asunto: 'text', contenido: 'text' });
-MensajeSchema.index({ 'estadosUsuarios.usuarioId': 1 });
-MensajeSchema.index({ 'estadosUsuarios.estado': 1 });
 MensajeSchema.index({ 'estadosUsuarios.usuarioId': 1, 'estadosUsuarios.estado': 1 });
 const Mensaje = mongoose_1.default.model('Mensaje', MensajeSchema);
 exports.default = Mensaje;

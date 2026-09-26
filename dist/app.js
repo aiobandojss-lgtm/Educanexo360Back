@@ -118,9 +118,6 @@ else {
 app.get(basePath || '/', (req, res) => {
     res.json({
         name: 'EducaNexo360 API',
-        version: process.env.npm_package_version || '1.0.0',
-        environment: process.env.NODE_ENV || 'development',
-        time: new Date().toISOString(),
     });
 });
 app.use((req, res, next) => {
@@ -152,7 +149,13 @@ const connectDB = async () => {
         const mongooseOptions = {
             serverSelectionTimeoutMS: 5000,
             socketTimeoutMS: 45000,
+            maxPoolSize: 10,
         };
+        if (mongoose_1.default.connection.listenerCount('error') === 0) {
+            mongoose_1.default.connection.on('error', (err) => console.error('[MongoDB] Error de conexión:', err));
+            mongoose_1.default.connection.on('disconnected', () => console.warn('[MongoDB] Desconectado'));
+            mongoose_1.default.connection.on('reconnected', () => console.warn('[MongoDB] Reconectado'));
+        }
         const conn = await mongoose_1.default.connect(mongoURI, mongooseOptions);
         console.log(`MongoDB Connected: ${conn.connection.host}`);
         console.log(`Database Name: ${conn.connection.name}`);
@@ -200,6 +203,9 @@ const startServer = async () => {
     };
     process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
     process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+    process.on('unhandledRejection', (reason) => {
+        console.error('Promesa rechazada sin manejar:', reason);
+    });
     process.on('uncaughtException', (error) => {
         console.error('Excepción no capturada:', error);
         gracefulShutdown('uncaughtException');

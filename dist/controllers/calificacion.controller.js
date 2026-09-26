@@ -38,6 +38,11 @@ const filtroEscrituraPorRol = async (user) => {
     }
     return {};
 };
+const POBLAR_CALIFICACION = [
+    { path: 'estudianteId', select: 'nombre apellidos email estado info_academica.codigo_estudiante' },
+    { path: 'asignaturaId', select: 'nombre cursoId docenteId' },
+    { path: 'cursoId', select: 'nombre nivel grado grupo jornada año_academico' },
+];
 class CalificacionController {
     async crear(req, res, next) {
         try {
@@ -75,7 +80,7 @@ class CalificacionController {
                 escuelaId: req.user.escuelaId,
             };
             const calificacion = await calificacion_model_1.default.create(calificacionData);
-            await calificacion.populate(['estudianteId', 'asignaturaId', 'cursoId']);
+            await calificacion.populate(POBLAR_CALIFICACION);
             res.status(201).json({
                 success: true,
                 data: calificacion,
@@ -117,7 +122,7 @@ class CalificacionController {
             if (año_academico)
                 query.año_academico = año_academico;
             const calificaciones = await calificacion_model_1.default.find({ $and: [query, filtroRol] })
-                .populate(['estudianteId', 'asignaturaId', 'cursoId'])
+                .populate(POBLAR_CALIFICACION)
                 .sort({ createdAt: -1 });
             res.json({
                 success: true,
@@ -139,7 +144,7 @@ class CalificacionController {
             }
             const calificacion = await calificacion_model_1.default.findOne({
                 $and: [{ _id: req.params.id, escuelaId: req.user.escuelaId }, filtroRol],
-            }).populate(['estudianteId', 'asignaturaId', 'cursoId']);
+            }).populate(POBLAR_CALIFICACION);
             if (!calificacion) {
                 throw new ApiError_1.default(404, 'Calificación no encontrada');
             }
@@ -171,7 +176,7 @@ class CalificacionController {
                 _id: req.params.id,
                 escuelaId: req.user.escuelaId,
                 ...(await filtroEscrituraPorRol(req.user)),
-            }, datos, { new: true, runValidators: true }).populate(['estudianteId', 'asignaturaId', 'cursoId']);
+            }, datos, { new: true, runValidators: true }).populate(POBLAR_CALIFICACION);
             if (!calificacion) {
                 throw new ApiError_1.default(404, 'Calificación no encontrada');
             }
@@ -203,7 +208,7 @@ class CalificacionController {
                         fecha_calificacion: new Date(),
                     },
                 },
-            }, { new: true, runValidators: true }).populate(['estudianteId', 'asignaturaId', 'cursoId']);
+            }, { new: true, runValidators: true }).populate(POBLAR_CALIFICACION);
             if (!calificacion) {
                 throw new ApiError_1.default(404, 'Calificación no encontrada');
             }
@@ -232,7 +237,7 @@ class CalificacionController {
                     'calificaciones_logros.$.calificacion': valorCalificacion,
                     'calificaciones_logros.$.observacion': observacion,
                 },
-            }, { new: true, runValidators: true }).populate(['estudianteId', 'asignaturaId', 'cursoId']);
+            }, { new: true, runValidators: true }).populate(POBLAR_CALIFICACION);
             if (!calificacion) {
                 throw new ApiError_1.default(404, 'Calificación o logro no encontrado');
             }

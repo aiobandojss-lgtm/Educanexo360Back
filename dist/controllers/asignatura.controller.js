@@ -5,6 +5,9 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const asignatura_model_1 = __importDefault(require("../models/asignatura.model"));
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
+const logger_1 = require("../utils/logger");
+const POBLAR_CURSO_ASIGNATURA = { path: 'cursoId', select: 'nombre grado grupo nivel jornada año_academico' };
+const POBLAR_DOCENTE_ASIGNATURA = { path: 'docenteId', select: 'nombre apellidos email tipo estado' };
 class AsignaturaController {
     async crear(req, res, next) {
         try {
@@ -16,7 +19,7 @@ class AsignaturaController {
                 escuelaId: req.user.escuelaId,
             };
             const asignatura = await asignatura_model_1.default.create(asignaturaData);
-            await asignatura.populate(['cursoId', 'docenteId']);
+            await asignatura.populate([POBLAR_CURSO_ASIGNATURA, POBLAR_DOCENTE_ASIGNATURA]);
             res.status(201).json({
                 success: true,
                 data: asignatura,
@@ -106,18 +109,18 @@ class AsignaturaController {
             if (updateData.cursoId === '' ||
                 updateData.cursoId === null ||
                 updateData.cursoId === 'null') {
-                console.log(`🔄 Desasignando asignatura ${req.params.id} de su curso`);
+                logger_1.logger.debug(`🔄 Desasignando asignatura ${req.params.id} de su curso`);
                 const asignatura = await asignatura_model_1.default.findOneAndUpdate({
                     _id: req.params.id,
                     escuelaId: req.user.escuelaId,
                 }, {
                     $unset: { cursoId: 1 },
                     estado: 'ACTIVO',
-                }, { new: true, runValidators: false }).populate(['docenteId']);
+                }, { new: true, runValidators: false }).populate([POBLAR_DOCENTE_ASIGNATURA]);
                 if (!asignatura) {
                     throw new ApiError_1.default(404, 'Asignatura no encontrada');
                 }
-                console.log('✅ Asignatura desasignada del curso exitosamente');
+                logger_1.logger.debug('✅ Asignatura desasignada del curso exitosamente');
                 res.json({
                     success: true,
                     data: asignatura,
@@ -128,7 +131,7 @@ class AsignaturaController {
             const asignatura = await asignatura_model_1.default.findOneAndUpdate({
                 _id: req.params.id,
                 escuelaId: req.user.escuelaId,
-            }, updateData, { new: true, runValidators: true }).populate(['cursoId', 'docenteId']);
+            }, updateData, { new: true, runValidators: true }).populate([POBLAR_CURSO_ASIGNATURA, POBLAR_DOCENTE_ASIGNATURA]);
             if (!asignatura) {
                 throw new ApiError_1.default(404, 'Asignatura no encontrada');
             }
@@ -171,7 +174,7 @@ class AsignaturaController {
             const asignatura = await asignatura_model_1.default.findOneAndUpdate({
                 _id: req.params.id,
                 escuelaId: req.user.escuelaId,
-            }, { periodos }, { new: true, runValidators: true }).populate(['cursoId', 'docenteId']);
+            }, { periodos }, { new: true, runValidators: true }).populate([POBLAR_CURSO_ASIGNATURA, POBLAR_DOCENTE_ASIGNATURA]);
             if (!asignatura) {
                 throw new ApiError_1.default(404, 'Asignatura no encontrada');
             }
@@ -221,12 +224,12 @@ class AsignaturaController {
                 throw new ApiError_1.default(401, 'No autorizado');
             }
             const { cursoId } = req.params;
-            console.log(`Buscando asignaturas no asignadas al curso ${cursoId}`);
+            logger_1.logger.debug(`Buscando asignaturas no asignadas al curso ${cursoId}`);
             const asignaturasAsignadas = await asignatura_model_1.default.find({
                 cursoId,
                 escuelaId: req.user.escuelaId,
             }).select('_id');
-            console.log(`Encontradas ${asignaturasAsignadas.length} asignaturas ya asignadas al curso`);
+            logger_1.logger.debug(`Encontradas ${asignaturasAsignadas.length} asignaturas ya asignadas al curso`);
             const idsAsignadas = asignaturasAsignadas.map((a) => a._id.toString());
             const query = {
                 escuelaId: req.user.escuelaId,
@@ -235,7 +238,7 @@ class AsignaturaController {
             if (idsAsignadas.length > 0) {
                 query._id = { $nin: idsAsignadas };
             }
-            console.log('Ejecutando consulta para asignaturas no asignadas:', JSON.stringify(query));
+            logger_1.logger.debug('Ejecutando consulta para asignaturas no asignadas:', JSON.stringify(query));
             const asignaturas = await asignatura_model_1.default.find(query)
                 .populate({
                 path: 'docenteId',
@@ -244,7 +247,7 @@ class AsignaturaController {
             })
                 .populate('cursoId', 'nombre grado grupo nivel jornada año_academico')
                 .sort({ nombre: 1 });
-            console.log(`Encontradas ${asignaturas.length} asignaturas no asignadas al curso`);
+            logger_1.logger.debug(`Encontradas ${asignaturas.length} asignaturas no asignadas al curso`);
             const asignaturasFormateadas = asignaturas.map((asignatura) => {
                 const doc = asignatura.toObject();
                 return {

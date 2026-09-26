@@ -10,6 +10,7 @@ const email_service_1 = __importDefault(require("../services/email.service"));
 const crypto_1 = __importDefault(require("crypto"));
 const usuario_model_1 = __importDefault(require("../models/usuario.model"));
 const config_1 = __importDefault(require("../config/config"));
+const logger_1 = require("../utils/logger");
 exports.authController = {
     async login(req, res, next) {
         try {
@@ -163,7 +164,7 @@ exports.authController = {
                 permisos: req.user.permisos,
                 perfilRolId: req.user.perfilRolId,
             };
-            console.log(`Token verificado exitosamente para usuario: ${safeUser.email}`);
+            logger_1.logger.debug(`Token verificado exitosamente para usuario: ${safeUser.email}`);
             res.json({
                 success: true,
                 data: {

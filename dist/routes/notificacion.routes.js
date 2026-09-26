@@ -6,7 +6,6 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const notificacion_controller_1 = __importDefault(require("../controllers/notificacion.controller"));
 const auth_middleware_1 = require("../middleware/auth.middleware");
-const simpleCache_1 = require("../cache/simpleCache");
 const validate_middleware_1 = require("../middleware/validate.middleware");
 const notificacion_validation_1 = require("../validations/notificacion.validation");
 const router = express_1.default.Router();
@@ -25,7 +24,7 @@ router.post('/unregister-token', (0, validate_middleware_1.validate)(notificacio
 router.post('/test-push', (0, auth_middleware_1.authorize)('SUPER_ADMIN', 'ADMIN'), (req, res, next) => {
     notificacion_controller_1.default.enviarNotificacionPrueba(req, res, next);
 });
-router.get('/', (0, simpleCache_1.cacheMiddleware)('notificaciones'), (req, res, next) => {
+router.get('/', (req, res, next) => {
     notificacion_controller_1.default.obtenerNotificaciones(req, res, next);
 });
 router.put('/:id/leer', (req, res, next) => {

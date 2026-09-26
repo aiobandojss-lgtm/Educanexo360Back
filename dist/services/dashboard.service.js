@@ -11,6 +11,9 @@ const usuario_model_1 = __importDefault(require("../models/usuario.model"));
 const curso_model_1 = __importDefault(require("../models/curso.model"));
 const calificacion_model_1 = __importDefault(require("../models/calificacion.model"));
 const asistencia_model_1 = __importDefault(require("../models/asistencia.model"));
+const logger_1 = require("../utils/logger");
+const tarea_model_1 = __importDefault(require("../models/tarea.model"));
+const accesoAcademico_1 = require("../utils/accesoAcademico");
 class DashboardService {
     async obtenerEstadisticas(usuarioId, escuelaId) {
         const usuarioObjectId = new mongoose_1.default.Types.ObjectId(usuarioId);
@@ -20,7 +23,7 @@ class DashboardService {
         fechaLimite.setDate(fechaActual.getDate() + 30);
         const fechaReciente = new Date();
         fechaReciente.setDate(fechaActual.getDate() - 7);
-        console.log(`🔍 Calculando estadísticas dashboard para usuario ${usuarioId}`);
+        logger_1.logger.debug(`🔍 Calculando estadísticas dashboard para usuario ${usuarioId}`);
         const [mensajesSinLeer, eventosProximos, anunciosRecientes] = await Promise.all([
             this.contarMensajesSinLeer(usuarioObjectId, escuelaObjectId),
             this.contarEventosProximos(escuelaObjectId, fechaActual, fechaLimite),
@@ -31,7 +34,7 @@ class DashboardService {
             eventosProximos,
             anunciosRecientes,
         };
-        console.log(`✅ Estadísticas calculadas:`, estadisticas);
+        logger_1.logger.debug(`✅ Estadísticas calculadas:`, estadisticas);
         return estadisticas;
     }
     async contarMensajesSinLeer(usuarioId, escuelaId) {
@@ -102,12 +105,13 @@ class DashboardService {
         }
     }
     async obtenerResumenDocente(usuarioId, escuelaId) {
-        const [cursosInfo, calificacionesPendientes] = await Promise.all([
+        const idsCursos = (await (0, accesoAcademico_1.obtenerCursosDocente)(String(usuarioId), String(escuelaId))).map((id) => new mongoose_1.default.Types.ObjectId(id));
+        const [cursosInfo, pendientesInfo] = await Promise.all([
             curso_model_1.default.aggregate([
                 {
                     $match: {
                         escuelaId: escuelaId,
-                        $or: [{ director_grupo: usuarioId }, { 'asignaturas.docenteId': usuarioId }],
+                        _id: { $in: idsCursos },
                     },
                 },
                 {
@@ -118,12 +122,14 @@ class DashboardService {
                     },
                 },
             ]),
-            calificacion_model_1.default.countDocuments({
-                docenteId: usuarioId,
-                escuelaId: escuelaId,
-                estado: 'PENDIENTE',
-            }),
+            tarea_model_1.default.aggregate([
+                { $match: { escuelaId, docenteId: usuarioId, 'entregas.fechaEntrega': { $exists: true } } },
+                { $unwind: '$entregas' },
+                { $match: { 'entregas.fechaEntrega': { $exists: true }, 'entregas.estado': { $ne: 'CALIFICADA' } } },
+                { $count: 'total' },
+            ]),
         ]);
+        const calificacionesPendientes = pendientesInfo[0]?.total || 0;
         const resumen = cursosInfo[0] || { cursosAsignados: 0, estudiantesTotales: 0 };
         return {
             cursosAsignados: resumen.cursosAsignados,

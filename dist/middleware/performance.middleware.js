@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.rateLimiter = exports.responseTimeMiddleware = exports.cacheMiddleware = exports.setupCompression = void 0;
 const compression_1 = __importDefault(require("compression"));
 const node_cache_1 = __importDefault(require("node-cache"));
+const logger_1 = require("../utils/logger");
 const appCache = new node_cache_1.default({ stdTTL: 300, checkperiod: 60 });
 const setupCompression = (app) => {
     app.use((0, compression_1.default)({
@@ -43,7 +44,7 @@ const responseTimeMiddleware = (req, res, next) => {
     const start = Date.now();
     res.on('finish', () => {
         const duration = Date.now() - start;
-        console.log(`${req.method} ${req.originalUrl} - ${duration}ms`);
+        logger_1.logger.debug(`${req.method} ${req.originalUrl} - ${duration}ms`);
     });
     next();
 };

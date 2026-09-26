@@ -13,6 +13,7 @@ const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const ICalendario_1 = require("../interfaces/ICalendario");
 const pushNotification_service_1 = __importDefault(require("../services/pushNotification.service"));
+const logger_1 = require("../utils/logger");
 const CAMPOS_EVENTO = [
     'titulo',
     'descripcion',
@@ -89,13 +90,13 @@ class CalendarioController {
             }
             if (eventoData.fechaInicio) {
                 eventoData.fechaInicio = new Date(eventoData.fechaInicio);
-                console.log(`Fecha inicio recibida: ${eventoData.fechaInicio}`);
-                console.log(`Fecha inicio procesada: ${new Date(eventoData.fechaInicio).toISOString()}`);
+                logger_1.logger.debug(`Fecha inicio recibida: ${eventoData.fechaInicio}`);
+                logger_1.logger.debug(`Fecha inicio procesada: ${new Date(eventoData.fechaInicio).toISOString()}`);
             }
             if (eventoData.fechaFin) {
                 eventoData.fechaFin = new Date(eventoData.fechaFin);
-                console.log(`Fecha fin recibida: ${eventoData.fechaFin}`);
-                console.log(`Fecha fin procesada: ${new Date(eventoData.fechaFin).toISOString()}`);
+                logger_1.logger.debug(`Fecha fin recibida: ${eventoData.fechaFin}`);
+                logger_1.logger.debug(`Fecha fin procesada: ${new Date(eventoData.fechaFin).toISOString()}`);
             }
             if (eventoData.invitados && typeof eventoData.invitados === 'string') {
                 try {
@@ -151,7 +152,7 @@ class CalendarioController {
                 throw new ApiError_1.default(401, 'No autorizado');
             }
             const { inicio, fin, cursoId, tipo, estado } = req.query;
-            console.log('🔍 DEPURACIÓN - Parámetros de consulta:', {
+            logger_1.logger.debug('🔍 DEPURACIÓN - Parámetros de consulta:', {
                 inicio,
                 fin,
                 cursoId,
@@ -168,28 +169,28 @@ class CalendarioController {
                 req.user.tipo === 'PADRE' ||
                 req.user.tipo === 'ACUDIENTE') {
                 pipeline.push({ $match: { estado: 'ACTIVO' } });
-                console.log('✅ Usuario estudiante/padre/acudiente - SOLO eventos ACTIVOS');
+                logger_1.logger.debug('✅ Usuario estudiante/padre/acudiente - SOLO eventos ACTIVOS');
             }
             else {
-                console.log('🔍 Filtro de estado recibido:', estado);
+                logger_1.logger.debug('🔍 Filtro de estado recibido:', estado);
                 if (estado === 'ACTIVO') {
                     pipeline.push({ $match: { estado: 'ACTIVO' } });
-                    console.log('✅ Filtrando: SOLO eventos ACTIVOS');
+                    logger_1.logger.debug('✅ Filtrando: SOLO eventos ACTIVOS');
                 }
                 else if (estado === 'PENDIENTE') {
                     pipeline.push({ $match: { estado: 'PENDIENTE' } });
-                    console.log('✅ Filtrando: SOLO eventos PENDIENTES');
+                    logger_1.logger.debug('✅ Filtrando: SOLO eventos PENDIENTES');
                 }
                 else if (estado === 'CANCELADO') {
                     pipeline.push({ $match: { estado: 'CANCELADO' } });
-                    console.log('✅ Filtrando: SOLO eventos CANCELADOS');
+                    logger_1.logger.debug('✅ Filtrando: SOLO eventos CANCELADOS');
                 }
                 else if (estado === 'ALL') {
-                    console.log('✅ TODOS: Sin filtro de estado - Mostrando ACTIVOS + PENDIENTES + CANCELADOS');
+                    logger_1.logger.debug('✅ TODOS: Sin filtro de estado - Mostrando ACTIVOS + PENDIENTES + CANCELADOS');
                 }
                 else {
                     pipeline.push({ $match: { estado: 'ACTIVO' } });
-                    console.log('✅ Por defecto: SOLO eventos ACTIVOS');
+                    logger_1.logger.debug('✅ Por defecto: SOLO eventos ACTIVOS');
                 }
             }
             if (cursoId) {
@@ -203,17 +204,17 @@ class CalendarioController {
                 if (inicio) {
                     const fechaInicio = new Date(inicio);
                     fechaMatch.fechaFin = { $gte: fechaInicio };
-                    console.log(`Filtro inicio: ${fechaInicio.toISOString()}`);
+                    logger_1.logger.debug(`Filtro inicio: ${fechaInicio.toISOString()}`);
                 }
                 if (fin) {
                     const fechaFin = new Date(fin);
                     if (!fechaMatch.fechaInicio)
                         fechaMatch.fechaInicio = {};
                     fechaMatch.fechaInicio.$lte = fechaFin;
-                    console.log(`Filtro fin: ${fechaFin.toISOString()}`);
+                    logger_1.logger.debug(`Filtro fin: ${fechaFin.toISOString()}`);
                 }
                 pipeline.push({ $match: fechaMatch });
-                console.log('Filtro de fechas aplicado:', JSON.stringify(fechaMatch));
+                logger_1.logger.debug('Filtro de fechas aplicado:', JSON.stringify(fechaMatch));
             }
             if (req.user.tipo === 'ESTUDIANTE') {
                 const cursos = await curso_model_1.default.find({ estudiantes: req.user._id }).select('_id');
@@ -264,7 +265,7 @@ class CalendarioController {
                 }
             }
             pipeline.push({ $sort: { fechaInicio: 1 } });
-            console.log('🔍 DEPURACIÓN - Pipeline con filtros aplicados:', JSON.stringify(pipeline, null, 2));
+            logger_1.logger.debug('🔍 DEPURACIÓN - Pipeline con filtros aplicados:', JSON.stringify(pipeline, null, 2));
             const eventos = await calendario_model_1.default.aggregate(pipeline);
             await calendario_model_1.default.populate(eventos, {
                 path: 'creadorId',
@@ -274,13 +275,13 @@ class CalendarioController {
                 path: 'cursoId',
                 select: 'nombre nivel',
             });
-            console.log(`✅ RESULTADO - Eventos encontrados: ${eventos.length}`);
+            logger_1.logger.debug(`✅ RESULTADO - Eventos encontrados: ${eventos.length}`);
             if (eventos.length > 0) {
-                console.log('✅ RESULTADO - Estados de eventos:', eventos.map((e) => ({ id: e._id, titulo: e.titulo, estado: e.estado })));
+                logger_1.logger.debug('✅ RESULTADO - Estados de eventos:', eventos.map((e) => ({ id: e._id, titulo: e.titulo, estado: e.estado })));
             }
             else {
-                console.log('⚠️ RESULTADO - No se encontraron eventos');
-                console.log('⚠️ Pipeline usado:', JSON.stringify(pipeline, null, 2));
+                logger_1.logger.debug('⚠️ RESULTADO - No se encontraron eventos');
+                logger_1.logger.debug('⚠️ Pipeline usado:', JSON.stringify(pipeline, null, 2));
             }
             res.json({
                 success: true,
@@ -313,7 +314,7 @@ class CalendarioController {
                 evento.estado !== 'ACTIVO') {
                 throw new ApiError_1.default(404, 'Evento no encontrado');
             }
-            console.log('✅ Evento obtenido:', {
+            logger_1.logger.debug('✅ Evento obtenido:', {
                 id: evento._id,
                 titulo: evento.titulo,
                 estado: evento.estado,
@@ -435,9 +436,9 @@ class CalendarioController {
     }
     async eliminarEvento(req, res, next) {
         try {
-            console.log('🗑️ === INICIANDO CANCELACIÓN DE EVENTO ===');
-            console.log(`ID del evento: ${req.params.id}`);
-            console.log(`Usuario: ${req.user?.email} (${req.user?.tipo})`);
+            logger_1.logger.debug('🗑️ === INICIANDO CANCELACIÓN DE EVENTO ===');
+            logger_1.logger.debug(`ID del evento: ${req.params.id}`);
+            logger_1.logger.debug(`Usuario: ${req.user?.email} (${req.user?.tipo})`);
             if (!req.user) {
                 throw new ApiError_1.default(401, 'No autorizado');
             }
@@ -446,38 +447,38 @@ class CalendarioController {
                 escuelaId: req.user.escuelaId,
             });
             if (!evento) {
-                console.log('❌ Evento no encontrado en la base de datos');
+                logger_1.logger.debug('❌ Evento no encontrado en la base de datos');
                 throw new ApiError_1.default(404, 'Evento no encontrado');
             }
-            console.log(`✅ Evento encontrado: "${evento.titulo}"`);
-            console.log(`Estado actual: ${evento.estado}`);
-            const rolesAdministrativos = ['ADMIN', 'COORDINADOR', 'RECTOR', 'DOCENTE', 'ADMINISTRATIVO'];
+            logger_1.logger.debug(`✅ Evento encontrado: "${evento.titulo}"`);
+            logger_1.logger.debug(`Estado actual: ${evento.estado}`);
+            const rolesAdministrativos = ['ADMIN', 'COORDINADOR', 'RECTOR', 'ADMINISTRATIVO'];
             const esCreador = evento.creadorId.toString() === req.user._id;
             const tienePermisoAdministrativo = rolesAdministrativos.includes(req.user.tipo);
             if (!esCreador && !tienePermisoAdministrativo) {
-                console.log('❌ Usuario sin permisos para eliminar');
-                console.log(`   - Tipo de usuario: ${req.user.tipo}`);
-                console.log(`   - Es creador: ${esCreador}`);
-                console.log(`   - Tiene permiso administrativo: ${tienePermisoAdministrativo}`);
+                logger_1.logger.debug('❌ Usuario sin permisos para eliminar');
+                logger_1.logger.debug(`   - Tipo de usuario: ${req.user.tipo}`);
+                logger_1.logger.debug(`   - Es creador: ${esCreador}`);
+                logger_1.logger.debug(`   - Tiene permiso administrativo: ${tienePermisoAdministrativo}`);
                 throw new ApiError_1.default(403, 'No tienes permiso para eliminar este evento');
             }
             if (evento.estado === 'CANCELADO') {
-                console.log('⚠️ El evento ya estaba cancelado');
+                logger_1.logger.debug('⚠️ El evento ya estaba cancelado');
                 throw new ApiError_1.default(400, 'El evento ya está cancelado');
             }
-            console.log('🔄 Cambiando estado del evento a CANCELADO...');
-            const eventoActualizado = await calendario_model_1.default.findByIdAndUpdate(req.params.id, {
+            logger_1.logger.debug('🔄 Cambiando estado del evento a CANCELADO...');
+            const eventoActualizado = await calendario_model_1.default.findOneAndUpdate({ _id: req.params.id, escuelaId: req.user.escuelaId }, {
                 estado: ICalendario_1.EstadoEvento.CANCELADO,
                 fechaCancelacion: new Date(),
             }, { new: true });
             if (!eventoActualizado) {
-                console.log('❌ No se pudo cancelar el evento');
+                logger_1.logger.debug('❌ No se pudo cancelar el evento');
                 throw new ApiError_1.default(500, 'Error al cancelar el evento');
             }
-            console.log('✅ EVENTO CANCELADO EXITOSAMENTE');
-            console.log(`Título: "${eventoActualizado.titulo}"`);
-            console.log(`Nuevo estado: ${eventoActualizado.estado}`);
-            console.log('🗑️ === CANCELACIÓN COMPLETADA ===');
+            logger_1.logger.debug('✅ EVENTO CANCELADO EXITOSAMENTE');
+            logger_1.logger.debug(`Título: "${eventoActualizado.titulo}"`);
+            logger_1.logger.debug(`Nuevo estado: ${eventoActualizado.estado}`);
+            logger_1.logger.debug('🗑️ === CANCELACIÓN COMPLETADA ===');
             res.json({
                 success: true,
                 message: 'Evento cancelado exitosamente',
@@ -551,11 +552,12 @@ class CalendarioController {
             if (!evento) {
                 throw new ApiError_1.default(404, 'Evento no encontrado');
             }
-            const rolesConPermiso = ['ADMIN', 'COORDINADOR', 'RECTOR', 'DOCENTE', 'ADMINISTRATIVO'];
-            if (!rolesConPermiso.includes(req.user.tipo)) {
+            const rolesConPermiso = ['ADMIN', 'COORDINADOR', 'RECTOR', 'ADMINISTRATIVO'];
+            const esCreadorEvento = evento.creadorId.toString() === req.user._id;
+            if (!rolesConPermiso.includes(req.user.tipo) && !(req.user.tipo === 'DOCENTE' && esCreadorEvento)) {
                 throw new ApiError_1.default(403, 'No tienes permiso para cambiar el estado de este evento');
             }
-            const eventoActualizado = await calendario_model_1.default.findByIdAndUpdate(id, { estado }, { new: true })
+            const eventoActualizado = await calendario_model_1.default.findOneAndUpdate({ _id: id, escuelaId: req.user.escuelaId }, { estado }, { new: true })
                 .populate('creadorId', 'nombre apellidos email tipo')
                 .populate('cursoId', 'nombre nivel');
             res.json({
@@ -588,16 +590,26 @@ class CalendarioController {
                 throw new ApiError_1.default(500, 'Servicio de archivos no disponible');
             }
             const fileId = new mongoose_1.default.Types.ObjectId(evento.archivoAdjunto.fileId.toString());
-            const documentoCursor = bucket.find({ _id: fileId });
-            const documentoCount = await documentoCursor.count();
-            if (documentoCount === 0) {
+            const [documento] = await bucket.find({ _id: fileId }).limit(1).toArray();
+            if (!documento) {
                 throw new ApiError_1.default(404, 'Archivo no encontrado en el sistema');
             }
+            const nombreArchivo = String(evento.archivoAdjunto.nombre || 'archivo');
+            const nombreAscii = nombreArchivo.replace(/[^\x20-\x7E]|"/g, '_');
             res.set({
                 'Content-Type': evento.archivoAdjunto.tipo,
-                'Content-Disposition': `attachment; filename="${evento.archivoAdjunto.nombre}"`,
+                'Content-Disposition': `attachment; filename="${nombreAscii}"; filename*=UTF-8''${encodeURIComponent(nombreArchivo)}`,
             });
             const downloadStream = bucket.openDownloadStream(fileId);
+            downloadStream.on('error', (error) => {
+                console.error('Error en stream de descarga GridFS:', error);
+                if (!res.headersSent) {
+                    next(new ApiError_1.default(500, 'Error al descargar el archivo'));
+                }
+                else {
+                    res.end();
+                }
+            });
             downloadStream.pipe(res);
         }
         catch (error) {

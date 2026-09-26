@@ -67,18 +67,15 @@ const AsistenciaSchema = new mongoose_1.Schema({
     fecha: {
         type: Date,
         required: [true, 'La fecha es requerida'],
-        index: true,
     },
     cursoId: {
         type: mongoose_1.Schema.Types.ObjectId,
         ref: 'Curso',
         required: [true, 'El curso es requerido'],
-        index: true,
     },
     asignaturaId: {
         type: mongoose_1.Schema.Types.ObjectId,
         ref: 'Asignatura',
-        index: true,
     },
     docenteId: {
         type: mongoose_1.Schema.Types.ObjectId,
@@ -89,7 +86,6 @@ const AsistenciaSchema = new mongoose_1.Schema({
         type: mongoose_1.Schema.Types.ObjectId,
         ref: 'Escuela',
         required: [true, 'La escuela es requerida'],
-        index: true,
     },
     periodoId: {
         type: mongoose_1.Schema.Types.ObjectId,
@@ -118,6 +114,8 @@ const AsistenciaSchema = new mongoose_1.Schema({
 }, {
     timestamps: true,
 });
+AsistenciaSchema.index({ escuelaId: 1, docenteId: 1, fecha: -1 });
+AsistenciaSchema.index({ cursoId: 1, periodoId: 1, fecha: 1 });
 AsistenciaSchema.index({ cursoId: 1, fecha: 1 });
 AsistenciaSchema.index({ escuelaId: 1, fecha: 1 });
 AsistenciaSchema.index({ asignaturaId: 1, fecha: 1 });

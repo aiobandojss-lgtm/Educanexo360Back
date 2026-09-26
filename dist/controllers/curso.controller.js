@@ -6,6 +6,10 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const mongoose_1 = __importDefault(require("mongoose"));
 const curso_model_1 = __importDefault(require("../models/curso.model"));
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
+const POBLAR_CURSO = [
+    { path: 'director_grupo', select: 'nombre apellidos email tipo' },
+    { path: 'estudiantes', select: 'nombre apellidos email estado' },
+];
 class CursoController {
     async crear(req, res, next) {
         try {
@@ -17,7 +21,7 @@ class CursoController {
                 escuelaId: req.user.escuelaId,
             };
             const curso = await curso_model_1.default.create(cursoData);
-            await curso.populate(['director_grupo', 'estudiantes']);
+            await curso.populate(POBLAR_CURSO);
             res.status(201).json({
                 success: true,
                 data: curso,
@@ -32,7 +36,8 @@ class CursoController {
             if (!req.user) {
                 throw new ApiError_1.default(401, 'No autorizado');
             }
-            const { año_academico, estado } = req.query;
+            const año_academico = typeof req.query.año_academico === 'string' ? req.query.año_academico : undefined;
+            const estado = typeof req.query.estado === 'string' ? req.query.estado : undefined;
             const query = { escuelaId: req.user.escuelaId };
             if (año_academico) {
                 query.año_academico = año_academico;
@@ -42,9 +47,7 @@ class CursoController {
             }
             let cursos;
             if (['ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'].includes(req.user.tipo)) {
-                cursos = await curso_model_1.default.find(query)
-                    .populate(['director_grupo', 'estudiantes'])
-                    .sort({ nombre: 1 });
+                cursos = await curso_model_1.default.find(query).populate(POBLAR_CURSO).sort({ nombre: 1 }).lean();
             }
             else if (req.user.tipo === 'DOCENTE') {
                 const cursosDirigidos = await curso_model_1.default.find({
@@ -65,15 +68,27 @@ class CursoController {
                 cursos = await curso_model_1.default.find({
                     _id: { $in: Array.from(cursosIds) },
                 })
-                    .populate(['director_grupo', 'estudiantes'])
-                    .sort({ nombre: 1 });
+                    .populate(POBLAR_CURSO)
+                    .sort({ nombre: 1 })
+                    .lean();
             }
             else {
                 throw new ApiError_1.default(403, 'No tiene permisos para ver cursos');
             }
+            const idsCursos = cursos.map((c) => c._id);
+            const conteoAsignaturas = await mongoose_1.default.model('Asignatura').aggregate([
+                { $match: { escuelaId: new mongoose_1.default.Types.ObjectId(req.user.escuelaId), cursoId: { $in: idsCursos } } },
+                { $group: { _id: '$cursoId', total: { $sum: 1 } } },
+            ]);
+            const asignaturasPorCurso = new Map(conteoAsignaturas.map((a) => [String(a._id), a.total]));
+            const cursosConConteo = cursos.map((c) => ({
+                ...c,
+                estudiantesCount: Array.isArray(c.estudiantes) ? c.estudiantes.length : 0,
+                asignaturasCount: asignaturasPorCurso.get(String(c._id)) || 0,
+            }));
             res.json({
                 success: true,
-                data: cursos,
+                data: cursosConConteo,
             });
         }
         catch (error) {
@@ -88,7 +103,7 @@ class CursoController {
             const curso = await curso_model_1.default.findOne({
                 _id: req.params.id,
                 escuelaId: req.user.escuelaId,
-            }).populate(['director_grupo', 'estudiantes']);
+            }).populate(POBLAR_CURSO);
             if (!curso) {
                 throw new ApiError_1.default(404, 'Curso no encontrado');
             }
@@ -109,7 +124,7 @@ class CursoController {
             const curso = await curso_model_1.default.findOneAndUpdate({
                 _id: req.params.id,
                 escuelaId: req.user.escuelaId,
-            }, req.body, { new: true, runValidators: true }).populate(['director_grupo', 'estudiantes']);
+            }, req.body, { new: true, runValidators: true }).populate(POBLAR_CURSO);
             if (!curso) {
                 throw new ApiError_1.default(404, 'Curso no encontrado');
             }
@@ -152,7 +167,7 @@ class CursoController {
             const curso = await curso_model_1.default.findOneAndUpdate({
                 _id: req.params.id,
                 escuelaId: req.user.escuelaId,
-            }, { $addToSet: { estudiantes: { $each: estudiantes } } }, { new: true }).populate(['director_grupo', 'estudiantes']);
+            }, { $addToSet: { estudiantes: { $each: estudiantes } } }, { new: true }).populate(POBLAR_CURSO);
             if (!curso) {
                 throw new ApiError_1.default(404, 'Curso no encontrado');
             }
@@ -174,7 +189,7 @@ class CursoController {
             const curso = await curso_model_1.default.findOneAndUpdate({
                 _id: req.params.id,
                 escuelaId: req.user.escuelaId,
-            }, { $pullAll: { estudiantes } }, { new: true }).populate(['director_grupo', 'estudiantes']);
+            }, { $pullAll: { estudiantes } }, { new: true }).populate(POBLAR_CURSO);
             if (!curso) {
                 throw new ApiError_1.default(404, 'Curso no encontrado');
             }

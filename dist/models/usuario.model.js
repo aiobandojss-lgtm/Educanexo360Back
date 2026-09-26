@@ -111,7 +111,6 @@ const UsuarioSchema = new mongoose_1.Schema({
     fcmToken: {
         type: String,
         default: null,
-        index: true
     },
     platform: {
         type: String,
@@ -141,6 +140,10 @@ const UsuarioSchema = new mongoose_1.Schema({
         motivo: String,
     },
 }, { timestamps: true });
+UsuarioSchema.index({ escuelaId: 1, tipo: 1, estado: 1 });
+UsuarioSchema.index({ 'info_academica.estudiantes_asociados': 1 });
+UsuarioSchema.index({ resetPasswordToken: 1 }, { sparse: true });
+UsuarioSchema.index({ fcmToken: 1 }, { name: 'fcmToken_parcial', partialFilterExpression: { fcmToken: { $type: 'string' } } });
 const CAMPOS_SENSIBLES = [
     'password',
     'resetPasswordToken',

@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.invalidarCacheManual = exports.invalidateOnCalendario = exports.invalidateOnAnuncio = exports.invalidateOnMensaje = exports.invalidateDashboardCache = void 0;
 const simpleCache_1 = require("../cache/simpleCache");
+const logger_1 = require("../utils/logger");
 const invalidateDashboardCache = () => {
     return (req, res, next) => {
         const originalJson = res.json;
@@ -9,10 +10,10 @@ const invalidateDashboardCache = () => {
             if (data.success && req.user) {
                 const { _id: usuarioId, escuelaId } = req.user;
                 try {
-                    console.log(`🔄 Invalidando cache dashboard - Usuario: ${usuarioId}, Escuela: ${escuelaId}`);
+                    logger_1.logger.debug(`🔄 Invalidando cache dashboard - Usuario: ${usuarioId}, Escuela: ${escuelaId}`);
                     (0, simpleCache_1.invalidateCache)('dashboard', usuarioId, escuelaId);
                     if (['ADMIN', 'RECTOR', 'COORDINADOR'].includes(req.user.tipo)) {
-                        console.log(`🔄 Usuario admin - Invalidando caches adicionales`);
+                        logger_1.logger.debug(`🔄 Usuario admin - Invalidando caches adicionales`);
                         (0, simpleCache_1.invalidateCache)('mensajes', usuarioId, escuelaId);
                         (0, simpleCache_1.invalidateCache)('notificaciones', usuarioId, escuelaId);
                     }
@@ -42,14 +43,14 @@ const invalidarCacheManual = (req, res) => {
     try {
         if (type === 'dashboard' && usuarioId && escuelaId) {
             (0, simpleCache_1.invalidateCache)('dashboard', usuarioId, escuelaId);
-            console.log(`✅ Cache dashboard invalidado para usuario ${usuarioId}`);
+            logger_1.logger.debug(`✅ Cache dashboard invalidado para usuario ${usuarioId}`);
         }
         else if (type === 'all' && escuelaId) {
             (0, simpleCache_1.invalidateCache)('dashboard', req.user._id, escuelaId);
             (0, simpleCache_1.invalidateCache)('mensajes', req.user._id, escuelaId);
             (0, simpleCache_1.invalidateCache)('anuncios', req.user._id, escuelaId);
             (0, simpleCache_1.invalidateCache)('notificaciones', req.user._id, escuelaId);
-            console.log(`✅ Múltiples caches invalidados para escuela ${escuelaId}`);
+            logger_1.logger.debug(`✅ Múltiples caches invalidados para escuela ${escuelaId}`);
         }
         else {
             res.status(400).json({
