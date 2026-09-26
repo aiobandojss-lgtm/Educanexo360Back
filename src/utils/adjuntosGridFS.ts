@@ -12,6 +12,18 @@ export interface AdjuntoSubido {
 }
 
 /**
+ * Borra de GridFS archivos ya subidos (best effort): se usa cuando el mensaje/borrador no se pudo guardar
+ * después de subir los adjuntos, para no dejarlos huérfanos (auditoría 3.O).
+ */
+export const eliminarArchivosGridFS = async (
+  bucket: GridFSBucket | null | undefined,
+  ids: ObjectId[],
+): Promise<void> => {
+  if (!bucket || ids.length === 0) return;
+  await Promise.all(ids.map((id) => bucket.delete(id).catch(() => undefined)));
+};
+
+/**
  * Sube a GridFS los archivos temporales que dejó multer.
  * - Siempre borra los temporales del disco (también los que no alcanzaron a subirse).
  * - Si una subida falla, elimina de GridFS los archivos ya subidos y el parcial del que falló

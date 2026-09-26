@@ -19,7 +19,7 @@ import path from 'path';
 import pushNotificationService from '../services/pushNotification.service';
 import { numeroPagina, numeroLimite } from '../utils/paginacion';
 import { logger } from '../utils/logger';
-import { subirAdjuntosGridFS } from '../utils/adjuntosGridFS';
+import { subirAdjuntosGridFS, eliminarArchivosGridFS } from '../utils/adjuntosGridFS';
 import { contentDispositionAdjunto } from '../utils/contentDisposition';
 
 export const ROLES_CON_BORRADORES = ['ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO', 'DOCENTE'];
@@ -642,31 +642,16 @@ class MensajeController {
         borrador.destinatariosCc = destinatariosCcObjectIds;
         borrador.etiquetas = Array.isArray(etiquetas) ? etiquetas : [etiquetas].filter(Boolean);
 
-        // ===== MANEJO MEJORADO DE ADJUNTOS =====
+        // ===== MANEJO DE ADJUNTOS =====
+        // Orden (auditoría 3.P): validar → subir los nuevos → guardar → solo entonces borrar los anteriores.
+        // Antes se borraban primero: si la subida o el guardado fallaban, el borrador quedaba apuntando a
+        // archivos que ya no existían.
+        let adjuntosAnteriores: { fileId: any; nombre: string }[] = [];
+        let idsNuevos: any[] = [];
         if (req.files && req.files.length > 0) {
           logger.debug('Se enviaron nuevos adjuntos, reemplazando adjuntos anteriores...');
 
-          // PASO 1: Eliminar adjuntos anteriores de GridFS (opcional, para limpiar espacio)
-          if (borrador.adjuntos && borrador.adjuntos.length > 0) {
-            const bucket = gridfsManager.getBucket();
-            if (bucket) {
-              logger.debug(`Eliminando ${borrador.adjuntos.length} adjuntos anteriores...`);
-              for (const adjuntoAnterior of borrador.adjuntos) {
-                try {
-                  await bucket.delete(adjuntoAnterior.fileId);
-                  logger.debug(`Adjunto eliminado: ${adjuntoAnterior.nombre}`);
-                } catch (deleteError) {
-                  console.warn(
-                    `No se pudo eliminar adjunto ${adjuntoAnterior.nombre}:`,
-                    deleteError,
-                  );
-                  // Continuar aunque falle la eliminación
-                }
-              }
-            }
-          }
-
-          // PASO 2: Procesar nuevos adjuntos
+          // PASO 1: Validar y subir los nuevos adjuntos
           const nuevosAdjuntos = [];
 
           const totalSize = req.files.reduce((sum, file) => sum + file.size, 0);
@@ -687,7 +672,10 @@ class MensajeController {
           // Sube a GridFS; siempre borra los temporales y, si falla, no deja archivos huérfanos
           nuevosAdjuntos.push(...(await subirAdjuntosGridFS(req.files as any[], bucket, String(req.user._id))));
 
-          // PASO 3: REEMPLAZAR (no concatenar) los adjuntos
+          idsNuevos = nuevosAdjuntos.map((a) => a.fileId);
+
+          // PASO 2: REEMPLAZAR (no concatenar) los adjuntos
+          adjuntosAnteriores = (borrador.adjuntos || []).map((a: any) => ({ fileId: a.fileId, nombre: a.nombre }));
           borrador.adjuntos = nuevosAdjuntos; // ← CAMBIO CLAVE: Reemplazar en lugar de concatenar
           logger.debug(`Adjuntos reemplazados: ${nuevosAdjuntos.length} nuevos adjuntos`);
         } else {
@@ -698,7 +686,30 @@ class MensajeController {
           );
         }
 
-        await borrador.save();
+        try {
+          await borrador.save();
+        } catch (saveError) {
+          // No se guardó: los nuevos quedarían huérfanos; los anteriores siguen referenciados (auditoría 3.O)
+          await eliminarArchivosGridFS(gridfsManager.getBucket(), idsNuevos);
+          throw saveError;
+        }
+
+        // PASO 3: Ya guardado, eliminar los adjuntos anteriores de GridFS (si falla, solo se registra)
+        if (adjuntosAnteriores.length > 0) {
+          const bucket = gridfsManager.getBucket();
+          if (bucket) {
+            logger.debug(`Eliminando ${adjuntosAnteriores.length} adjuntos anteriores...`);
+            for (const adjuntoAnterior of adjuntosAnteriores) {
+              try {
+                await bucket.delete(adjuntoAnterior.fileId);
+                logger.debug(`Adjunto eliminado: ${adjuntoAnterior.nombre}`);
+              } catch (deleteError) {
+                console.warn(`No se pudo eliminar adjunto ${adjuntoAnterior.nombre}:`, deleteError);
+                // Continuar aunque falle la eliminación
+              }
+            }
+          }
+        }
       } else {
         // ===== CREAR NUEVO BORRADOR =====
         logger.debug('Creando nuevo borrador con destinatarios:', destinatariosObjectIds.length);
@@ -759,6 +770,8 @@ class MensajeController {
             borradorBasico.adjuntos = adjuntos;
             await borradorBasico.save();
           } catch (adjuntosError) {
+            // Si lo que falló fue el save, los adjuntos ya subidos quedarían huérfanos (auditoría 3.O)
+            await eliminarArchivosGridFS(bucket, adjuntos.map((a) => a.fileId));
             await Mensaje.deleteOne({ _id: borradorBasico._id });
             throw adjuntosError;
           }
@@ -2001,8 +2014,14 @@ class MensajeController {
         mensajeOriginalId: mensajeOriginalId || null,
       };
 
-      // Usar el servicio para crear el mensaje
-      const nuevoMensaje = await mensajeService.crearMensaje(datosMensaje, req.user);
+      // Usar el servicio para crear el mensaje; si falla, los adjuntos ya subidos quedarían huérfanos (auditoría 3.O)
+      let nuevoMensaje;
+      try {
+        nuevoMensaje = await mensajeService.crearMensaje(datosMensaje, req.user);
+      } catch (crearError) {
+        await eliminarArchivosGridFS(gridfsManager.getBucket(), adjuntos.map((a) => a.fileId));
+        throw crearError;
+      }
 
       // 🔥 NUEVA FUNCIONALIDAD: ENVIAR NOTIFICACIONES PUSH AUTOMÁTICAMENTE
       if (estado !== EstadoMensaje.BORRADOR) {
@@ -3222,8 +3241,14 @@ class MensajeController {
         mensajeOriginalId: mensajeId,
       };
 
-      // Usar el servicio para crear la respuesta
-      const respuesta = await mensajeService.crearMensaje(datosRespuesta, req.user);
+      // Usar el servicio para crear la respuesta; si falla, los adjuntos ya subidos quedarían huérfanos (auditoría 3.O)
+      let respuesta;
+      try {
+        respuesta = await mensajeService.crearMensaje(datosRespuesta, req.user);
+      } catch (crearError) {
+        await eliminarArchivosGridFS(gridfsManager.getBucket(), adjuntos.map((a) => a.fileId));
+        throw crearError;
+      }
       
       // 🔥 ENVIAR NOTIFICACIÓN PUSH PARA RESPUESTA
       try {
