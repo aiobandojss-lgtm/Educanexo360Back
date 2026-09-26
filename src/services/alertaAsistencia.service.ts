@@ -49,8 +49,19 @@ function generarCuerpoMensaje(
   `.trim();
 }
 
+let usuarioSistemaCache: { _id: mongoose.Types.ObjectId } | null = null;
+
 async function obtenerOCrearUsuarioSistema(): Promise<{ _id: mongoose.Types.ObjectId }> {
   const EMAIL_SISTEMA = 'sistema@educanexo360.com';
+  if (usuarioSistemaCache) return usuarioSistemaCache;
+
+  // bcrypt solo si hay que crearlo (antes se calculaba en CADA llamada: CPU bloqueando el proceso)
+  const existente = await Usuario.findOne({ email: EMAIL_SISTEMA }).select('_id').lean();
+  if (existente) {
+    usuarioSistemaCache = { _id: existente._id as mongoose.Types.ObjectId };
+    return usuarioSistemaCache;
+  }
+
   // findOneAndUpdate con upsert atómico — evita race condition cuando varios triggers
   // corren en paralelo para el mismo registro de asistencia.
   // Pre-save hook no corre con findOneAndUpdate, por eso hasheamos el password aquí.
@@ -68,23 +79,23 @@ async function obtenerOCrearUsuarioSistema(): Promise<{ _id: mongoose.Types.Obje
     },
     { upsert: true, new: true, select: '_id' },
   );
+  usuarioSistemaCache = sistema as any;
   return sistema as any;
 }
 
-async function obtenerPeriodoIdVigente(escuelaId: string, periodoId?: string): Promise<string> {
-  if (periodoId) {
-    return periodoId;
-  }
-
-  const escuela = (await Escuela.findById(escuelaId).select('periodos_academicos')) as any;
+// Periodo vigente (o el indicado) con su rango de fechas, para calcular el porcentaje SOLO de ese periodo
+async function obtenerPeriodoVigente(
+  escuelaId: string,
+  periodoId?: string,
+): Promise<{ id: string; desde?: Date; hasta?: Date }> {
+  const escuela = (await Escuela.findById(escuelaId).select('periodos_academicos').lean()) as any;
+  const periodos: any[] = escuela?.periodos_academicos || [];
   const hoy = new Date();
-  const periodoActivo = escuela?.periodos_academicos?.find((periodo: any) => {
-    const fechaInicio = new Date(periodo.fecha_inicio);
-    const fechaFin = new Date(periodo.fecha_fin);
-    return fechaInicio <= hoy && hoy <= fechaFin;
-  });
-
-  return periodoActivo?._id?.toString() ?? 'sin-periodo';
+  const periodo = periodoId
+    ? periodos.find((p) => String(p._id) === String(periodoId))
+    : periodos.find((p) => new Date(p.fecha_inicio) <= hoy && hoy <= new Date(p.fecha_fin));
+  if (!periodo) return { id: periodoId || 'sin-periodo' };
+  return { id: String(periodo._id), desde: new Date(periodo.fecha_inicio), hasta: new Date(periodo.fecha_fin) };
 }
 
 async function enviarNotificacionesAlerta(params: {
@@ -200,6 +211,120 @@ async function enviarNotificacionesAlerta(params: {
   // Canal 4: FCM / push notifications — pendiente cuando Flutter integre Firebase.
 }
 
+const UMBRALES: { nivel: NivelAlertaAsistencia; minPct: number }[] = [
+  { nivel: 'INMINENTE', minPct: 30 },
+  { nivel: 'CRITICO', minPct: 25 },
+  { nivel: 'ALERTA', minPct: 15 },
+];
+
+// Ejecuta tareas con concurrencia acotada (evita lanzar decenas de promesas a la vez)
+async function conConcurrencia<T>(items: T[], limite: number, tarea: (item: T) => Promise<void>) {
+  let indice = 0;
+  const trabajadores = Array.from({ length: Math.min(limite, items.length) }, async () => {
+    while (indice < items.length) {
+      const item = items[indice++];
+      await tarea(item).catch((error) => console.error('[AlertaAsistencia]', error));
+    }
+  });
+  await Promise.all(trabajadores);
+}
+
+/**
+ * Evalúa las alertas de inasistencia de los estudiantes de un curso al finalizar un registro.
+ * Una sola agregación por curso filtrada por el periodo vigente (antes: una consulta por estudiante
+ * sobre todo el histórico, bcrypt por alerta y todos los estudiantes en paralelo sin límite).
+ */
+export async function procesarAlertasAsistenciaCurso(params: {
+  estudianteIds: string[];
+  cursoId: string;
+  escuelaId: string;
+  docenteId: string;
+  periodoId?: string;
+}): Promise<void> {
+  const { cursoId, escuelaId, docenteId } = params;
+  const estudianteIds = [...new Set(params.estudianteIds)].filter((id) => mongoose.isValidObjectId(id));
+  if (estudianteIds.length === 0) return;
+
+  const periodo = await obtenerPeriodoVigente(escuelaId, params.periodoId);
+
+  const match: any = {
+    cursoId: new mongoose.Types.ObjectId(cursoId),
+    escuelaId: new mongoose.Types.ObjectId(escuelaId),
+  };
+  if (periodo.desde && periodo.hasta) match.fecha = { $gte: periodo.desde, $lte: periodo.hasta };
+
+  const conteos = await Asistencia.aggregate([
+    { $match: match },
+    { $project: { estudiantes: { estudianteId: 1, estado: 1 } } },
+    { $unwind: '$estudiantes' },
+    { $match: { 'estudiantes.estudianteId': { $in: estudianteIds.map((id) => new mongoose.Types.ObjectId(id)) } } },
+    {
+      $group: {
+        _id: '$estudiantes.estudianteId',
+        total: { $sum: 1 },
+        ausentes: { $sum: { $cond: [{ $eq: ['$estudiantes.estado', EstadoAsistencia.AUSENTE] }, 1, 0] } },
+      },
+    },
+  ]);
+
+  const enRiesgo = conteos
+    .map((c: any) => ({ estudianteId: String(c._id), porcentaje: (c.ausentes / c.total) * 100 }))
+    .map((c) => ({ ...c, umbrales: UMBRALES.filter((u) => c.porcentaje >= u.minPct) }))
+    .filter((c) => c.umbrales.length > 0);
+  if (enRiesgo.length === 0) return;
+
+  // Datos comunes una sola vez para todo el curso
+  const [administrativos, docente, curso, estudiantes] = await Promise.all([
+    Usuario.find({ escuelaId, tipo: { $in: ['RECTOR', 'COORDINADOR'] }, estado: 'ACTIVO' })
+      .select('_id email nombre apellidos')
+      .lean(),
+    Usuario.findOne({ _id: docenteId, escuelaId }).select('_id email nombre apellidos').lean(),
+    Curso.findOne({ _id: cursoId, escuelaId }).select('nombre').lean(),
+    Usuario.find({ _id: { $in: enRiesgo.map((e) => e.estudianteId) }, escuelaId }).select('nombre apellidos').lean(),
+  ]);
+
+  const destinatarios = [
+    ...(administrativos as unknown as DestinatarioAlerta[]),
+    ...(docente ? [docente as unknown as DestinatarioAlerta] : []),
+  ];
+  if (destinatarios.length === 0) return;
+
+  const nombres = new Map((estudiantes as any[]).map((e) => [String(e._id), `${e.nombre ?? ''} ${e.apellidos ?? ''}`.trim()]));
+  const nombreCurso = (curso as any)?.nombre ?? '';
+
+  await conConcurrencia(enRiesgo, 5, async ({ estudianteId, porcentaje, umbrales }) => {
+    for (const umbral of umbrales) {
+      try {
+        await AlertaAsistencia.create({
+          estudianteId,
+          cursoId,
+          escuelaId,
+          nivel: umbral.nivel,
+          porcentajeAusencias: porcentaje,
+          periodoId: periodo.id,
+          notificadosIds: destinatarios.map((destinatario) => destinatario._id),
+        });
+
+        await enviarNotificacionesAlerta({
+          nivel: umbral.nivel,
+          nombreEstudiante: nombres.get(estudianteId) || '',
+          nombreCurso,
+          porcentajeAusencias: porcentaje,
+          destinatarios,
+          escuelaId,
+          estudianteId,
+          cursoId,
+          periodoId: periodo.id,
+        });
+      } catch (error: any) {
+        // 11000: la alerta de ese nivel ya existe para el periodo → se omite
+        if (error?.code !== 11000) throw error;
+      }
+    }
+  });
+}
+
+// Compatibilidad: evaluación de un solo estudiante (usa la versión por curso)
 export async function triggerAlertasAsistencia(
   estudianteId: string,
   cursoId: string,
@@ -207,102 +332,5 @@ export async function triggerAlertasAsistencia(
   docenteId: string,
   periodoId?: string,
 ): Promise<void> {
-  console.log('[AlertaAsistencia] trigger iniciando para estudianteId:', estudianteId);
-
-  const periodoFinal = await obtenerPeriodoIdVigente(escuelaId, periodoId);
-
-  const registros = await Asistencia.find({
-    cursoId,
-    escuelaId,
-    'estudiantes.estudianteId': new mongoose.Types.ObjectId(estudianteId),
-  }).select('estudiantes');
-
-  const entradas = registros.flatMap((registro: any) =>
-    (registro.estudiantes || []).filter(
-      (estudiante: any) => estudiante.estudianteId?.toString() === estudianteId,
-    ),
-  );
-
-  const totalDias = entradas.length;
-  console.log('[AlertaAsistencia] registros:', registros.length, '| entradas aplanadas:', totalDias);
-
-  if (totalDias === 0) {
-    console.log('[AlertaAsistencia] salida temprana: 0 entradas');
-    return;
-  }
-
-  const diasAusente = entradas.filter((entrada: any) => entrada.estado === EstadoAsistencia.AUSENTE).length;
-  const porcentajeAusencias = (diasAusente / totalDias) * 100;
-  console.log('[AlertaAsistencia] ausentes:', diasAusente, '/', totalDias, '=', porcentajeAusencias.toFixed(1) + '%');
-
-  const UMBRALES: { nivel: NivelAlertaAsistencia; minPct: number }[] = [
-    { nivel: 'INMINENTE', minPct: 30 },
-    { nivel: 'CRITICO', minPct: 25 },
-    { nivel: 'ALERTA', minPct: 15 },
-  ];
-
-  const umbralesAplicables = UMBRALES.filter((umbral) => porcentajeAusencias >= umbral.minPct);
-  console.log('[AlertaAsistencia] umbrales aplicables:', umbralesAplicables.map(u => u.nivel));
-
-  if (umbralesAplicables.length === 0) {
-    console.log('[AlertaAsistencia] salida temprana: porcentaje no supera ningún umbral');
-    return;
-  }
-
-  const [administrativos, estudiante, docente, curso] = await Promise.all([
-    Usuario.find({
-      escuelaId,
-      tipo: { $in: ['RECTOR', 'COORDINADOR'] },
-      estado: 'ACTIVO',
-    }).select('_id email nombre apellidos'),
-    Usuario.findById(estudianteId).select('nombre apellidos'),
-    Usuario.findById(docenteId).select('_id email nombre apellidos'),
-    Curso.findById(cursoId).select('nombre'),
-  ]);
-
-  const destinatarios = [
-    ...(administrativos as DestinatarioAlerta[]),
-    ...(docente ? [docente as DestinatarioAlerta] : []),
-  ];
-
-  if (destinatarios.length === 0) {
-    return;
-  }
-
-  const nombreEstudiante = `${(estudiante as any)?.nombre ?? ''} ${(estudiante as any)?.apellidos ?? ''}`.trim();
-  const nombreCurso = (curso as any)?.nombre ?? '';
-
-  for (const umbral of umbralesAplicables) {
-    console.log('[AlertaAsistencia] intentando crear alerta nivel:', umbral.nivel);
-    try {
-      await AlertaAsistencia.create({
-        estudianteId,
-        cursoId,
-        escuelaId,
-        nivel: umbral.nivel,
-        porcentajeAusencias,
-        periodoId: periodoFinal,
-        notificadosIds: destinatarios.map((destinatario) => destinatario._id),
-      });
-      console.log('[AlertaAsistencia] alerta creada:', umbral.nivel);
-
-      await enviarNotificacionesAlerta({
-        nivel: umbral.nivel,
-        nombreEstudiante,
-        nombreCurso,
-        porcentajeAusencias,
-        destinatarios,
-        escuelaId,
-        estudianteId,
-        cursoId,
-        periodoId: periodoFinal,
-      });
-    } catch (error: any) {
-      if (error?.code !== 11000) {
-        console.error('[AlertaAsistencia] error no-11000 en nivel', umbral.nivel, ':', error);
-        throw error;
-      }
-      console.log('[AlertaAsistencia] alerta nivel', umbral.nivel, 'ya existe (11000) — omitida');
-    }
-  }
+  await procesarAlertasAsistenciaCurso({ estudianteIds: [estudianteId], cursoId, escuelaId, docenteId, periodoId });
 }

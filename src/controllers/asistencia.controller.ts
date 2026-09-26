@@ -13,7 +13,7 @@ import {
   EstadoAsistencia,
 } from '../interfaces/IAsistencia';
 import AlertaAsistencia from '../models/alertaAsistencia.model';
-import { triggerAlertasAsistencia } from '../services/alertaAsistencia.service';
+import { procesarAlertasAsistenciaCurso } from '../services/alertaAsistencia.service';
 import { numeroPagina, numeroLimite } from '../utils/paginacion';
 import {
   esRolAdministrativo,
@@ -476,15 +476,14 @@ export const finalizarAsistencia = async (
       const escuelaId = req.user!.escuelaId.toString();
       const periodoId = asistencia.periodoId?.toString();
 
-      for (const entrada of asistencia.estudiantes ?? []) {
-        triggerAlertasAsistencia(
-          entrada.estudianteId.toString(),
-          cursoId,
-          escuelaId,
-          docenteId,
-          periodoId,
-        ).catch((err: any) => console.error('[AlertaAsistencia]', err));
-      }
+      // Una sola evaluación por curso (agregación + concurrencia acotada) en vez de una por estudiante
+      procesarAlertasAsistenciaCurso({
+        estudianteIds: (asistencia.estudiantes ?? []).map((entrada) => entrada.estudianteId.toString()),
+        cursoId,
+        escuelaId,
+        docenteId,
+        periodoId,
+      }).catch((err: any) => console.error('[AlertaAsistencia]', err));
     });
 
     return res.status(200).json({
@@ -984,73 +983,90 @@ export const obtenerResumen = async (req: RequestWithUser, res: Response, next: 
       query['estudiantes.estudianteId'] = { $in: estudiantesPermitidos };
     }
 
-    // Filtro por rango de fechas
-    if (fechaInicio || fechaFin) {
-      query.fecha = {};
-      if (fechaInicio) query.fecha.$gte = new Date(fechaInicio as string);
-      if (fechaFin) query.fecha.$lte = new Date(fechaFin as string);
-    }
+    // Filtro por rango de fechas. Sin fechas: desde el 1 de enero del año actual (antes traía TODO
+    // el histórico y con volumen real tumbaba el proceso por memoria). Web y Flutter siempre envían
+    // el mes actual; solo aplica si el usuario borra el filtro.
+    query.fecha = {};
+    if (fechaInicio) query.fecha.$gte = new Date(fechaInicio as string);
+    if (fechaFin) query.fecha.$lte = new Date(fechaFin as string);
+    if (!fechaInicio && !fechaFin) query.fecha.$gte = new Date(new Date().getFullYear(), 0, 1);
 
     // Si es docente, solo mostrar sus propios registros
     if (req.user.tipo === 'DOCENTE') {
       query.docenteId = req.user._id;
     }
 
-    // ✅ CAMBIO 1: Agregar asignaturaId al select y populate
-    const registros = await Asistencia.find(query)
-      .populate('cursoId', 'nombre nivel grado grupo')
-      .populate('asignaturaId', 'nombre codigo') // ← ✅ AGREGAR ESTA LÍNEA
-      .populate('docenteId', 'nombre apellidos')
-      .select('fecha cursoId asignaturaId docenteId estudiantes createdAt finalizado'); // ← ✅ Agregar asignaturaId
+    // Agregación (Fase 3.7): los conteos se calculan en MongoDB y no se traen los arreglos de
+    // estudiantes a memoria. La forma de cada fila es idéntica a la versión anterior.
+    const oid = (v: any) => (v instanceof mongoose.Types.ObjectId ? v : new mongoose.Types.ObjectId(String(v)));
+    const matchAgg: any = { escuelaId: oid(query.escuelaId) };
+    if (query.cursoId) matchAgg.cursoId = oid(query.cursoId);
+    if (query.docenteId) matchAgg.docenteId = oid(query.docenteId);
+    if (query.fecha) matchAgg.fecha = query.fecha;
+    const permitidosOid = estudiantesPermitidos.filter((id) => mongoose.isValidObjectId(id)).map(oid);
+    if (esRolPersonal) matchAgg['estudiantes.estudianteId'] = { $in: permitidosOid };
 
     // Roles personales: cada registro solo con la entrada del estudiante permitido (no la de sus compañeros)
-    if (esRolPersonal) {
-      const permitidos = new Set(estudiantesPermitidos);
-      registros.forEach((registro: any) => {
-        registro.estudiantes = registro.estudiantes.filter((est: any) =>
-          permitidos.has(String(est.estudianteId)),
-        );
-      });
-    }
+    const entradas = esRolPersonal
+      ? { $filter: { input: '$estudiantes', as: 'e', cond: { $in: ['$$e.estudianteId', permitidosOid] } } }
+      : '$estudiantes';
+    const contar = (estado: string) => ({
+      $size: { $filter: { input: '$entradas', as: 'e', cond: { $eq: ['$$e.estado', estado] } } },
+    });
 
-    // Transformar los datos para el formato que espera el frontend
-    const resumen = registros.map((registro) => {
-      // Calcular estadísticas para este registro
-      const totalEstudiantes = registro.estudiantes.length;
-      const presentes = registro.estudiantes.filter(
-        (est) => est.estado === EstadoAsistencia.PRESENTE,
-      ).length;
-      const ausentes = registro.estudiantes.filter(
-        (est) => est.estado === EstadoAsistencia.AUSENTE,
-      ).length;
-      const tardes = registro.estudiantes.filter(
-        (est) => est.estado === EstadoAsistencia.TARDANZA,
-      ).length;
-      const justificados = registro.estudiantes.filter(
-        (est) => est.estado === EstadoAsistencia.JUSTIFICADO,
-      ).length;
-      const permisos = registro.estudiantes.filter(
-        (est) => est.estado === EstadoAsistencia.PERMISO,
-      ).length;
+    const filas = await Asistencia.aggregate([
+      { $match: matchAgg },
+      { $sort: { _id: 1 } },
+      { $project: { fecha: 1, cursoId: 1, asignaturaId: 1, docenteId: 1, createdAt: 1, finalizado: 1, entradas } },
+      {
+        $project: {
+          fecha: 1,
+          cursoId: 1,
+          asignaturaId: 1,
+          docenteId: 1,
+          createdAt: 1,
+          finalizado: 1,
+          totalEstudiantes: { $size: '$entradas' },
+          presentes: contar(EstadoAsistencia.PRESENTE),
+          ausentes: contar(EstadoAsistencia.AUSENTE),
+          tardes: contar(EstadoAsistencia.TARDANZA),
+          justificados: contar(EstadoAsistencia.JUSTIFICADO),
+          permisos: contar(EstadoAsistencia.PERMISO),
+        },
+      },
+    ]);
 
-      // Calcular porcentaje de asistencia
-      const porcentajeAsistencia = Math.round(
-        ((presentes + justificados) / totalEstudiantes) * 100,
-      );
+    // Curso, asignatura y docente: una consulta $in por colección (antes: populate por registro)
+    const unicos = (campo: string) => [...new Set(filas.map((f: any) => f[campo]).filter(Boolean).map(String))];
+    const [cursosInfo, asignaturasInfo, docentesInfo] = await Promise.all([
+      Curso.find({ _id: { $in: unicos('cursoId') } }).select('nombre nivel grado grupo').lean(),
+      mongoose.model('Asignatura').find({ _id: { $in: unicos('asignaturaId') } }).select('nombre codigo').lean(),
+      Usuario.find({ _id: { $in: unicos('docenteId') } }).select('nombre apellidos').lean(),
+    ]);
+    const mapa = (docs: any[]) => new Map(docs.map((d) => [String(d._id), d]));
+    const cursosMap = mapa(cursosInfo);
+    const asignaturasMap = mapa(asignaturasInfo);
+    const docentesMap = mapa(docentesInfo);
 
-      // Usar casting a any para acceso seguro a propiedades
-      const cursoData = registro.cursoId
-        ? (registro.cursoId as any)
-        : { nombre: 'Sin curso', grado: '', grupo: '' };
-      
-      // ✅ CAMBIO 2: Agregar asignaturaData
-      const asignaturaData = registro.asignaturaId
-        ? (registro.asignaturaId as any)
+    // Transformar los datos para el formato que espera el frontend (igual que antes)
+    const resumen = filas.map((registro: any) => {
+      const { totalEstudiantes, presentes, ausentes, tardes, justificados, permisos } = registro;
+
+      // Calcular porcentaje de asistencia (Math.round; NaN → null en JSON si no hay estudiantes)
+      const porcentajeAsistencia = Math.round(((presentes + justificados) / totalEstudiantes) * 100);
+
+      const cursoData: any = (registro.cursoId && cursosMap.get(String(registro.cursoId))) || {
+        nombre: 'Sin curso',
+        grado: '',
+        grupo: '',
+      };
+      const asignaturaData: any = registro.asignaturaId
+        ? asignaturasMap.get(String(registro.asignaturaId)) || null
         : null;
-      
-      const docenteData = registro.docenteId
-        ? (registro.docenteId as any)
-        : { nombre: 'Sin nombre', apellidos: '' };
+      const docenteData: any = (registro.docenteId && docentesMap.get(String(registro.docenteId))) || {
+        nombre: 'Sin nombre',
+        apellidos: '',
+      };
 
       return {
         _id: registro._id,
@@ -1061,11 +1077,12 @@ export const obtenerResumen = async (req: RequestWithUser, res: Response, next: 
           grado: cursoData.grado || '',
           grupo: cursoData.grupo || '',
         },
-        // ✅ CAMBIO 3: Agregar campo asignatura en el resultado
-        asignatura: asignaturaData ? {
-          _id: asignaturaData._id || '',
-          nombre: asignaturaData.nombre || '',
-        } : null,
+        asignatura: asignaturaData
+          ? {
+              _id: asignaturaData._id || '',
+              nombre: asignaturaData.nombre || '',
+            }
+          : null,
         totalEstudiantes,
         presentes,
         ausentes,

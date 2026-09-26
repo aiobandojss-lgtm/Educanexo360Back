@@ -414,6 +414,17 @@ export const informeHistorialEstudiante = async (
   const dias = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
   const historial: RegistroHistorial[] = [];
 
+  // Nombres de quienes registraron: una sola consulta $in (antes: findById por cada registro)
+  const idsRegistradores = new Set<string>();
+  for (const registro of registros) {
+    const e = (registro.estudiantes as any[]).find((x: any) => x.estudianteId.toString() === estudianteId);
+    if (e?.registradoPor) idsRegistradores.add(e.registradoPor.toString());
+  }
+  const registradores = await Usuario.find({ _id: { $in: [...idsRegistradores] } })
+    .select('nombre apellidos')
+    .lean();
+  const registradoresMap = new Map(registradores.map((d: any) => [d._id.toString(), d]));
+
   for (const registro of registros) {
     const entrada = (registro.estudiantes as any[]).find(
       (e: any) => e.estudianteId.toString() === estudianteId,
@@ -435,7 +446,7 @@ export const informeHistorialEstudiante = async (
     // Si tiene registradoPor, obtener nombre
     let registradoPor = null;
     if (entrada.registradoPor) {
-      const docente = await Usuario.findById(entrada.registradoPor).select('nombre apellidos').lean() as any;
+      const docente = registradoresMap.get(entrada.registradoPor.toString()) as any;
       if (docente) {
         registradoPor = { _id: docente._id.toString(), nombre: docente.nombre, apellidos: docente.apellidos };
       }
