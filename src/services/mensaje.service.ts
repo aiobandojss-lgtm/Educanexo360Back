@@ -22,6 +22,39 @@ import config from '../config/config';
 import { aArregloDeIds, obtenerCursosDocente } from '../utils/accesoAcademico';
 import { logger } from '../utils/logger';
 
+// Tipo de usuario legible en minúsculas para el texto de las copias a acudientes
+const TIPO_LEGIBLE: Record<string, string> = {
+  DOCENTE: 'docente',
+  RECTOR: 'rector(a)',
+  COORDINADOR: 'coordinador(a)',
+  ADMINISTRATIVO: 'administrativo(a)',
+  ADMIN: 'administrador(a)',
+  SUPER_ADMIN: 'administrador(a) del sistema',
+  ESTUDIANTE: 'estudiante',
+  ACUDIENTE: 'acudiente',
+};
+
+/**
+ * Único lugar que arma el asunto y la primera línea de las copias automáticas a acudientes
+ * (crear, enviar borrador y responder pasan por enviarCopiaAcudientes).
+ * Asunto: "<asunto> · <nombres del estudiante>" (sin apellidos).
+ */
+export const construirCopiaAcudiente = (
+  datos: { asunto: string; contenido: string },
+  remitente: { tipo?: string; nombre?: string; apellidos?: string },
+  estudiante: { nombre?: string; apellidos?: string },
+): { asunto: string; contenido: string } => {
+  const tipo = TIPO_LEGIBLE[remitente.tipo || ''] || 'personal del colegio';
+  const nombreRemitente = `${remitente.nombre ?? ''} ${remitente.apellidos ?? ''}`.trim();
+  const nombreEstudiante = `${estudiante.nombre ?? ''} ${estudiante.apellidos ?? ''}`.trim();
+  return {
+    asunto: `${datos.asunto} · ${(estudiante.nombre ?? '').trim()}`,
+    contenido:
+      `El/La ${tipo} ${nombreRemitente} le escribió a ${nombreEstudiante}. ` +
+      `Usted recibe este mensaje porque es su acudiente.\n\n${datos.contenido}`,
+  };
+};
+
 class MensajeService {
   // 🚀 CACHE HELPER: Crear clave de cache consistente
   private createCacheKey(type: string, ...params: string[]): string {
@@ -556,6 +589,19 @@ class MensajeService {
         return null;
       }
 
+      // El estudiante (su nombre va en la copia) debe estar activo en el colegio del remitente
+      const estudiante: any = await Usuario.findOne({
+        _id: estudianteId,
+        escuelaId,
+        tipo: 'ESTUDIANTE',
+        estado: 'ACTIVO',
+      })
+        .select('nombre apellidos')
+        .lean();
+      if (!estudiante) {
+        return null;
+      }
+
       const cacheKey = this.createCacheKey('acudientes', escuelaId, estudianteId);
 
       // No cachear resultados vacíos — podrían contaminar llamadas futuras si la asociación aún no existía
@@ -565,22 +611,14 @@ class MensajeService {
         logger.debug(`📋 CACHE HIT: ${cacheKey}`);
         acudientes = cached;
       } else {
-        // Consultas simples por colegio (antes: $lookup con $expr sobre todos los colegios)
-        const estudiante = await Usuario.exists({
-          _id: estudianteId,
+        // Consulta simple por colegio (antes: $lookup con $expr sobre todos los colegios)
+        acudientes = await Usuario.find({
           escuelaId,
-          tipo: 'ESTUDIANTE',
-          estado: 'ACTIVO',
-        });
-        acudientes = estudiante
-          ? await Usuario.find({
-              escuelaId,
-              tipo: 'ACUDIENTE',
-              'info_academica.estudiantes_asociados': new mongoose.Types.ObjectId(estudianteId),
-            })
-              .select('_id')
-              .lean()
-          : [];
+          tipo: 'ACUDIENTE',
+          'info_academica.estudiantes_asociados': new mongoose.Types.ObjectId(estudianteId),
+        })
+          .select('_id')
+          .lean();
         // Solo cachear si hay resultados
         if (acudientes.length > 0) {
           if (safeCacheSet(cacheKey, acudientes, 300)) {
@@ -594,10 +632,15 @@ class MensajeService {
         return null;
       }
 
+      const copia = construirCopiaAcudiente(
+        { asunto: datos.asunto, contenido: datos.contenido },
+        usuarioOrigen || {},
+        estudiante,
+      );
       const mensajeAcudientes = {
         destinatarios: acudientes.map((a: any) => a._id.toString()),
-        asunto: `[COPIA] ${datos.asunto}`,
-        contenido: `Este mensaje ha sido enviado automáticamente como copia del mensaje enviado a su acudido.\n\n${datos.contenido}`,
+        asunto: copia.asunto,
+        contenido: copia.contenido,
         adjuntos: datos.adjuntos || [],
         tipo: datos.tipo || TipoMensaje.INDIVIDUAL,
         prioridad: datos.prioridad || PrioridadMensaje.NORMAL,
