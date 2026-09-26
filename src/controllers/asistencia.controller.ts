@@ -16,6 +16,7 @@ import AlertaAsistencia from '../models/alertaAsistencia.model';
 import { procesarAlertasAsistenciaCurso } from '../services/alertaAsistencia.service';
 import { numeroPagina, numeroLimite } from '../utils/paginacion';
 import { logger } from '../utils/logger';
+import { inicioMesColombia } from '../utils/fechas';
 import {
   esRolAdministrativo,
   docenteTieneCurso,
@@ -959,6 +960,11 @@ export const obtenerResumen = async (req: RequestWithUser, res: Response, next: 
     const cursoId = queryString(req.query.cursoId);
     const estudianteIdQuery = queryString(req.query.estudianteId);
 
+    // cursoId mal formado → 400 (antes: excepción al convertirlo a ObjectId → 500)
+    if (cursoId && !mongoose.isValidObjectId(cursoId)) {
+      return next(new ApiError(400, 'cursoId inválido'));
+    }
+
     // Construir la consulta
     const query: any = { escuelaId: req.user.escuelaId };
 
@@ -990,10 +996,9 @@ export const obtenerResumen = async (req: RequestWithUser, res: Response, next: 
     if (fechaInicio) query.fecha.$gte = new Date(fechaInicio as string);
     if (fechaFin) query.fecha.$lte = new Date(fechaFin as string);
     if (!fechaInicio && !fechaFin) {
-      // Inicio de mes en UTC: las fechas se guardan como medianoche UTC (igual que 'YYYY-MM-DD' de los
-      // clientes); con hora local (UTC-5) quedaba por fuera el registro del día 1
-      const hoy = new Date();
-      query.fecha.$gte = new Date(Date.UTC(hoy.getUTCFullYear(), hoy.getUTCMonth(), 1));
+      // Mes actual según la hora de Colombia (entre las 19:00 y las 24:00 del último día, el mes UTC ya
+      // es el siguiente), expresado como medianoche UTC del día 1, igual que se guardan las fechas
+      query.fecha.$gte = inicioMesColombia();
     }
 
     // Si es docente, solo mostrar sus propios registros
