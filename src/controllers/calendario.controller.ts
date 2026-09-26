@@ -596,7 +596,9 @@ class CalendarioController {
     logger.debug(`Estado actual: ${evento.estado}`);
 
     // 🚨 CAMBIO AQUÍ: Agregar COORDINADOR, RECTOR, DOCENTE y ADMINISTRATIVO a los roles permitidos
-    const rolesAdministrativos = ['ADMIN', 'COORDINADOR', 'RECTOR', 'DOCENTE', 'ADMINISTRATIVO'];
+    // Administrativos: cualquier evento de su colegio. DOCENTE: solo los que creó (decisión de Aymer, Fase 3;
+    // el web ya solo le muestra el botón en sus eventos y Flutter no se lo muestra)
+    const rolesAdministrativos = ['ADMIN', 'COORDINADOR', 'RECTOR', 'ADMINISTRATIVO'];
     const esCreador = evento.creadorId.toString() === req.user._id;
     const tienePermisoAdministrativo = rolesAdministrativos.includes(req.user.tipo);
 
@@ -617,8 +619,8 @@ class CalendarioController {
 
     // 🚨 CAMBIAR ESTADO A CANCELADO (mantener en BD para historial)
     logger.debug('🔄 Cambiando estado del evento a CANCELADO...');
-    const eventoActualizado = await EventoCalendario.findByIdAndUpdate(
-      req.params.id,
+    const eventoActualizado = await EventoCalendario.findOneAndUpdate(
+      { _id: req.params.id, escuelaId: req.user.escuelaId },
       {
         estado: EstadoEvento.CANCELADO,
         fechaCancelacion: new Date(),
@@ -733,14 +735,16 @@ class CalendarioController {
     }
 
     // 🚨 CAMBIO AQUÍ: Agregar COORDINADOR y RECTOR a los roles permitidos
-    const rolesConPermiso = ['ADMIN', 'COORDINADOR', 'RECTOR', 'DOCENTE','ADMINISTRATIVO'];
-    if (!rolesConPermiso.includes(req.user.tipo)) {
+    // Administrativos: cualquier evento de su colegio. DOCENTE: solo los que creó (decisión de Aymer, Fase 3)
+    const rolesConPermiso = ['ADMIN', 'COORDINADOR', 'RECTOR', 'ADMINISTRATIVO'];
+    const esCreadorEvento = evento.creadorId.toString() === req.user._id;
+    if (!rolesConPermiso.includes(req.user.tipo) && !(req.user.tipo === 'DOCENTE' && esCreadorEvento)) {
       throw new ApiError(403, 'No tienes permiso para cambiar el estado de este evento');
     }
 
     // Actualizar el estado
-    const eventoActualizado = await EventoCalendario.findByIdAndUpdate(
-      id,
+    const eventoActualizado = await EventoCalendario.findOneAndUpdate(
+      { _id: id, escuelaId: req.user.escuelaId },
       { estado },
       { new: true },
     )

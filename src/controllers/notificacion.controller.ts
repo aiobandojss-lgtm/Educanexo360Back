@@ -31,13 +31,25 @@ export class NotificacionController {
         throw new ApiError(401, 'No autorizado');
       }
 
-      const { fcmToken, platform, deviceInfo } = req.body;
+      const { fcmToken, deviceInfo } = req.body;
+
+      // fcmToken null: desvincular el dispositivo (las APK 1.0.0 lo envían así al cerrar sesión)
+      if (fcmToken === null) {
+        await Usuario.updateOne(
+          { _id: req.user._id },
+          { $set: { fcmToken: null, fcmTokenUpdatedAt: new Date() }, $unset: { platform: '' } },
+        );
+        res.json({ success: true, message: 'Token FCM eliminado', data: { tokenRegistered: false } });
+        return;
+      }
 
       if (!fcmToken) {
         throw new ApiError(400, 'Token FCM es requerido');
       }
 
-      if (!platform || !['ios', 'android'].includes(platform)) {
+      // platform opcional: por defecto 'android' (APK anteriores al 2026-06-10)
+      const platform = req.body.platform || 'android';
+      if (!['ios', 'android'].includes(platform)) {
         throw new ApiError(400, 'Platform debe ser "ios" o "android"');
       }
 

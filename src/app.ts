@@ -155,12 +155,10 @@ if (basePath) {
 }
 
 // ===== RUTA BASE =====
+// Público: sin entorno ni versión (información útil para un atacante)
 app.get(basePath || '/', (req: Request, res: Response) => {
   res.json({
     name: 'EducaNexo360 API',
-    version: process.env.npm_package_version || '1.0.0',
-    environment: process.env.NODE_ENV || 'development',
-    time: new Date().toISOString(),
   });
 });
 

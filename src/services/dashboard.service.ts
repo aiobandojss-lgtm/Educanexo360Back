@@ -8,6 +8,8 @@ import Curso from '../models/curso.model';
 import Calificacion from '../models/calificacion.model';
 import Asistencia from '../models/asistencia.model';
 import { logger } from '../utils/logger';
+import Tarea from '../models/tarea.model';
+import { obtenerCursosDocente } from '../utils/accesoAcademico';
 
 export interface DashboardStats {
   mensajesSinLeer: number;
@@ -177,13 +179,19 @@ class DashboardService {
     usuarioId: mongoose.Types.ObjectId,
     escuelaId: mongoose.Types.ObjectId,
   ): Promise<ResumenPorRol> {
-    const [cursosInfo, calificacionesPendientes] = await Promise.all([
+    // Cursos del docente: director de grupo o asignatura ACTIVA asignada. Antes filtraba por
+    // 'asignaturas.docenteId', campo que no existe en Curso (solo contaba los que dirige).
+    const idsCursos = (await obtenerCursosDocente(String(usuarioId), String(escuelaId))).map(
+      (id) => new mongoose.Types.ObjectId(id),
+    );
+
+    const [cursosInfo, pendientesInfo] = await Promise.all([
       // Cursos donde es docente
       Curso.aggregate([
         {
           $match: {
             escuelaId: escuelaId,
-            $or: [{ director_grupo: usuarioId }, { 'asignaturas.docenteId': usuarioId }],
+            _id: { $in: idsCursos },
           },
         },
         {
@@ -195,13 +203,16 @@ class DashboardService {
         },
       ]),
 
-      // Calificaciones pendientes (ejemplo)
-      Calificacion.countDocuments({
-        docenteId: usuarioId,
-        escuelaId: escuelaId,
-        estado: 'PENDIENTE',
-      }),
+      // Pendientes por calificar: entregas ya enviadas y sin calificar en sus tareas. Antes contaba
+      // Calificacion {docenteId, estado:'PENDIENTE'}: campos inexistentes → siempre 0 (y recorría la colección).
+      Tarea.aggregate([
+        { $match: { escuelaId, docenteId: usuarioId, 'entregas.fechaEntrega': { $exists: true } } },
+        { $unwind: '$entregas' },
+        { $match: { 'entregas.fechaEntrega': { $exists: true }, 'entregas.estado': { $ne: 'CALIFICADA' } } },
+        { $count: 'total' },
+      ]),
     ]);
+    const calificacionesPendientes = pendientesInfo[0]?.total || 0;
 
     const resumen = cursosInfo[0] || { cursosAsignados: 0, estudiantesTotales: 0 };
     return {
