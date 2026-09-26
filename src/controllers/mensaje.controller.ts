@@ -2150,25 +2150,39 @@ export class MensajeController {
         hasta,
       } = req.query;
 
-      const opciones = {
-        pagina: parseInt(pagina as string, 10),
-        limite: parseInt(limite as string, 10),
-      };
+      // Paginación con tope (máx. 100: el widget del dashboard web pide 100) y protección contra NaN
+      const paginaNum = Math.max(parseInt(pagina as string, 10) || 1, 1);
+      const limiteNum = Math.min(Math.max(parseInt(limite as string, 10) || 20, 1), 100);
+      const opciones = { pagina: paginaNum, limite: limiteNum };
 
       const usuarioId = new mongoose.Types.ObjectId(req.user._id);
       const escuelaId = new mongoose.Types.ObjectId(req.user.escuelaId);
 
-      // Pipeline de agregación para filtrar mensajes según los estados del usuario
-      const pipeline: any[] = [
-        {
-          $match: {
-            escuelaId: escuelaId,
-          },
-        },
-      ];
+      if (bandeja === 'borradores' && !ROLES_CON_BORRADORES.includes(req.user.tipo)) {
+        return res.json({
+          success: true,
+          data: [],
+          meta: { total: 0, pagina: opciones.pagina, limite: opciones.limite, totalPaginas: 0 },
+          message: 'No tiene permisos para acceder a borradores',
+        });
+      }
 
-      // Filtro por tipo de mensaje
-      if (tipo) {
+      // 1) $match inicial POR USUARIO (usa los índices destinatarios/destinatariosCc/remitente + createdAt).
+      //    Antes: $match solo por escuelaId y $filter/$lookup sobre todos los mensajes del colegio.
+      const comoDestinatario = [{ destinatarios: usuarioId }, { destinatariosCc: usuarioId }];
+      const matchInicial: any = { escuelaId };
+      if (bandeja === 'recibidos') {
+        matchInicial.$or = comoDestinatario;
+      } else if (bandeja === 'enviados' || bandeja === 'borradores') {
+        matchInicial.remitente = usuarioId;
+      } else {
+        matchInicial.$or = [{ remitente: usuarioId }, ...comoDestinatario];
+      }
+
+      const pipeline: any[] = [{ $match: matchInicial }];
+
+      // Filtro por tipo de mensaje (solo string: evita operadores)
+      if (typeof tipo === 'string' && tipo) {
         pipeline.push({ $match: { tipo } });
       }
 
@@ -2189,8 +2203,8 @@ export class MensajeController {
       }
 
       // Filtro de búsqueda por asunto o contenido
-      if (busqueda) {
-        const regex = new RegExp(escapeRegex(busqueda as string), 'i');
+      if (typeof busqueda === 'string' && busqueda) {
+        const regex = new RegExp(escapeRegex(busqueda), 'i');
         pipeline.push({
           $match: {
             $or: [{ asunto: regex }, { contenido: regex }],
@@ -2198,12 +2212,12 @@ export class MensajeController {
         });
       }
 
-      // Añadimos un campo para indicar si el usuario es remitente o destinatario
+      // 2) Misma lógica de estado por usuario que antes (estado propio o, si no existe, el global)
       pipeline.push({
         $addFields: {
           esRemitente: { $eq: ['$remitente', usuarioId] },
-          esDestinatario: { $in: [usuarioId, '$destinatarios'] },
-          esDestinatarioCc: { $in: [usuarioId, '$destinatariosCc'] },
+          esDestinatario: { $in: [usuarioId, { $ifNull: ['$destinatarios', []] }] },
+          esDestinatarioCc: { $in: [usuarioId, { $ifNull: ['$destinatariosCc', []] }] },
           estadoUsuario: {
             $let: {
               vars: {
@@ -2226,7 +2240,7 @@ export class MensajeController {
         },
       });
 
-      // Filtros específicos según la bandeja
+      // Filtros específicos según la bandeja (misma semántica que antes)
       const matchBandeja: any = {};
 
       if (bandeja === 'recibidos') {
@@ -2240,21 +2254,6 @@ export class MensajeController {
         matchBandeja.tipo = { $ne: TipoMensaje.BORRADOR };
         matchBandeja.esCopiaAcudiente = { $ne: true };
       } else if (bandeja === 'borradores') {
-        // Verificar que el usuario tiene permiso para acceder a borradores
-        if (!ROLES_CON_BORRADORES.includes(req.user.tipo)) {
-          return res.json({
-            success: true,
-            data: [],
-            meta: {
-              total: 0,
-              pagina: opciones.pagina,
-              limite: opciones.limite,
-              totalPaginas: 0,
-            },
-            message: 'No tiene permisos para acceder a borradores',
-          });
-        }
-
         matchBandeja.esRemitente = true;
         matchBandeja.tipo = TipoMensaje.BORRADOR;
       } else if (bandeja === 'archivados') {
@@ -2273,88 +2272,121 @@ export class MensajeController {
         matchBandeja.estadoUsuario = EstadoMensaje.ELIMINADO;
       }
 
-      pipeline.push({ $match: matchBandeja });
+      pipeline.push({ $match: matchBandeja }, { $sort: { createdAt: -1 } });
 
-      // Lookup para obtener información de remitentes y destinatarios
-      pipeline.push(
-        {
-          $lookup: {
-            from: 'usuarios',
-            localField: 'remitente',
-            foreignField: '_id',
-            as: 'remitenteInfo',
-          },
-        },
-        {
-          $lookup: {
-            from: 'usuarios',
-            localField: 'destinatarios',
-            foreignField: '_id',
-            as: 'destinatariosInfo',
-          },
-        },
-        {
-          $addFields: {
-            remitente: { $arrayElemAt: ['$remitenteInfo', 0] },
-            destinatarios: '$destinatariosInfo',
-          },
-        },
-        {
-          // $lookup se salta el toJSON del modelo: proyectar solo los datos públicos del usuario
-          $addFields: {
-            remitente: {
-              $cond: [
-                { $ifNull: ['$remitente._id', false] },
-                {
-                  _id: '$remitente._id',
-                  nombre: '$remitente.nombre',
-                  apellidos: '$remitente.apellidos',
-                  email: '$remitente.email',
-                  tipo: '$remitente.tipo',
-                  perfil: { foto: '$remitente.perfil.foto' },
+      // 3) Página + conteo en una sola consulta; el $lookup solo corre sobre la página
+      const proyeccionUsuario = (prefijo: string) => ({
+        _id: `${prefijo}._id`,
+        nombre: `${prefijo}.nombre`,
+        apellidos: `${prefijo}.apellidos`,
+        email: `${prefijo}.email`,
+        tipo: `${prefijo}.tipo`,
+        perfil: { foto: `${prefijo}.perfil.foto` },
+      });
+
+      pipeline.push({
+        $facet: {
+          datos: [
+            { $skip: (opciones.pagina - 1) * opciones.limite },
+            { $limit: opciones.limite },
+            {
+              $addFields: {
+                totalDestinatarios: { $size: { $ifNull: ['$destinatarios', []] } },
+                // leido: destinatario → si ÉL lo leyó; remitente → si alguien lo leyó (como lo interpretaba el web)
+                leido: {
+                  $cond: [
+                    '$esRemitente',
+                    { $gt: [{ $size: { $ifNull: ['$lecturas', []] } }, 0] },
+                    { $in: [usuarioId, { $ifNull: ['$lecturas.usuarioId', []] }] },
+                  ],
                 },
-                '$$REMOVE',
-              ],
-            },
-            destinatarios: {
-              $map: {
-                input: '$destinatarios',
-                as: 'd',
-                in: {
-                  _id: '$$d._id',
-                  nombre: '$$d.nombre',
-                  apellidos: '$$d.apellidos',
-                  email: '$$d.email',
-                  tipo: '$$d.tipo',
-                  perfil: { foto: '$$d.perfil.foto' },
+                // Solo la entrada del propio usuario (el web filtra archivados/eliminados con ella;
+                // Flutter calcula "leído por mí" con lecturas). Antes: arreglos completos (miles en masivos).
+                estadosUsuarios: {
+                  $filter: {
+                    input: { $ifNull: ['$estadosUsuarios', []] },
+                    as: 'e',
+                    cond: { $eq: ['$$e.usuarioId', usuarioId] },
+                  },
+                },
+                lecturas: {
+                  $filter: {
+                    input: { $ifNull: ['$lecturas', []] },
+                    as: 'l',
+                    cond: { $eq: ['$$l.usuarioId', usuarioId] },
+                  },
+                },
+                // Destinatarios visibles: remitente → los 3 primeros; individual con ≤10 → todos;
+                // masivo o >10 → solo el propio usuario (privacidad). El conteo va en totalDestinatarios.
+                destinatarios: {
+                  $cond: [
+                    '$esRemitente',
+                    { $slice: [{ $ifNull: ['$destinatarios', []] }, 3] },
+                    {
+                      $cond: [
+                        {
+                          $and: [
+                            { $eq: ['$tipo', TipoMensaje.INDIVIDUAL] },
+                            { $lte: [{ $size: { $ifNull: ['$destinatarios', []] } }, 10] },
+                          ],
+                        },
+                        { $ifNull: ['$destinatarios', []] },
+                        {
+                          $filter: {
+                            input: { $ifNull: ['$destinatarios', []] },
+                            as: 'd',
+                            cond: { $eq: ['$$d', usuarioId] },
+                          },
+                        },
+                      ],
+                    },
+                  ],
                 },
               },
             },
-          },
+            {
+              $lookup: {
+                from: 'usuarios',
+                localField: 'remitente',
+                foreignField: '_id',
+                as: 'remitenteInfo',
+                pipeline: [{ $project: { nombre: 1, apellidos: 1, email: 1, tipo: 1, 'perfil.foto': 1 } }],
+              },
+            },
+            {
+              $lookup: {
+                from: 'usuarios',
+                localField: 'destinatarios',
+                foreignField: '_id',
+                as: 'destinatariosInfo',
+                pipeline: [{ $project: { nombre: 1, apellidos: 1, email: 1, tipo: 1, 'perfil.foto': 1 } }],
+              },
+            },
+            {
+              // $lookup se salta el toJSON del modelo: proyectar solo los datos públicos del usuario
+              $addFields: {
+                remitente: {
+                  $let: {
+                    vars: { r: { $arrayElemAt: ['$remitenteInfo', 0] } },
+                    in: {
+                      $cond: [{ $ifNull: ['$$r._id', false] }, proyeccionUsuario('$$r'), '$$REMOVE'],
+                    },
+                  },
+                },
+                destinatarios: {
+                  $map: { input: '$destinatariosInfo', as: 'd', in: proyeccionUsuario('$$d') },
+                },
+              },
+            },
+            { $project: { remitenteInfo: 0, destinatariosInfo: 0 } },
+          ],
+          total: [{ $count: 'total' }],
         },
-        {
-          $project: {
-            remitenteInfo: 0,
-            destinatariosInfo: 0,
-          },
-        },
-      );
+      });
 
-      // Conteo total
-      const totalPipeline = [...pipeline];
-      const countResult = await Mensaje.aggregate([...totalPipeline, { $count: 'total' }]);
-
-      const total = countResult.length > 0 ? countResult[0].total : 0;
-
-      // Ordenar, saltar y limitar resultados
-      pipeline.push(
-        { $sort: { createdAt: -1 } },
-        { $skip: (opciones.pagina - 1) * opciones.limite },
-        { $limit: opciones.limite },
-      );
-
-      // Ejecutar la consulta
-      const mensajes = await Mensaje.aggregate(pipeline);
+      const [resultado] = await Mensaje.aggregate(pipeline);
+      const mensajes = resultado?.datos || [];
+      const total = resultado?.total?.[0]?.total || 0;
 
       return res.json({
         success: true,
