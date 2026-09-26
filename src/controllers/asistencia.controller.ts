@@ -984,13 +984,15 @@ export const obtenerResumen = async (req: RequestWithUser, res: Response, next: 
       query['estudiantes.estudianteId'] = { $in: estudiantesPermitidos };
     }
 
-    // Filtro por rango de fechas. Sin fechas: desde el 1 de enero del año actual (antes traía TODO
-    // el histórico y con volumen real tumbaba el proceso por memoria). Web y Flutter siempre envían
-    // el mes actual; solo aplica si el usuario borra el filtro.
+    // Filtro por rango de fechas. Sin fechas: el mes actual, igual que el rango por defecto de web y
+    // Flutter (antes traía TODO el histórico y con volumen real tumbaba el proceso por memoria).
     query.fecha = {};
     if (fechaInicio) query.fecha.$gte = new Date(fechaInicio as string);
     if (fechaFin) query.fecha.$lte = new Date(fechaFin as string);
-    if (!fechaInicio && !fechaFin) query.fecha.$gte = new Date(new Date().getFullYear(), 0, 1);
+    if (!fechaInicio && !fechaFin) {
+      const hoy = new Date();
+      query.fecha.$gte = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+    }
 
     // Si es docente, solo mostrar sus propios registros
     if (req.user.tipo === 'DOCENTE') {
@@ -1017,7 +1019,8 @@ export const obtenerResumen = async (req: RequestWithUser, res: Response, next: 
 
     const filas = await Asistencia.aggregate([
       { $match: matchAgg },
-      { $sort: { _id: 1 } },
+      // Orden por fecha: usa el índice {escuelaId, fecha} (ordenar por _id forzaba recorrer la colección)
+      { $sort: { fecha: 1 } },
       { $project: { fecha: 1, cursoId: 1, asignaturaId: 1, docenteId: 1, createdAt: 1, finalizado: 1, entradas } },
       {
         $project: {

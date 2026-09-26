@@ -72,6 +72,8 @@ export const informeEstudiantesEnRiesgo = async (
   // Agregar directamente en MongoDB para mayor eficiencia
   const pipeline: any[] = [
     { $match: queryBase },
+    // Solo los campos usados antes del $unwind (menos memoria en la agregación)
+    { $project: { cursoId: 1, 'estudiantes.estudianteId': 1, 'estudiantes.estado': 1 } },
     { $unwind: '$estudiantes' },
     {
       $group: {
