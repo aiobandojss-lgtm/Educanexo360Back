@@ -18,6 +18,25 @@ import {
 const idDe = (valor: any): string => String(valor?._id ?? valor);
 
 /**
+ * Recalcula en memoria el estado de las entregas (actualizarEstadosEntregas) y SOLO escribe en la
+ * base, con un updateOne, las entregas que pasaron a ATRASADA. Antes cada GET hacía tarea.save().
+ */
+const sincronizarEstadosEntregas = async (tarea: any): Promise<void> => {
+  const antes = new Map<string, string>(tarea.entregas.map((e: any) => [String(e._id), e.estado]));
+  tarea.actualizarEstadosEntregas();
+  const cambiadas = tarea.entregas
+    .filter((e: any) => antes.get(String(e._id)) !== e.estado)
+    .map((e: any) => e._id);
+  if (cambiadas.length > 0) {
+    await Tarea.updateOne(
+      { _id: tarea._id },
+      { $set: { 'entregas.$[e].estado': 'ATRASADA' } },
+      { arrayFilters: [{ 'e._id': { $in: cambiadas } }] },
+    );
+  }
+};
+
+/**
  * Regla de acceso a una tarea (objeto plano). Devuelve las entregas visibles o null si no tiene acceso.
  * - Administrativos: todo (su colegio ya va en la consulta).
  * - DOCENTE: tareas propias o de sus cursos.
@@ -315,9 +334,8 @@ class TareaController {
         throw new ApiError(404, 'Tarea no encontrada');
       }
 
-      // Actualizar estados de entregas
-      tarea.actualizarEstadosEntregas();
-      await tarea.save();
+      // Actualizar estados de entregas (escribe solo si alguna cambió)
+      await sincronizarEstadosEntregas(tarea);
 
       // ESTUDIANTE / ACUDIENTE: solo sus entregas, sin estadísticas del curso
       if (!acceso.completo) {
@@ -720,8 +738,7 @@ class TareaController {
       }
 
       // Actualizar estados
-      tarea.actualizarEstadosEntregas();
-      await tarea.save();
+      await sincronizarEstadosEntregas(tarea);
 
       const estadisticas = tarea.obtenerEstadisticas();
 
@@ -1078,25 +1095,37 @@ async misTareas(req: RequestWithUser, res: Response, next: NextFunction) {
       };
     }
 
-    const tareas = await Tarea.find(query)
-      .sort({ fechaLimite: 1 })
-      .populate('docenteId', 'nombre apellidos')
-      .populate('asignaturaId', 'nombre')
-      .populate('cursoId', 'nombre')
-      .lean();
-
-    // Filtrar para mostrar solo la entrega del estudiante
-    const tareasConMiEntrega = tareas.map((tarea: any) => {
-      const miEntrega = tarea.entregas.find(
-        (e: any) => e.estudianteId.toString() === req.user?._id
-      );
-
-      return {
-        ...tarea,
-        miEntrega,
-        entregas: undefined, // No mostrar todas las entregas
-      };
-    });
+    // Agregación: solo la entrega del estudiante (antes se cargaban las entregas de todo el curso
+    // y se descartaban en JS). Misma forma: todos los campos de la tarea + miEntrega, sin entregas.
+    const uid = new mongoose.Types.ObjectId(req.user._id);
+    const matchAgg: any = {
+      ...query,
+      escuelaId: new mongoose.Types.ObjectId(req.user.escuelaId),
+      'entregas.estudianteId': uid,
+    };
+    if (matchAgg.entregas?.$elemMatch) {
+      matchAgg.entregas = { $elemMatch: { ...matchAgg.entregas.$elemMatch, estudianteId: uid } };
+    }
+    const tareasAgg = await Tarea.aggregate([
+      { $match: matchAgg },
+      { $sort: { fechaLimite: 1 } },
+      {
+        $addFields: {
+          miEntrega: {
+            $arrayElemAt: [
+              { $filter: { input: '$entregas', as: 'e', cond: { $eq: ['$$e.estudianteId', uid] } } },
+              0,
+            ],
+          },
+        },
+      },
+      { $project: { entregas: 0 } },
+    ]);
+    const tareasConMiEntrega = await Tarea.populate(tareasAgg, [
+      { path: 'docenteId', select: 'nombre apellidos' },
+      { path: 'asignaturaId', select: 'nombre' },
+      { path: 'cursoId', select: 'nombre' },
+    ]);
 
     res.json({
       success: true,
@@ -1199,7 +1228,10 @@ async misTareas(req: RequestWithUser, res: Response, next: NextFunction) {
         filters.asignaturaId = asignaturaIdFiltro;
       }
 
-      const tareas = await Tarea.find(filters);
+      // Solo los campos de entrega que se usan (antes: documentos completos con todo el contenido)
+      const tareas = await Tarea.find(filters)
+        .select('entregas.fechaEntrega entregas.estado entregas.calificacion')
+        .lean();
 
       let totalTareas = 0;
       let totalEntregas = 0;

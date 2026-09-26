@@ -84,27 +84,37 @@ class BoletinController {
         estado: 'ACTIVO',
       }).populate('docenteId', 'nombre apellidos');
 
-      // Para cada asignatura, obtener calificaciones
-      const asignaturasData = [];
-
-      for (const asignatura of asignaturas) {
-        // Buscar calificación del estudiante en esta asignatura
-        const calificacion = await Calificacion.findOne({
+      // Calificaciones y logros de TODAS las asignaturas en 2 consultas $in (antes: 2 por asignatura)
+      const idsAsignaturas = asignaturas.map((a) => a._id);
+      const [calificacionesPeriodo, logrosPeriodo] = await Promise.all([
+        Calificacion.find({
           estudianteId,
-          asignaturaId: asignatura._id,
+          asignaturaId: { $in: idsAsignaturas },
           escuelaId,
           periodo: Number(periodo),
           año_academico: String(año_academico),
-        });
-
-        // Obtener todos los logros de la asignatura en este periodo
-        const logros = await Logro.find({
-          asignaturaId: asignatura._id,
+        }),
+        Logro.find({
+          asignaturaId: { $in: idsAsignaturas },
           escuelaId,
           periodo: Number(periodo),
           año_academico: String(año_academico),
           estado: 'ACTIVO',
-        }).lean();
+        }).lean(),
+      ]);
+      const calificacionPorAsignatura = new Map<string, (typeof calificacionesPeriodo)[number]>(
+        calificacionesPeriodo.map((c) => [String(c.asignaturaId), c]),
+      );
+
+      // Para cada asignatura, obtener calificaciones
+      const asignaturasData = [];
+
+      for (const asignatura of asignaturas) {
+        // Calificación del estudiante en esta asignatura
+        const calificacion = calificacionPorAsignatura.get(String(asignatura._id)) || null;
+
+        // Logros de la asignatura en este periodo (mismo orden que devolvía la consulta)
+        const logros = logrosPeriodo.filter((l: any) => String(l.asignaturaId) === String(asignatura._id));
 
         const logrosData = [];
         let calificadosCount = 0;
@@ -263,6 +273,24 @@ class BoletinController {
       // Configuración de periodos (obtener de la escuela si es necesario)
       const periodos = [1, 2, 3, 4];
 
+      // Calificaciones de todas las asignaturas y periodos + logros calificados: 2 consultas $in
+      // (antes: una por asignatura×periodo y otra por cada logro calificado)
+      const calificacionesAño = await Calificacion.find({
+        estudianteId,
+        asignaturaId: { $in: asignaturas.map((a) => a._id) },
+        escuelaId,
+        periodo: { $in: periodos },
+        año_academico: String(año_academico),
+      });
+      const calificacionPorClave = new Map(
+        calificacionesAño.map((c: any) => [`${c.asignaturaId}|${c.periodo}`, c]),
+      );
+      const idsLogros = calificacionesAño.flatMap((c: any) =>
+        (c.calificaciones_logros || []).map((cl: any) => cl.logroId),
+      );
+      const logrosCalificadosDocs = await Logro.find({ _id: { $in: idsLogros }, escuelaId });
+      const logroPorId = new Map(logrosCalificadosDocs.map((l: any) => [String(l._id), l]));
+
       // Para cada asignatura, obtener calificaciones de todos los periodos
       const asignaturasData = [];
 
@@ -272,13 +300,7 @@ class BoletinController {
         let periodosCalificados = 0;
 
         for (const periodo of periodos) {
-          const calificacion = await Calificacion.findOne({
-            estudianteId,
-            asignaturaId: asignatura._id,
-            escuelaId,
-            periodo,
-            año_academico: String(año_academico),
-          });
+          const calificacion = calificacionPorClave.get(`${asignatura._id}|${periodo}`) || null;
 
           // Obtener los logros calificados para este periodo
           const logrosCalificados = [];
@@ -288,7 +310,7 @@ class BoletinController {
             calificacion.calificaciones_logros.length > 0
           ) {
             for (const calLogro of calificacion.calificaciones_logros) {
-              const logro = await Logro.findOne({ _id: calLogro.logroId, escuelaId });
+              const logro = logroPorId.get(String(calLogro.logroId));
               if (logro) {
                 logrosCalificados.push({
                   logro: {
