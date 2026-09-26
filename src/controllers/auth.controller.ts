@@ -6,6 +6,7 @@ import crypto from 'crypto';
 import Usuario from '../models/usuario.model';
 import config from '../config/config';
 import { logger } from '../utils/logger';
+import { puedeGestionarRol } from '../utils/accesoAcademico';
 
 // Usamos la misma interfaz que está definida en auth.middleware.ts
 interface RequestWithUser extends Request {
@@ -58,11 +59,9 @@ export const authController = {
         throw new ApiError(400, 'Todos los campos son requeridos');
       }
 
-      // Solo SUPER_ADMIN puede crear SUPER_ADMIN; solo ADMIN o SUPER_ADMIN pueden crear ADMIN
-      if (tipo === 'SUPER_ADMIN' && !esSuperAdmin) {
-        throw new ApiError(403, 'No tiene permisos para crear este tipo de usuario');
-      }
-      if (tipo === 'ADMIN' && !['ADMIN', 'SUPER_ADMIN'].includes(req.user.tipo)) {
+      // Jerarquía: solo se crean usuarios de rango estrictamente inferior (ADMIN: todo menos SUPER_ADMIN;
+      // SUPER_ADMIN: todo). Ej.: un COORDINADOR ya no puede crear un RECTOR.
+      if (!puedeGestionarRol(req.user.tipo, tipo)) {
         throw new ApiError(403, 'No tiene permisos para crear este tipo de usuario');
       }
 

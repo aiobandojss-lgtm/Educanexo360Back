@@ -7,6 +7,7 @@ import { escapeRegex } from '../utils/escapeRegex';
 import { numeroPagina, numeroLimite } from '../utils/paginacion';
 import notificacionService from '../services/notificacion.service';
 import { TipoNotificacion } from '../interfaces/INotificacion';
+import { esRolAdministrativo, puedeGestionarRol } from '../utils/accesoAcademico';
 
 // Extender el tipo Request para incluir el usuario
 interface RequestWithUser extends Request {
@@ -195,8 +196,8 @@ class UsuarioController {
       // Verificar si el usuario está intentando actualizar su propio perfil o si tiene rol administrativo
       const actualizandoPropioUsuario = req.params.id === req.user._id;
 
-      // Incluir RECTOR y COORDINADOR como roles administrativos
-      const tieneRolAdministrativo = ['ADMIN', 'RECTOR', 'COORDINADOR'].includes(req.user.tipo);
+      // Roles administrativos (ADMIN, RECTOR, COORDINADOR, ADMINISTRATIVO); la jerarquía se valida abajo
+      const tieneRolAdministrativo = esRolAdministrativo(req.user.tipo);
 
       if (!actualizandoPropioUsuario && !tieneRolAdministrativo) {
         throw new ApiError(403, 'No tienes permiso para modificar este perfil');
@@ -237,7 +238,15 @@ class UsuarioController {
       // Permitir campos específicos para usuarios no administrativos
       let datosPermitidos: Record<string, unknown> = {};
 
-      if (tieneRolAdministrativo) {
+      if (tieneRolAdministrativo && actualizandoPropioUsuario) {
+        // Cuenta propia: datos personales (y email, como antes); nunca su propio tipo ni estado
+        datosPermitidos = {
+          nombre: req.body.nombre,
+          apellidos: req.body.apellidos,
+          email: req.body.email,
+          ...perfilPorRutas(req.body.perfil),
+        };
+      } else if (tieneRolAdministrativo) {
         const usuarioObjetivo = await Usuario.findOne({
           _id: req.params.id,
           escuelaId: req.user.escuelaId,
@@ -247,10 +256,9 @@ class UsuarioController {
           throw new ApiError(404, 'Usuario no encontrado');
         }
 
-        const esAdmin = req.user.tipo === 'ADMIN';
-
-        // Solo un ADMIN puede modificar la cuenta de otro ADMIN (evita tomar su cuenta cambiando el email)
-        if (usuarioObjetivo.tipo === 'ADMIN' && !esAdmin) {
+        // Jerarquía: solo usuarios de rango estrictamente inferior (ADMIN: todo menos SUPER_ADMIN).
+        // Evita escalada lateral (p. ej. un COORDINADOR cambiando el email o el estado de un RECTOR).
+        if (!puedeGestionarRol(req.user.tipo, usuarioObjetivo.tipo)) {
           throw new ApiError(403, 'No tienes permiso para modificar este perfil');
         }
 
@@ -260,10 +268,11 @@ class UsuarioController {
 
         Object.assign(datosPermitidos, perfilPorRutas(perfil));
 
-        // Cambiar el tipo solo lo puede hacer un ADMIN (SUPER_ADMIN ya lo bloquea la validación).
-        // Si llega igual al actual se ignora: el formulario web siempre lo envía.
+        // Cambiar el tipo: el nuevo tipo debe ser de rango inferior al del actor (SUPER_ADMIN lo bloquea la
+        // validación). Si llega igual al actual se ignora: el formulario web siempre lo envía.
         if (tipo !== undefined && tipo !== usuarioObjetivo.tipo) {
-          if (!esAdmin) {
+          // El nuevo tipo también debe ser de rango inferior al del actor
+          if (!puedeGestionarRol(req.user.tipo, tipo)) {
             throw new ApiError(403, 'No tienes permiso para cambiar el tipo de usuario');
           }
           datosPermitidos.tipo = tipo;

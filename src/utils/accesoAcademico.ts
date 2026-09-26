@@ -25,6 +25,32 @@ export interface UsuarioAcceso {
 export const esRolAdministrativo = (tipo?: string): boolean =>
   !!tipo && ROLES_ADMINISTRATIVOS.includes(tipo);
 
+/**
+ * Jerarquía de roles: SUPER_ADMIN > ADMIN > RECTOR > COORDINADOR > ADMINISTRATIVO > (DOCENTE, ESTUDIANTE, ACUDIENTE).
+ */
+export const RANGO_ROL: Record<string, number> = {
+  SUPER_ADMIN: 6,
+  ADMIN: 5,
+  RECTOR: 4,
+  COORDINADOR: 3,
+  ADMINISTRATIVO: 2,
+  DOCENTE: 1,
+  ESTUDIANTE: 1,
+  ACUDIENTE: 1,
+};
+
+/**
+ * ¿El actor puede crear usuarios del tipo objetivo, o cambiar email/estado/tipo de un usuario de ese tipo?
+ * Rango ESTRICTAMENTE inferior al propio; el ADMIN puede todo menos SUPER_ADMIN (incluye otros ADMIN);
+ * SUPER_ADMIN puede todo. Solo roles administrativos (o SUPER_ADMIN) gestionan usuarios.
+ */
+export const puedeGestionarRol = (actor?: string, objetivo?: string): boolean => {
+  if (!actor || !objetivo || RANGO_ROL[objetivo] === undefined) return false;
+  if (actor === 'SUPER_ADMIN') return true;
+  if (actor === 'ADMIN') return RANGO_ROL[objetivo] < RANGO_ROL.SUPER_ADMIN;
+  return esRolAdministrativo(actor) && RANGO_ROL[actor] > RANGO_ROL[objetivo];
+};
+
 const esIdValido = (id: unknown): id is string =>
   typeof id === 'string' && mongoose.isValidObjectId(id);
 
