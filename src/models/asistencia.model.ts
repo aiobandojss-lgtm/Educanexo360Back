@@ -37,18 +37,15 @@ const AsistenciaSchema = new Schema(
     fecha: {
       type: Date,
       required: [true, 'La fecha es requerida'],
-      index: true,
     },
     cursoId: {
       type: Schema.Types.ObjectId,
       ref: 'Curso',
       required: [true, 'El curso es requerido'],
-      index: true,
     },
     asignaturaId: {
       type: Schema.Types.ObjectId,
       ref: 'Asignatura',
-      index: true,
     },
     docenteId: {
       type: Schema.Types.ObjectId,
@@ -59,7 +56,6 @@ const AsistenciaSchema = new Schema(
       type: Schema.Types.ObjectId,
       ref: 'Escuela',
       required: [true, 'La escuela es requerida'],
-      index: true,
     },
     periodoId: {
       type: Schema.Types.ObjectId,
@@ -92,6 +88,9 @@ const AsistenciaSchema = new Schema(
 );
 
 // Índices compuestos para mejorar consultas frecuentes
+// Fase 3: índices simples de fecha, cursoId, asignaturaId y escuelaId quitados (prefijos de estos compuestos)
+AsistenciaSchema.index({ escuelaId: 1, docenteId: 1, fecha: -1 });
+AsistenciaSchema.index({ cursoId: 1, periodoId: 1, fecha: 1 });
 AsistenciaSchema.index({ cursoId: 1, fecha: 1 });
 AsistenciaSchema.index({ escuelaId: 1, fecha: 1 });
 AsistenciaSchema.index({ asignaturaId: 1, fecha: 1 });

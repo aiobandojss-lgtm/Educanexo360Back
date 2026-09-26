@@ -78,7 +78,6 @@ const UsuarioSchema = new Schema(
     fcmToken: {
       type: String,
       default: null,
-      index: true
     },
     platform: {
       type: String,
@@ -115,6 +114,16 @@ const UsuarioSchema = new Schema(
     },
   },
   { timestamps: true },
+);
+
+// Índices (Fase 3): listados por escuela/tipo/estado, búsqueda de acudientes por hijo,
+// reset de contraseña y tokens FCM reales (parcial: el default null no ocupa espacio)
+UsuarioSchema.index({ escuelaId: 1, tipo: 1, estado: 1 });
+UsuarioSchema.index({ 'info_academica.estudiantes_asociados': 1 });
+UsuarioSchema.index({ resetPasswordToken: 1 }, { sparse: true });
+UsuarioSchema.index(
+  { fcmToken: 1 },
+  { name: 'fcmToken_parcial', partialFilterExpression: { fcmToken: { $type: 'string' } } },
 );
 
 // Campos que nunca deben salir en una respuesta HTTP

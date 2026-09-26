@@ -98,9 +98,8 @@ const AnuncioSchema = new Schema(
 );
 
 // Índices para mejorar el rendimiento de consultas
-AnuncioSchema.index({ escuelaId: 1, estaPublicado: 1 });
+// Fase 3: listado por escuela/publicado/fecha; {escuelaId,estaPublicado}, {destacado} y {fechaPublicacion} quitados
+AnuncioSchema.index({ escuelaId: 1, estaPublicado: 1, fechaPublicacion: -1 });
 AnuncioSchema.index({ creador: 1 });
-AnuncioSchema.index({ destacado: 1 });
-AnuncioSchema.index({ fechaPublicacion: -1 });
 
 export default mongoose.model<IAnuncio>('Anuncio', AnuncioSchema);

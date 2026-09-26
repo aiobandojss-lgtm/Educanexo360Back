@@ -260,15 +260,16 @@ MensajeSchema.pre('save', function (next) {
 });
 
 // Índices para mejorar el rendimiento
-MensajeSchema.index({ remitente: 1 });
-MensajeSchema.index({ destinatarios: 1 });
-MensajeSchema.index({ escuelaId: 1 });
-MensajeSchema.index({ estado: 1 });
-MensajeSchema.index({ createdAt: -1 });
+// Fase 3: bandeja por usuario (recibidos/CC/enviados) ordenada por fecha y auditoría por remitente.
+// Quitados por redundantes: {remitente}, {destinatarios}, {escuelaId} (prefijos de los compuestos),
+// {estado} y {createdAt} (ninguna consulta filtra solo por ellos).
+MensajeSchema.index({ destinatarios: 1, createdAt: -1 });
+MensajeSchema.index({ destinatariosCc: 1 });
+MensajeSchema.index({ remitente: 1, createdAt: -1 });
+MensajeSchema.index({ escuelaId: 1, remitente: 1, createdAt: -1 });
 MensajeSchema.index({ asunto: 'text', contenido: 'text' });
 // Nuevos índices para estadosUsuarios
-MensajeSchema.index({ 'estadosUsuarios.usuarioId': 1 });
-MensajeSchema.index({ 'estadosUsuarios.estado': 1 });
+// {estadosUsuarios.usuarioId} y {estadosUsuarios.estado} sueltos quitados: cubiertos por este compuesto
 MensajeSchema.index({ 'estadosUsuarios.usuarioId': 1, 'estadosUsuarios.estado': 1 });
 
 const Mensaje = mongoose.model<IMensaje>('Mensaje', MensajeSchema);

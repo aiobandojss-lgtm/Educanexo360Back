@@ -94,7 +94,6 @@ const TareaSchema = new Schema(
       type: Schema.Types.ObjectId,
       ref: 'Usuario',
       required: true,
-      index: true,
     },
     asignaturaId: {
       type: Schema.Types.ObjectId,
@@ -106,7 +105,6 @@ const TareaSchema = new Schema(
       type: Schema.Types.ObjectId,
       ref: 'Curso',
       required: true,
-      index: true,
     },
     estudiantesIds: [
       {
@@ -160,7 +158,6 @@ const TareaSchema = new Schema(
       type: Schema.Types.ObjectId,
       ref: 'Escuela',
       required: true,
-      index: true,
     },
   },
   {
@@ -172,6 +169,7 @@ const TareaSchema = new Schema(
 TareaSchema.index({ escuelaId: 1, estado: 1, fechaLimite: -1 });
 TareaSchema.index({ docenteId: 1, estado: 1 });
 TareaSchema.index({ cursoId: 1, fechaLimite: -1 });
+TareaSchema.index({ cursoId: 1, estado: 1, fechaLimite: -1 }); // Fase 3
 TareaSchema.index({ 'entregas.estudianteId': 1 });
 
 // Método para actualizar estados de entregas automáticamente

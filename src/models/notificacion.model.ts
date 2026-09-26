@@ -64,9 +64,9 @@ const NotificacionSchema = new Schema(
 );
 
 // Índices para mejorar el rendimiento
+// Fase 3: listado por usuario ordenado por fecha; {tipo} y {createdAt} sueltos quitados (sin consultas que los usen)
+NotificacionSchema.index({ usuarioId: 1, createdAt: -1 });
 NotificacionSchema.index({ usuarioId: 1, estado: 1 });
 NotificacionSchema.index({ escuelaId: 1 });
-NotificacionSchema.index({ tipo: 1 });
-NotificacionSchema.index({ createdAt: -1 });
 
 export default mongoose.model<INotificacion>('Notificacion', NotificacionSchema);

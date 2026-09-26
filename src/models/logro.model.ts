@@ -88,7 +88,7 @@ LogroSchema.pre('save', async function (next) {
 });
 
 // Índices
-LogroSchema.index({ asignaturaId: 1, periodo: 1, año_academico: 1 }, { unique: false });
+LogroSchema.index({ asignaturaId: 1, periodo: 1, año_academico: 1, estado: 1 }); // Fase 3: reemplaza al de 3 campos
 LogroSchema.index({ cursoId: 1 });
 LogroSchema.index({ escuelaId: 1 });
 
