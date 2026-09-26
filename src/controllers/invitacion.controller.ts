@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import mongoose from 'mongoose';
 import invitacionService from '../services/invitacion.service';
 import { TipoInvitacion, EstadoInvitacion } from '../models/invitacion.model';
 import { catchAsync } from '../utils/catchAsync';
@@ -128,6 +129,10 @@ export const obtenerInvitacionesEscuela = catchAsync(
   async (req: CustomRequest, res: Response, next: NextFunction) => {
     // escuelaId SIEMPRE del usuario autenticado (ninguna ruta define :escuelaId)
     const escuelaId = req.user?.escuelaId as string;
+    // Sin colegio (SUPER_ADMIN con escuelaId '') no hay invitaciones que listar: antes daba 500 (CastError)
+    if (!mongoose.isValidObjectId(escuelaId)) {
+      return next(new ApiError(400, 'El usuario no tiene un colegio asociado'));
+    }
     const estado = typeof req.query.estado === 'string' ? req.query.estado : undefined;
     const pagina = numeroPagina(req.query.pagina);
     const limite = numeroLimite(req.query.limite, 10);

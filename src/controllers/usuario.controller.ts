@@ -422,6 +422,11 @@ class UsuarioController {
         throw new ApiError(400, 'La contraseña es requerida para eliminar la cuenta');
       }
 
+      // Cuentas sin colegio (SUPER_ADMIN con escuelaId '') no pasan por este flujo: antes daba 500 (CastError)
+      if (!mongoose.isValidObjectId(req.user.escuelaId)) {
+        throw new ApiError(403, 'Esta cuenta no pertenece a un colegio; su eliminación se gestiona con soporte');
+      }
+
       // El usuario solo puede eliminar su PROPIA cuenta
       const usuario = await Usuario.findOne({
         _id: req.user._id,
