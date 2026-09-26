@@ -2435,61 +2435,80 @@ export class MensajeController {
         ],
       };
 
-      // Buscar mensaje con validación mejorada
-      const mensaje = await Mensaje.findOne(matchQuery).populate([
-        { path: 'remitente', select: 'nombre apellidos email tipo' },
-        { path: 'destinatarios', select: 'nombre apellidos email tipo' },
-        { path: 'destinatariosCc', select: 'nombre apellidos email tipo' },
-        { path: 'mensajeOriginalId' },
-      ]);
+      // Documento plano (sin poblar los arreglos completos: un mensaje a todo el colegio tiene miles)
+      const mensaje: any = await Mensaje.findOne(matchQuery)
+        .populate({
+          path: 'mensajeOriginalId',
+          select: '-destinatarios -destinatariosCc -estadosUsuarios -lecturas',
+        })
+        .lean();
 
       if (!mensaje) {
         throw new ApiError(404, 'Mensaje no encontrado');
       }
 
-      // La parte que probablemente causa el error - mejorada con validaciones
-      // Si el usuario es un destinatario y no ha leído el mensaje, marcarlo como leído
-      if (mensaje.destinatarios && Array.isArray(mensaje.destinatarios)) {
-        const destinatarioIds = mensaje.destinatarios
-          .filter((d) => d && (d as any)._id) // Filtrar valores nulos o indefinidos
-          .map((d) => (d as any)._id.toString());
+      const userIdStr = req.user._id.toString();
+      const esRemitente = String(mensaje.remitente) === userIdStr;
+      const idsDest: string[] = (mensaje.destinatarios || []).map(String);
+      const idsCc: string[] = (mensaje.destinatariosCc || []).map(String);
+      const esDestinatario = idsDest.includes(userIdStr) || idsCc.includes(userIdStr);
 
-        const destinatariosCcIds =
-          mensaje.destinatariosCc && Array.isArray(mensaje.destinatariosCc)
-            ? mensaje.destinatariosCc
-                .filter((d) => d && (d as any)._id) // Filtrar valores nulos o indefinidos
-                .map((d) => (d as any)._id.toString())
-            : [];
+      // Destinatarios visibles (privacidad): el remitente ve todos; en mensajes individuales con
+      // ≤10 destinatarios se ven todos (como un "Para:" de correo); en masivos solo el propio usuario.
+      // El usuario actual SIEMPRE se incluye (Flutter lo usa para Responder y marcar leído).
+      const verTodos =
+        esRemitente || (mensaje.tipo === TipoMensaje.INDIVIDUAL && idsDest.length + idsCc.length <= 10);
+      const visiblesDest = verTodos ? idsDest : idsDest.filter((d) => d === userIdStr);
+      const visiblesCc = verTodos ? idsCc : idsCc.filter((d) => d === userIdStr);
 
-        const userIdStr = req.user._id.toString();
+      const personas = await Usuario.find({
+        _id: { $in: [String(mensaje.remitente), ...visiblesDest, ...visiblesCc] },
+      })
+        .select('nombre apellidos email tipo')
+        .lean();
+      const porId = new Map(personas.map((p: any) => [String(p._id), p]));
+      // Destinatarios sin email (ningún cliente lo muestra); el remitente conserva email (responder en web)
+      const sinEmail = (id: string) => {
+        const p: any = porId.get(id);
+        return p ? { _id: p._id, nombre: p.nombre, apellidos: p.apellidos, tipo: p.tipo } : null;
+      };
 
-        if (destinatarioIds.includes(userIdStr) || destinatariosCcIds.includes(userIdStr)) {
-          // Verificar si el usuario ya leyó el mensaje
-          const lecturas = mensaje.lecturas || [];
-          const yaLeido = lecturas.some(
-            (l: any) => l && l.usuarioId && l.usuarioId.toString() === userIdStr,
+      // Si el usuario es destinatario y no ha leído el mensaje, marcarlo como leído
+      const lecturas: any[] = mensaje.lecturas || [];
+      let lecturasRespuesta = lecturas;
+      if (esDestinatario) {
+        const propia = lecturas.filter((l: any) => l?.usuarioId && String(l.usuarioId) === userIdStr);
+        if (propia.length === 0) {
+          const nueva = { usuarioId: userObjId, fechaLectura: new Date() };
+          await Mensaje.updateOne(
+            { _id: id, 'lecturas.usuarioId': { $ne: userObjId } },
+            { $push: { lecturas: nueva } },
           );
-
-          // Si no lo ha leído, marcar como leído
-          if (!yaLeido) {
-            await Mensaje.updateOne(
-              { _id: id },
-              {
-                $push: {
-                  lecturas: {
-                    usuarioId: userObjId,
-                    fechaLectura: new Date(),
-                  },
-                },
-              },
-            );
-          }
+          propia.push(nueva);
         }
+        // Quien no es remitente solo ve su propia lectura (antes: las de todos los destinatarios)
+        lecturasRespuesta = esRemitente ? [...lecturas, ...propia.filter((l) => !lecturas.includes(l))] : propia;
       }
+
+      const remitente: any = porId.get(String(mensaje.remitente));
+      const respuesta = {
+        ...mensaje,
+        remitente: remitente
+          ? { _id: remitente._id, nombre: remitente.nombre, apellidos: remitente.apellidos, email: remitente.email, tipo: remitente.tipo }
+          : mensaje.remitente,
+        destinatarios: visiblesDest.map(sinEmail).filter(Boolean),
+        destinatariosCc: visiblesCc.map(sinEmail).filter(Boolean),
+        totalDestinatarios: idsDest.length,
+        totalDestinatariosCc: idsCc.length,
+        lecturas: lecturasRespuesta,
+        estadosUsuarios: (mensaje.estadosUsuarios || []).filter(
+          (e: any) => String(e.usuarioId) === userIdStr,
+        ),
+      };
 
       res.json({
         success: true,
-        data: mensaje,
+        data: respuesta,
       });
     } catch (error) {
       console.error('Error al obtener mensaje por ID:', error);

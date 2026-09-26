@@ -380,10 +380,11 @@ class MensajeService {
       }
 
       // ✅ POPULATE OPTIMIZADO (solo campos necesarios)
+      // Destinatarios sin email (ningún cliente lo usa; en masivos eran miles de correos en la respuesta)
       await nuevoMensaje.populate([
         { path: 'remitente', select: 'nombre apellidos email tipo' },
-        { path: 'destinatarios', select: 'nombre apellidos email tipo' },
-        { path: 'destinatariosCc', select: 'nombre apellidos email tipo' },
+        { path: 'destinatarios', select: 'nombre apellidos tipo' },
+        { path: 'destinatariosCc', select: 'nombre apellidos tipo' },
       ]);
 
       // 🔄 INVALIDAR CACHE RELACIONADO
