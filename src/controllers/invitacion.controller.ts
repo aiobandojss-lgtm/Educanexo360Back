@@ -3,6 +3,7 @@ import invitacionService from '../services/invitacion.service';
 import { TipoInvitacion, EstadoInvitacion } from '../models/invitacion.model';
 import { catchAsync } from '../utils/catchAsync';
 import ApiError from '../utils/ApiError';
+import { numeroPagina, numeroLimite } from '../utils/paginacion';
 
 interface CustomRequest extends Request {
   user?: {
@@ -127,8 +128,8 @@ export const obtenerInvitacionesEscuela = catchAsync(
     // escuelaId SIEMPRE del usuario autenticado (ninguna ruta define :escuelaId)
     const escuelaId = req.user?.escuelaId as string;
     const estado = typeof req.query.estado === 'string' ? req.query.estado : undefined;
-    const pagina = parseInt(req.query.pagina as string) || 1;
-    const limite = parseInt(req.query.limite as string) || 10;
+    const pagina = numeroPagina(req.query.pagina);
+    const limite = numeroLimite(req.query.limite, 10);
 
     console.log('Obteniendo invitaciones con escuelaId:', escuelaId);
     console.log('Estado filtro:', estado);

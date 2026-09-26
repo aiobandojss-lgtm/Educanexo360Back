@@ -6,6 +6,7 @@ import notificacionService from '../services/notificacion.service';
 import pushNotificationService from '../services/pushNotification.service';
 import ApiError from '../utils/ApiError';
 import { EstadoNotificacion, TipoNotificacion } from '../interfaces/INotificacion';
+import { numeroPagina, numeroLimite } from '../utils/paginacion';
 
 interface RequestWithUser extends Request {
   user?: {
@@ -295,8 +296,8 @@ export class NotificacionController {
       const { estado = 'todas', pagina = 1, limite = 20, tipo } = req.query;
 
       const opciones = {
-        pagina: parseInt(pagina as string, 10),
-        limite: parseInt(limite as string, 10),
+        pagina: numeroPagina(pagina),
+        limite: numeroLimite(limite, 20),
       };
 
       const filtro: any = {

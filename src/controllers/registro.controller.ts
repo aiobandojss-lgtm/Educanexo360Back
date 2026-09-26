@@ -3,6 +3,7 @@ import registroService from '../services/registro.service';
 import { EstadoSolicitud } from '../models/solicitud-registro.model';
 import { catchAsync } from '../utils/catchAsync';
 import ApiError from '../utils/ApiError';
+import { numeroPagina, numeroLimite } from '../utils/paginacion';
 
 // El middleware authenticate coloca el usuario en req.user (no en req.usuario).
 // Declarado aquí con la MISMA forma que src/@types: ts-node (npm run dev) no carga la augmentación global.
@@ -101,8 +102,8 @@ export const rechazarSolicitud = catchAsync(
 export const obtenerSolicitudesPendientes = catchAsync(
   async (req: CustomRequest, res: Response, next: NextFunction) => {
     const escuelaId = obtenerEscuelaId(req);
-    const pagina = parseInt(req.query.pagina as string) || 1;
-    const limite = parseInt(req.query.limite as string) || 10;
+    const pagina = numeroPagina(req.query.pagina);
+    const limite = numeroLimite(req.query.limite, 10);
 
     const resultado = await registroService.obtenerSolicitudesPendientes(escuelaId, pagina, limite);
 
@@ -133,8 +134,8 @@ export const obtenerHistorialSolicitudes = catchAsync(
   async (req: CustomRequest, res: Response, next: NextFunction) => {
     const escuelaId = obtenerEscuelaId(req);
     const { estado } = req.query;
-    const pagina = parseInt(req.query.pagina as string) || 1;
-    const limite = parseInt(req.query.limite as string) || 10;
+    const pagina = numeroPagina(req.query.pagina);
+    const limite = numeroLimite(req.query.limite, 10);
 
     const resultado = await registroService.obtenerHistorialSolicitudes(
       escuelaId,

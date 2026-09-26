@@ -14,6 +14,7 @@ import {
 } from '../interfaces/IAsistencia';
 import AlertaAsistencia from '../models/alertaAsistencia.model';
 import { triggerAlertasAsistencia } from '../services/alertaAsistencia.service';
+import { numeroPagina, numeroLimite } from '../utils/paginacion';
 import {
   esRolAdministrativo,
   docenteTieneCurso,
@@ -171,8 +172,8 @@ export const obtenerAsistencias = async (
     const hasta = queryString(req.query.hasta);
     const docenteId = queryString(req.query.docenteId);
     const finalizado = queryString(req.query.finalizado);
-    const page = queryString(req.query.page) || 1;
-    const limit = queryString(req.query.limit) || 10;
+    const page = numeroPagina(req.query.page);
+    const limit = numeroLimite(req.query.limit, 10);
 
     const skip = (Number(page) - 1) * Number(limit);
 

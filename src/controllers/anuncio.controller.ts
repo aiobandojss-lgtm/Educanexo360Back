@@ -7,6 +7,7 @@ import { GridFSBucket } from 'mongodb';
 import * as fs from 'fs';
 import { escapeRegex } from '../utils/escapeRegex';
 import pushNotificationService from '../services/pushNotification.service';
+import { numeroPagina, numeroLimite } from '../utils/paginacion';
 
 interface RequestWithUser extends Request {
   user?: {
@@ -72,8 +73,8 @@ class AnuncioController {
       }
 
       // Parámetros de paginación
-      const pagina = parseInt(req.query.pagina as string) || 1;
-      const limite = parseInt(req.query.limite as string) || 10;
+      const pagina = numeroPagina(req.query.pagina);
+      const limite = numeroLimite(req.query.limite, 10);
       const skip = (pagina - 1) * limite;
 
       // Filtros

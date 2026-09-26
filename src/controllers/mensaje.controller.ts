@@ -17,6 +17,7 @@ import { TipoUsuario } from '../interfaces/IUsuario'; // Agregamos la importaci�
 import fs from 'fs';
 import path from 'path';
 import pushNotificationService from '../services/pushNotification.service';
+import { numeroPagina, numeroLimite } from '../utils/paginacion';
 
 export const ROLES_CON_BORRADORES = ['ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO', 'DOCENTE'];
 
@@ -987,8 +988,8 @@ export class MensajeController {
         throw new ApiError(403, 'No tiene permisos para usar borradores');
       }
 
-      const pagina = parseInt((req.query.pagina as string) || '1', 10);
-      const limite = parseInt((req.query.limite as string) || '20', 10);
+      const pagina = numeroPagina(req.query.pagina);
+      const limite = numeroLimite(req.query.limite, 20);
       const skip = (pagina - 1) * limite;
 
       // Buscar borradores del usuario
@@ -3049,7 +3050,7 @@ export class MensajeController {
       throw new ApiError(401, 'No autorizado');
     }
 
-    const limit = parseInt(req.query.limit as string) || 3;
+    const limit = numeroLimite(req.query.limit, 3, 50);
     const userId = req.user._id;
 
     console.log(`📬 Obteniendo últimos ${limit} mensajes para usuario: ${userId}`);
@@ -3376,8 +3377,8 @@ export class MensajeController {
         remitenteId,
         desde,
         hasta,
-        pagina: pagina ? parseInt(pagina, 10) : 1,
-        limite: limite ? parseInt(limite, 10) : 20,
+        pagina: numeroPagina(pagina),
+        limite: numeroLimite(limite, 20),
       });
 
       res.status(200).json({ success: true, ...result });

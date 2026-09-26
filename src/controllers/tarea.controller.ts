@@ -59,6 +59,7 @@ const resolverAccesoTarea = async (
   return enCurso ? { entregas: [], completo: false } : null;
 };
 import pushNotificationService from '../services/pushNotification.service';
+import { numeroPagina, numeroLimite } from '../utils/paginacion';
 
 interface RequestWithUser extends Request {
   user?: {
@@ -202,8 +203,8 @@ class TareaController {
         throw new ApiError(401, 'No autorizado');
       }
 
-      const pagina = parseInt(req.query.pagina as string) || 1;
-      const limite = parseInt(req.query.limite as string) || 10;
+      const pagina = numeroPagina(req.query.pagina);
+      const limite = numeroLimite(req.query.limite, 10);
       const skip = (pagina - 1) * limite;
 
       const filters: any = { escuelaId: req.user.escuelaId };
