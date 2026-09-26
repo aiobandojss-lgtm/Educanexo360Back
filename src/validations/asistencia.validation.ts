@@ -37,9 +37,13 @@ export const crearAsistenciaValidation = [
 
   body('estudiantes').optional().isArray().withMessage('Los estudiantes deben ser un array'),
 
+  // Acepta el id o el estudiante poblado ({ _id, ... }); el controlador lo normaliza
   body('estudiantes.*.estudianteId')
     .optional()
-    .isMongoId()
+    .custom((valor) => {
+      const id = valor && typeof valor === 'object' ? valor._id : valor;
+      return typeof id === 'string' && /^[a-f\d]{24}$/i.test(id);
+    })
     .withMessage('ID de estudiante inválido'),
 
   body('estudiantes.*.estado')

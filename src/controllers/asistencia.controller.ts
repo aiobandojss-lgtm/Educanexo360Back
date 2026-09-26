@@ -73,6 +73,7 @@ export const crearAsistencia = async (req: RequestWithUser, res: Response, next:
       horaFin,
       observacionesGenerales,
       estudiantes,
+      periodoId,
     } = req.body;
 
     // Verificar si ya existe un registro de asistencia para este curso, fecha y asignatura
@@ -97,6 +98,7 @@ export const crearAsistencia = async (req: RequestWithUser, res: Response, next:
       // 1. Verificar si es director de grupo del curso
       const curso = await Curso.findOne({
         _id: cursoId,
+        escuelaId: req.user.escuelaId,
         director_grupo: req.user._id,
       });
 
@@ -104,6 +106,7 @@ export const crearAsistencia = async (req: RequestWithUser, res: Response, next:
       if (!curso) {
         const tieneAsignatura = await mongoose.model('Asignatura').findOne({
           cursoId: cursoId,
+          escuelaId: req.user.escuelaId,
           docenteId: req.user._id,
           estado: 'ACTIVO',
         });
@@ -117,31 +120,53 @@ export const crearAsistencia = async (req: RequestWithUser, res: Response, next:
       }
     }
 
-    // Obtener los estudiantes del curso si no se proporcionaron
-    if (!estudiantes || estudiantes.length === 0) {
-      const curso = await Curso.findOne({ _id: cursoId, escuelaId: req.user.escuelaId });
-      if (!curso) {
-        return next(new ApiError(404, 'Curso no encontrado'));
-      }
-
-      // Crear la lista de estudiantes con estado PRESENTE por defecto
-      const estudiantesRegistro = curso.estudiantes.map(
-        (estudianteId: mongoose.Types.ObjectId) => ({
-          estudianteId,
-          estado: EstadoAsistencia.PRESENTE,
-          fechaRegistro: new Date(),
-          registradoPor: (req.user as NonNullable<typeof req.user>)._id,
-        }),
-      );
-
-      req.body.estudiantes = estudiantesRegistro;
+    // El curso debe ser del colegio del usuario
+    const curso = await Curso.findOne({ _id: cursoId, escuelaId: req.user.escuelaId })
+      .select('estudiantes')
+      .lean();
+    if (!curso) {
+      return next(new ApiError(404, 'Curso no encontrado'));
     }
+    const idsCurso = new Set((curso.estudiantes || []).map((e: any) => String(e)));
+    const ahora = new Date();
 
-    // Agregar datos del docente y escuela
-    req.body.docenteId = req.user._id;
-    req.body.escuelaId = req.user.escuelaId;
+    // Estudiantes: normalizados (id o poblado), solo del curso y solo campos permitidos.
+    // Si no se envían, todos los del curso en PRESENTE (como antes).
+    const estudiantesRegistro =
+      Array.isArray(estudiantes) && estudiantes.length > 0
+        ? estudiantes
+            .filter((est: any) => est && est.estudianteId && idsCurso.has(idDe(est.estudianteId)))
+            .map((est: any) => ({
+              estudianteId: idDe(est.estudianteId),
+              estado: est.estado || EstadoAsistencia.PRESENTE,
+              justificacion: est.justificacion,
+              observaciones: est.observaciones,
+              registradoPor: req.user!._id,
+              fechaRegistro: ahora,
+            }))
+        : [...idsCurso].map((estudianteId) => ({
+            estudianteId,
+            estado: EstadoAsistencia.PRESENTE,
+            registradoPor: req.user!._id,
+            fechaRegistro: ahora,
+          }));
 
-    const nuevaAsistencia = await Asistencia.create(req.body);
+    // Lista blanca (auditoría 3.E): antes Asistencia.create(req.body) aceptaba cualquier campo
+    // (finalizado, docenteId, escuelaId...). finalizado, docenteId y escuelaId los pone el servidor.
+    const nuevaAsistencia = await Asistencia.create({
+      fecha,
+      cursoId,
+      ...(asignaturaId && { asignaturaId }),
+      ...(periodoId && { periodoId }),
+      tipoSesion,
+      horaInicio,
+      horaFin,
+      observacionesGenerales,
+      estudiantes: estudiantesRegistro,
+      docenteId: req.user._id,
+      escuelaId: req.user.escuelaId,
+      finalizado: false,
+    });
 
     return res.status(201).json({
       success: true,
