@@ -2,7 +2,6 @@
 
 import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
-import { pipeline } from 'stream/promises';
 import Mensaje from '../models/mensaje.model';
 import Usuario from '../models/usuario.model';
 import gridfsManager from '../config/gridfs';
@@ -20,6 +19,7 @@ import path from 'path';
 import pushNotificationService from '../services/pushNotification.service';
 import { numeroPagina, numeroLimite } from '../utils/paginacion';
 import { logger } from '../utils/logger';
+import { subirAdjuntosGridFS } from '../utils/adjuntosGridFS';
 
 export const ROLES_CON_BORRADORES = ['ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO', 'DOCENTE'];
 
@@ -658,34 +658,8 @@ export class MensajeController {
             throw new ApiError(500, 'Servicio de archivos no disponible');
           }
 
-          for (const file of req.files) {
-            const filename = file.filename || path.basename(file.path);
-            const uploadStream = bucket.openUploadStream(filename, {
-              metadata: {
-                originalName: file.originalname,
-                contentType: file.mimetype,
-                size: file.size,
-                uploadedBy: req.user._id,
-              },
-            });
-
-            // Stream del disco a GridFS esperando a que termine (antes: readFileSync bloqueante + write sin esperar)
-            await pipeline(fs.createReadStream(file.path), uploadStream);
-
-            nuevosAdjuntos.push({
-              nombre: file.originalname,
-              tipo: file.mimetype,
-              tamaño: file.size,
-              fileId: uploadStream.id,
-              fechaSubida: new Date(),
-            });
-
-            try {
-              fs.unlinkSync(file.path);
-            } catch (error) {
-              console.error('Error deleting temporary file:', error);
-            }
-          }
+          // Sube a GridFS; siempre borra los temporales y, si falla, no deja archivos huérfanos
+          nuevosAdjuntos.push(...(await subirAdjuntosGridFS(req.files as any[], bucket, String(req.user._id))));
 
           // PASO 3: REEMPLAZAR (no concatenar) los adjuntos
           borrador.adjuntos = nuevosAdjuntos; // ← CAMBIO CLAVE: Reemplazar en lugar de concatenar
@@ -753,34 +727,8 @@ export class MensajeController {
           }
 
           try {
-            for (const file of req.files) {
-              const filename = file.filename || path.basename(file.path);
-              const uploadStream = bucket.openUploadStream(filename, {
-                metadata: {
-                  originalName: file.originalname,
-                  contentType: file.mimetype,
-                  size: file.size,
-                  uploadedBy: req.user._id,
-                },
-              });
-
-              // Stream del disco a GridFS esperando a que termine (antes: readFileSync bloqueante + write sin esperar)
-              await pipeline(fs.createReadStream(file.path), uploadStream);
-
-              adjuntos.push({
-                nombre: file.originalname,
-                tipo: file.mimetype,
-                tamaño: file.size,
-                fileId: uploadStream.id,
-                fechaSubida: new Date(),
-              });
-
-              try {
-                fs.unlinkSync(file.path);
-              } catch (error) {
-                console.error('Error deleting temporary file:', error);
-              }
-            }
+            // Sube a GridFS; siempre borra los temporales y, si falla, no deja archivos huérfanos
+            adjuntos.push(...(await subirAdjuntosGridFS(req.files as any[], bucket, String(req.user._id))));
 
             borradorBasico.adjuntos = adjuntos;
             await borradorBasico.save();
@@ -1943,36 +1891,8 @@ export class MensajeController {
           throw new ApiError(500, 'Servicio de archivos no disponible');
         }
 
-        for (const file of req.files) {
-          // Subir archivo a GridFS
-          const filename = file.filename || path.basename(file.path);
-          const uploadStream = bucket.openUploadStream(filename, {
-            metadata: {
-              originalName: file.originalname,
-              contentType: file.mimetype,
-              size: file.size,
-              uploadedBy: req.user._id,
-            },
-          });
-
-          // Stream del disco a GridFS esperando a que termine (antes: readFileSync bloqueante + write sin esperar)
-          await pipeline(fs.createReadStream(file.path), uploadStream);
-
-          adjuntos.push({
-            nombre: file.originalname,
-            tipo: file.mimetype,
-            tamaño: file.size,
-            fileId: uploadStream.id,
-            fechaSubida: new Date(),
-          });
-
-          // Limpiar archivo temporal
-          try {
-            fs.unlinkSync(file.path);
-          } catch (error) {
-            console.error('Error deleting temporary file:', error);
-          }
-        }
+        // Sube a GridFS; siempre borra los temporales y, si falla, no deja archivos huérfanos
+        adjuntos.push(...(await subirAdjuntosGridFS(req.files as any[], bucket, String(req.user._id))));
       }
 
       // Verificar si es borrador
@@ -3222,36 +3142,8 @@ export class MensajeController {
           throw new ApiError(500, 'Servicio de archivos no disponible');
         }
 
-        for (const file of req.files) {
-          // Subir archivo a GridFS
-          const filename = file.filename || path.basename(file.path);
-          const uploadStream = bucket.openUploadStream(filename, {
-            metadata: {
-              originalName: file.originalname,
-              contentType: file.mimetype,
-              size: file.size,
-              uploadedBy: req.user._id,
-            },
-          });
-
-          // Stream del disco a GridFS esperando a que termine (antes: readFileSync bloqueante + write sin esperar)
-          await pipeline(fs.createReadStream(file.path), uploadStream);
-
-          adjuntos.push({
-            nombre: file.originalname,
-            tipo: file.mimetype,
-            tamaño: file.size,
-            fileId: uploadStream.id,
-            fechaSubida: new Date(),
-          });
-
-          // Limpiar archivo temporal
-          try {
-            fs.unlinkSync(file.path);
-          } catch (error) {
-            console.error('Error deleting temporary file:', error);
-          }
-        }
+        // Sube a GridFS; siempre borra los temporales y, si falla, no deja archivos huérfanos
+        adjuntos.push(...(await subirAdjuntosGridFS(req.files as any[], bucket, String(req.user._id))));
       }
 
       // Parsear destinatariosCc
