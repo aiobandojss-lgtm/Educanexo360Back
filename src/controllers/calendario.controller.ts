@@ -57,6 +57,33 @@ interface RequestWithUser extends Request {
   files?: Express.Multer.File[];
 }
 
+/**
+ * Push a todos los usuarios del colegio cuando un evento queda publicado (ACTIVO). Fire-and-forget.
+ * Se usa al crear un evento ACTIVO y cuando un evento pasa a ACTIVO (PATCH /estado o PUT con estado).
+ */
+const notificarEventoPublicado = (
+  evento: { _id: unknown; titulo?: string; fechaInicio?: Date | string },
+  escuelaId: string,
+): void => {
+  const titulo = evento.titulo || 'Nuevo evento';
+  const fechaStr = evento.fechaInicio ? new Date(evento.fechaInicio).toLocaleDateString('es-CO') : '';
+  Usuario.find({ escuelaId, fcmToken: { $exists: true, $ne: null } }, { fcmToken: 1 })
+    .then((usuarios: any[]) => {
+      const tokens = usuarios.map((u) => u.fcmToken).filter(Boolean);
+      if (tokens.length > 0) {
+        pushNotificationService
+          .enviarNotificacionMasiva({
+            tokens,
+            titulo: `Nuevo evento: ${titulo}`,
+            mensaje: fechaStr ? `Fecha: ${fechaStr}` : 'Se ha creado un nuevo evento en el calendario',
+            data: { tipo: 'evento', eventoId: String(evento._id) },
+          })
+          .catch(() => {/* silencioso */});
+      }
+    })
+    .catch(() => {/* silencioso */});
+};
+
 class CalendarioController {
   // Crear un nuevo evento
   async crearEvento(req: RequestWithUser, res: Response, next: NextFunction) {
@@ -165,29 +192,9 @@ class CalendarioController {
       });
 
       // Notificar a todos los usuarios de la escuela solo si el evento quedó publicado (ACTIVO)
-      if (evento.estado !== EstadoEvento.ACTIVO) {
-        return;
+      if (evento.estado === EstadoEvento.ACTIVO) {
+        notificarEventoPublicado(evento, req.user!.escuelaId);
       }
-      const escuelaId = req.user!.escuelaId;
-      const titulo = (eventoData as any).titulo || 'Nuevo evento';
-      const fechaStr = eventoData.fechaInicio
-        ? new Date(eventoData.fechaInicio).toLocaleDateString('es-CO')
-        : '';
-
-      Usuario.find(
-        { escuelaId, fcmToken: { $exists: true, $ne: null } },
-        { fcmToken: 1 }
-      ).then((usuarios: any[]) => {
-        const tokens = usuarios.map((u) => u.fcmToken).filter(Boolean);
-        if (tokens.length > 0) {
-          pushNotificationService.enviarNotificacionMasiva({
-            tokens,
-            titulo: `Nuevo evento: ${titulo}`,
-            mensaje: fechaStr ? `Fecha: ${fechaStr}` : 'Se ha creado un nuevo evento en el calendario',
-            data: { tipo: 'evento', eventoId: (evento._id as any).toString() },
-          }).catch(() => {/* silencioso */});
-        }
-      }).catch(() => {/* silencioso */});
     } catch (error) {
       next(error);
     }
@@ -566,6 +573,11 @@ class CalendarioController {
       success: true,
       data: eventoActualizado,
     });
+
+    // Si el PUT publica el evento (Flutter cambia el estado por aquí), se avisa al colegio como al crear
+    if (datosActualizacion.estado === EstadoEvento.ACTIVO && evento.estado !== EstadoEvento.ACTIVO) {
+      notificarEventoPublicado(eventoActualizado as any, req.user.escuelaId);
+    }
   } catch (error) {
     next(error);
   }
@@ -757,6 +769,11 @@ class CalendarioController {
       data: eventoActualizado,
       message: `Estado del evento cambiado a ${estado} exitosamente`,
     });
+
+    // Al publicarse (pasar a ACTIVO desde otro estado) se avisa al colegio, igual que al crear
+    if (eventoActualizado && estado === EstadoEvento.ACTIVO && evento.estado !== EstadoEvento.ACTIVO) {
+      notificarEventoPublicado(eventoActualizado as any, req.user.escuelaId);
+    }
   } catch (error) {
     next(error);
   }
