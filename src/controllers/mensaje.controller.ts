@@ -2311,12 +2311,26 @@ export class MensajeController {
                     cond: { $eq: ['$$l.usuarioId', usuarioId] },
                   },
                 },
-                // Destinatarios visibles: remitente → los 3 primeros; individual con ≤10 → todos;
-                // masivo o >10 → solo el propio usuario (privacidad). El conteo va en totalDestinatarios.
+                // Destinatarios visibles: remitente → los 3 primeros (borradores: TODOS, porque Flutter
+                // edita el borrador desde el item de la lista y al guardar perdería los demás);
+                // individual con ≤10 → todos; masivo o >10 → solo el propio usuario (privacidad).
+                // El conteo va en totalDestinatarios.
                 destinatarios: {
                   $cond: [
                     '$esRemitente',
-                    { $slice: [{ $ifNull: ['$destinatarios', []] }, 3] },
+                    {
+                      $cond: [
+                        {
+                          $or: [
+                            bandeja === 'borradores',
+                            { $eq: ['$tipo', TipoMensaje.BORRADOR] },
+                            { $eq: ['$estado', EstadoMensaje.BORRADOR] },
+                          ],
+                        },
+                        { $ifNull: ['$destinatarios', []] },
+                        { $slice: [{ $ifNull: ['$destinatarios', []] }, 3] },
+                      ],
+                    },
                     {
                       $cond: [
                         {
