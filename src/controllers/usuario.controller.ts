@@ -4,6 +4,7 @@ import Usuario from '../models/usuario.model';
 import Curso from '../models/curso.model';
 import ApiError from '../utils/ApiError';
 import { escapeRegex } from '../utils/escapeRegex';
+import { numeroPagina, numeroLimite } from '../utils/paginacion';
 import notificacionService from '../services/notificacion.service';
 import { TipoNotificacion } from '../interfaces/INotificacion';
 
@@ -61,7 +62,34 @@ class UsuarioController {
         ];
       }
 
-      const usuarios = await Usuario.find(query).select('-password');
+      // Solo los campos que usan los clientes (listados y selectores) y .lean(): con miles de
+      // usuarios los documentos completos pesaban MB. La lista blanca excluye los campos sensibles.
+      const campos =
+        '_id nombre apellidos email tipo estado escuelaId perfilRolId rolBase perfil info_academica createdAt';
+
+      // Paginación OPCIONAL: solo si llega ?pagina (el web siempre manda limite=500 sin pagina
+      // para llenar selectores y la tabla completa; paginar por limite lo truncaría)
+      if (req.query.pagina !== undefined) {
+        const pagina = numeroPagina(req.query.pagina);
+        const limite = numeroLimite(req.query.limite, 50);
+        const [usuarios, total] = await Promise.all([
+          Usuario.find(query)
+            .select(campos)
+            .sort({ apellidos: 1, nombre: 1 })
+            .skip((pagina - 1) * limite)
+            .limit(limite)
+            .lean(),
+          Usuario.countDocuments(query),
+        ]);
+        res.json({
+          success: true,
+          data: usuarios,
+          meta: { total, pagina, limite, totalPaginas: Math.ceil(total / limite) },
+        });
+        return;
+      }
+
+      const usuarios = await Usuario.find(query).select(campos).lean();
 
       res.json({
         success: true,
