@@ -3,6 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.MIN_CLASES_ALERTA = void 0;
 exports.procesarAlertasAsistenciaCurso = procesarAlertasAsistenciaCurso;
 exports.triggerAlertasAsistencia = triggerAlertasAsistencia;
 const mongoose_1 = __importDefault(require("mongoose"));
@@ -19,6 +20,7 @@ const email_service_1 = __importDefault(require("./email.service"));
 const IAsistencia_1 = require("../interfaces/IAsistencia");
 const INotificacion_1 = require("../interfaces/INotificacion");
 const IMensaje_1 = require("../interfaces/IMensaje");
+const fechas_1 = require("../utils/fechas");
 function generarCuerpoMensaje(nivel, nombreEstudiante, nombreCurso, porcentajeAusencias) {
     const descripciones = {
         ALERTA: 'ha alcanzado el 15% de ausencias',
@@ -70,10 +72,15 @@ async function obtenerPeriodoVigente(escuelaId, periodoId) {
     const hoy = new Date();
     const periodo = periodoId
         ? periodos.find((p) => String(p._id) === String(periodoId))
-        : periodos.find((p) => new Date(p.fecha_inicio) <= hoy && hoy <= new Date(p.fecha_fin));
+        :
+            periodos.find((p) => new Date(p.fecha_inicio) <= hoy && hoy <= (0, fechas_1.finDelDiaColombia)(new Date(p.fecha_fin)));
     if (!periodo)
         return { id: periodoId || 'sin-periodo' };
-    return { id: String(periodo._id), desde: new Date(periodo.fecha_inicio), hasta: new Date(periodo.fecha_fin) };
+    return {
+        id: String(periodo._id),
+        desde: new Date(periodo.fecha_inicio),
+        hasta: (0, fechas_1.finDelDiaColombia)(new Date(periodo.fecha_fin)),
+    };
 }
 async function enviarNotificacionesAlerta(params) {
     const { nivel, nombreEstudiante, nombreCurso, porcentajeAusencias, destinatarios, escuelaId, estudianteId, cursoId, periodoId, } = params;
@@ -154,6 +161,8 @@ async function enviarNotificacionesAlerta(params) {
         }
     }
 }
+exports.MIN_CLASES_ALERTA = Math.max(parseInt(process.env.ALERTA_MIN_CLASES || '8', 10) || 8, 1);
+const RANGO_NIVEL = { ALERTA: 1, CRITICO: 2, INMINENTE: 3 };
 const UMBRALES = [
     { nivel: 'INMINENTE', minPct: 30 },
     { nivel: 'CRITICO', minPct: 25 },
@@ -194,9 +203,26 @@ async function procesarAlertasAsistenciaCurso(params) {
             },
         },
     ]);
+    const idsConClases = conteos.filter((c) => c.total >= exports.MIN_CLASES_ALERTA).map((c) => c._id);
+    const previas = idsConClases.length
+        ? await alertaAsistencia_model_1.default.find({ estudianteId: { $in: idsConClases }, periodoId: periodo.id })
+            .select('estudianteId nivel')
+            .lean()
+        : [];
+    const nivelPrevio = new Map();
+    previas.forEach((a) => {
+        const k = String(a.estudianteId);
+        nivelPrevio.set(k, Math.max(nivelPrevio.get(k) || 0, RANGO_NIVEL[a.nivel] || 0));
+    });
     const enRiesgo = conteos
+        .filter((c) => c.total >= exports.MIN_CLASES_ALERTA)
         .map((c) => ({ estudianteId: String(c._id), porcentaje: (c.ausentes / c.total) * 100 }))
-        .map((c) => ({ ...c, umbrales: UMBRALES.filter((u) => c.porcentaje >= u.minPct) }))
+        .map((c) => {
+        const alcanzado = UMBRALES.find((u) => c.porcentaje >= u.minPct);
+        const previo = nivelPrevio.get(c.estudianteId) || 0;
+        const umbrales = alcanzado && RANGO_NIVEL[alcanzado.nivel] > previo ? [alcanzado] : [];
+        return { ...c, umbrales };
+    })
         .filter((c) => c.umbrales.length > 0);
     if (enRiesgo.length === 0)
         return;

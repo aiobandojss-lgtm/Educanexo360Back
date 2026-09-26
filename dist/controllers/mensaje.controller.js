@@ -5,7 +5,6 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MensajeController = exports.ROLES_CON_BORRADORES = void 0;
 const mongoose_1 = __importDefault(require("mongoose"));
-const promises_1 = require("stream/promises");
 const mensaje_model_1 = __importDefault(require("../models/mensaje.model"));
 const usuario_model_1 = __importDefault(require("../models/usuario.model"));
 const gridfs_1 = __importDefault(require("../config/gridfs"));
@@ -13,11 +12,11 @@ const mensaje_service_1 = __importDefault(require("../services/mensaje.service")
 const escapeRegex_1 = require("../utils/escapeRegex");
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
 const IMensaje_1 = require("../interfaces/IMensaje");
-const fs_1 = __importDefault(require("fs"));
-const path_1 = __importDefault(require("path"));
 const pushNotification_service_1 = __importDefault(require("../services/pushNotification.service"));
 const paginacion_1 = require("../utils/paginacion");
 const logger_1 = require("../utils/logger");
+const adjuntosGridFS_1 = require("../utils/adjuntosGridFS");
+const contentDisposition_1 = require("../utils/contentDisposition");
 exports.ROLES_CON_BORRADORES = ['ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO', 'DOCENTE'];
 class MensajeController {
     async getPosiblesDestinatarios(req, res, next) {
@@ -459,31 +458,7 @@ class MensajeController {
                     if (!bucket) {
                         throw new ApiError_1.default(500, 'Servicio de archivos no disponible');
                     }
-                    for (const file of req.files) {
-                        const filename = file.filename || path_1.default.basename(file.path);
-                        const uploadStream = bucket.openUploadStream(filename, {
-                            metadata: {
-                                originalName: file.originalname,
-                                contentType: file.mimetype,
-                                size: file.size,
-                                uploadedBy: req.user._id,
-                            },
-                        });
-                        await (0, promises_1.pipeline)(fs_1.default.createReadStream(file.path), uploadStream);
-                        nuevosAdjuntos.push({
-                            nombre: file.originalname,
-                            tipo: file.mimetype,
-                            tamaño: file.size,
-                            fileId: uploadStream.id,
-                            fechaSubida: new Date(),
-                        });
-                        try {
-                            fs_1.default.unlinkSync(file.path);
-                        }
-                        catch (error) {
-                            console.error('Error deleting temporary file:', error);
-                        }
-                    }
+                    nuevosAdjuntos.push(...(await (0, adjuntosGridFS_1.subirAdjuntosGridFS)(req.files, bucket, String(req.user._id))));
                     borrador.adjuntos = nuevosAdjuntos;
                     logger_1.logger.debug(`Adjuntos reemplazados: ${nuevosAdjuntos.length} nuevos adjuntos`);
                 }
@@ -530,31 +505,7 @@ class MensajeController {
                         throw new ApiError_1.default(500, 'Servicio de archivos no disponible');
                     }
                     try {
-                        for (const file of req.files) {
-                            const filename = file.filename || path_1.default.basename(file.path);
-                            const uploadStream = bucket.openUploadStream(filename, {
-                                metadata: {
-                                    originalName: file.originalname,
-                                    contentType: file.mimetype,
-                                    size: file.size,
-                                    uploadedBy: req.user._id,
-                                },
-                            });
-                            await (0, promises_1.pipeline)(fs_1.default.createReadStream(file.path), uploadStream);
-                            adjuntos.push({
-                                nombre: file.originalname,
-                                tipo: file.mimetype,
-                                tamaño: file.size,
-                                fileId: uploadStream.id,
-                                fechaSubida: new Date(),
-                            });
-                            try {
-                                fs_1.default.unlinkSync(file.path);
-                            }
-                            catch (error) {
-                                console.error('Error deleting temporary file:', error);
-                            }
-                        }
+                        adjuntos.push(...(await (0, adjuntosGridFS_1.subirAdjuntosGridFS)(req.files, bucket, String(req.user._id))));
                         borradorBasico.adjuntos = adjuntos;
                         await borradorBasico.save();
                     }
@@ -1350,31 +1301,7 @@ class MensajeController {
                 if (!bucket) {
                     throw new ApiError_1.default(500, 'Servicio de archivos no disponible');
                 }
-                for (const file of req.files) {
-                    const filename = file.filename || path_1.default.basename(file.path);
-                    const uploadStream = bucket.openUploadStream(filename, {
-                        metadata: {
-                            originalName: file.originalname,
-                            contentType: file.mimetype,
-                            size: file.size,
-                            uploadedBy: req.user._id,
-                        },
-                    });
-                    await (0, promises_1.pipeline)(fs_1.default.createReadStream(file.path), uploadStream);
-                    adjuntos.push({
-                        nombre: file.originalname,
-                        tipo: file.mimetype,
-                        tamaño: file.size,
-                        fileId: uploadStream.id,
-                        fechaSubida: new Date(),
-                    });
-                    try {
-                        fs_1.default.unlinkSync(file.path);
-                    }
-                    catch (error) {
-                        console.error('Error deleting temporary file:', error);
-                    }
-                }
+                adjuntos.push(...(await (0, adjuntosGridFS_1.subirAdjuntosGridFS)(req.files, bucket, String(req.user._id))));
             }
             let estado = IMensaje_1.EstadoMensaje.ENVIADO;
             if (tipo === 'BORRADOR') {
@@ -1608,7 +1535,68 @@ class MensajeController {
                 ];
                 matchBandeja.estadoUsuario = IMensaje_1.EstadoMensaje.ELIMINADO;
             }
-            pipeline.push({ $match: matchBandeja }, { $sort: { createdAt: -1 } });
+            pipeline.push({ $match: matchBandeja }, {
+                $addFields: {
+                    totalDestinatarios: { $size: { $ifNull: ['$destinatarios', []] } },
+                    leido: {
+                        $cond: [
+                            '$esRemitente',
+                            { $gt: [{ $size: { $ifNull: ['$lecturas', []] } }, 0] },
+                            { $in: [usuarioId, { $ifNull: ['$lecturas.usuarioId', []] }] },
+                        ],
+                    },
+                    estadosUsuarios: {
+                        $filter: {
+                            input: { $ifNull: ['$estadosUsuarios', []] },
+                            as: 'e',
+                            cond: { $eq: ['$$e.usuarioId', usuarioId] },
+                        },
+                    },
+                    lecturas: {
+                        $filter: {
+                            input: { $ifNull: ['$lecturas', []] },
+                            as: 'l',
+                            cond: { $eq: ['$$l.usuarioId', usuarioId] },
+                        },
+                    },
+                    destinatarios: {
+                        $cond: [
+                            '$esRemitente',
+                            {
+                                $cond: [
+                                    {
+                                        $or: [
+                                            bandeja === 'borradores',
+                                            { $eq: ['$tipo', IMensaje_1.TipoMensaje.BORRADOR] },
+                                            { $eq: ['$estado', IMensaje_1.EstadoMensaje.BORRADOR] },
+                                        ],
+                                    },
+                                    { $ifNull: ['$destinatarios', []] },
+                                    { $slice: [{ $ifNull: ['$destinatarios', []] }, 3] },
+                                ],
+                            },
+                            {
+                                $cond: [
+                                    {
+                                        $and: [
+                                            { $eq: ['$tipo', IMensaje_1.TipoMensaje.INDIVIDUAL] },
+                                            { $lte: [{ $size: { $ifNull: ['$destinatarios', []] } }, 10] },
+                                        ],
+                                    },
+                                    { $ifNull: ['$destinatarios', []] },
+                                    {
+                                        $filter: {
+                                            input: { $ifNull: ['$destinatarios', []] },
+                                            as: 'd',
+                                            cond: { $eq: ['$$d', usuarioId] },
+                                        },
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                },
+            }, { $sort: { createdAt: -1 } });
             const proyeccionUsuario = (prefijo) => ({
                 _id: `${prefijo}._id`,
                 nombre: `${prefijo}.nombre`,
@@ -1622,56 +1610,6 @@ class MensajeController {
                     datos: [
                         { $skip: (opciones.pagina - 1) * opciones.limite },
                         { $limit: opciones.limite },
-                        {
-                            $addFields: {
-                                totalDestinatarios: { $size: { $ifNull: ['$destinatarios', []] } },
-                                leido: {
-                                    $cond: [
-                                        '$esRemitente',
-                                        { $gt: [{ $size: { $ifNull: ['$lecturas', []] } }, 0] },
-                                        { $in: [usuarioId, { $ifNull: ['$lecturas.usuarioId', []] }] },
-                                    ],
-                                },
-                                estadosUsuarios: {
-                                    $filter: {
-                                        input: { $ifNull: ['$estadosUsuarios', []] },
-                                        as: 'e',
-                                        cond: { $eq: ['$$e.usuarioId', usuarioId] },
-                                    },
-                                },
-                                lecturas: {
-                                    $filter: {
-                                        input: { $ifNull: ['$lecturas', []] },
-                                        as: 'l',
-                                        cond: { $eq: ['$$l.usuarioId', usuarioId] },
-                                    },
-                                },
-                                destinatarios: {
-                                    $cond: [
-                                        '$esRemitente',
-                                        { $slice: [{ $ifNull: ['$destinatarios', []] }, 3] },
-                                        {
-                                            $cond: [
-                                                {
-                                                    $and: [
-                                                        { $eq: ['$tipo', IMensaje_1.TipoMensaje.INDIVIDUAL] },
-                                                        { $lte: [{ $size: { $ifNull: ['$destinatarios', []] } }, 10] },
-                                                    ],
-                                                },
-                                                { $ifNull: ['$destinatarios', []] },
-                                                {
-                                                    $filter: {
-                                                        input: { $ifNull: ['$destinatarios', []] },
-                                                        as: 'd',
-                                                        cond: { $eq: ['$$d', usuarioId] },
-                                                    },
-                                                },
-                                            ],
-                                        },
-                                    ],
-                                },
-                            },
-                        },
                         {
                             $lookup: {
                                 from: 'usuarios',
@@ -2070,11 +2008,9 @@ class MensajeController {
             if (!documento) {
                 throw new ApiError_1.default(404, 'Archivo no encontrado en el sistema');
             }
-            const nombreArchivo = String(adjunto.nombre || 'archivo');
-            const nombreAscii = nombreArchivo.replace(/[^\x20-\x7E]|"/g, '_');
             res.set({
                 'Content-Type': adjunto.tipo,
-                'Content-Disposition': `attachment; filename="${nombreAscii}"; filename*=UTF-8''${encodeURIComponent(nombreArchivo)}`,
+                'Content-Disposition': (0, contentDisposition_1.contentDispositionAdjunto)(adjunto.nombre),
             });
             const downloadStream = bucket.openDownloadStream(new mongoose_1.default.Types.ObjectId(adjuntoId));
             downloadStream.on('error', (error) => {
@@ -2322,31 +2258,7 @@ class MensajeController {
                 if (!bucket) {
                     throw new ApiError_1.default(500, 'Servicio de archivos no disponible');
                 }
-                for (const file of req.files) {
-                    const filename = file.filename || path_1.default.basename(file.path);
-                    const uploadStream = bucket.openUploadStream(filename, {
-                        metadata: {
-                            originalName: file.originalname,
-                            contentType: file.mimetype,
-                            size: file.size,
-                            uploadedBy: req.user._id,
-                        },
-                    });
-                    await (0, promises_1.pipeline)(fs_1.default.createReadStream(file.path), uploadStream);
-                    adjuntos.push({
-                        nombre: file.originalname,
-                        tipo: file.mimetype,
-                        tamaño: file.size,
-                        fileId: uploadStream.id,
-                        fechaSubida: new Date(),
-                    });
-                    try {
-                        fs_1.default.unlinkSync(file.path);
-                    }
-                    catch (error) {
-                        console.error('Error deleting temporary file:', error);
-                    }
-                }
+                adjuntos.push(...(await (0, adjuntosGridFS_1.subirAdjuntosGridFS)(req.files, bucket, String(req.user._id))));
             }
             let destinatariosCcArray = [];
             if (destinatariosCc) {

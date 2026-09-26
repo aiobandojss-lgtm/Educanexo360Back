@@ -53,7 +53,7 @@ const sincronizarEstadosEntregas = async (tarea) => {
         .filter((e) => antes.get(String(e._id)) !== e.estado)
         .map((e) => e._id);
     if (cambiadas.length > 0) {
-        await tarea_model_1.default.updateOne({ _id: tarea._id }, { $set: { 'entregas.$[e].estado': 'ATRASADA' } }, { arrayFilters: [{ 'e._id': { $in: cambiadas } }] });
+        await tarea_model_1.default.updateOne({ _id: tarea._id }, { $set: { 'entregas.$[e].estado': 'ATRASADA' } }, { arrayFilters: [{ 'e._id': { $in: cambiadas }, 'e.estado': { $in: ['PENDIENTE', 'VISTA', 'ENTREGADA'] } }] });
     }
 };
 const resolverAccesoTarea = async (user, tarea) => {

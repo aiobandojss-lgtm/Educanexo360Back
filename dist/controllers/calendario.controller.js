@@ -14,6 +14,7 @@ const path_1 = __importDefault(require("path"));
 const ICalendario_1 = require("../interfaces/ICalendario");
 const pushNotification_service_1 = __importDefault(require("../services/pushNotification.service"));
 const logger_1 = require("../utils/logger");
+const contentDisposition_1 = require("../utils/contentDisposition");
 const CAMPOS_EVENTO = [
     'titulo',
     'descripcion',
@@ -594,11 +595,9 @@ class CalendarioController {
             if (!documento) {
                 throw new ApiError_1.default(404, 'Archivo no encontrado en el sistema');
             }
-            const nombreArchivo = String(evento.archivoAdjunto.nombre || 'archivo');
-            const nombreAscii = nombreArchivo.replace(/[^\x20-\x7E]|"/g, '_');
             res.set({
                 'Content-Type': evento.archivoAdjunto.tipo,
-                'Content-Disposition': `attachment; filename="${nombreAscii}"; filename*=UTF-8''${encodeURIComponent(nombreArchivo)}`,
+                'Content-Disposition': (0, contentDisposition_1.contentDispositionAdjunto)(evento.archivoAdjunto.nombre),
             });
             const downloadStream = bucket.openDownloadStream(fileId);
             downloadStream.on('error', (error) => {

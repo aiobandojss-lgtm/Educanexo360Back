@@ -15,6 +15,7 @@ const alertaAsistencia_model_1 = __importDefault(require("../models/alertaAsiste
 const alertaAsistencia_service_1 = require("../services/alertaAsistencia.service");
 const paginacion_1 = require("../utils/paginacion");
 const logger_1 = require("../utils/logger");
+const fechas_1 = require("../utils/fechas");
 const accesoAcademico_1 = require("../utils/accesoAcademico");
 const idDe = (valor) => String(valor?._id ?? valor);
 const docentePuedeVerRegistro = async (user, asistencia) => idDe(asistencia.docenteId) === String(user._id) ||
@@ -669,6 +670,9 @@ const obtenerResumen = async (req, res, next) => {
         const fechaFin = (0, accesoAcademico_1.queryString)(req.query.fechaFin);
         const cursoId = (0, accesoAcademico_1.queryString)(req.query.cursoId);
         const estudianteIdQuery = (0, accesoAcademico_1.queryString)(req.query.estudianteId);
+        if (cursoId && !mongoose_1.default.isValidObjectId(cursoId)) {
+            return next(new ApiError_1.default(400, 'cursoId inválido'));
+        }
         const query = { escuelaId: req.user.escuelaId };
         if (cursoId)
             query.cursoId = cursoId;
@@ -698,8 +702,7 @@ const obtenerResumen = async (req, res, next) => {
         if (fechaFin)
             query.fecha.$lte = new Date(fechaFin);
         if (!fechaInicio && !fechaFin) {
-            const hoy = new Date();
-            query.fecha.$gte = new Date(Date.UTC(hoy.getUTCFullYear(), hoy.getUTCMonth(), 1));
+            query.fecha.$gte = (0, fechas_1.inicioMesColombia)();
         }
         if (req.user.tipo === 'DOCENTE') {
             query.docenteId = req.user._id;
