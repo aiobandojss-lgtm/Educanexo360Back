@@ -46,7 +46,20 @@ interface ILectura {
   fechaLectura: Date;
 }
 
-export class MensajeController {
+export /**
+ * IDs (string) de los usuarios ACTIVOS del colegio entre los recibidos (mismo criterio que crearMensaje):
+ * los destinatarios de otro colegio o inactivos se descartan.
+ */
+const idsDestinatariosValidos = async (ids: unknown[], escuelaId: string): Promise<Set<string>> => {
+  const lista = ids.map((d: any) => String(d?._id ?? d)).filter((d) => mongoose.isValidObjectId(d));
+  if (lista.length === 0 || !mongoose.isValidObjectId(escuelaId)) return new Set();
+  const validos = await Usuario.find({ _id: { $in: lista }, escuelaId, estado: 'ACTIVO' })
+    .select('_id')
+    .lean();
+  return new Set(validos.map((u: any) => String(u._id)));
+};
+
+class MensajeController {
   // Método para obtener posibles destinatarios según el rol del usuario
   async getPosiblesDestinatarios(
     req: RequestWithUser,
@@ -571,6 +584,18 @@ export class MensajeController {
         }
       }
 
+      // Solo destinatarios ACTIVOS del mismo colegio (auditoría 3.C; mismo criterio que crearMensaje)
+      const validosBorrador = await idsDestinatariosValidos(
+        [...destinatariosObjectIds, ...destinatariosCcObjectIds],
+        String(req.user.escuelaId),
+      );
+      const filtrarValidos = (lista: mongoose.Types.ObjectId[]) => {
+        const filtrados = lista.filter((id) => validosBorrador.has(String(id)));
+        lista.splice(0, lista.length, ...filtrados);
+      };
+      filtrarValidos(destinatariosObjectIds);
+      filtrarValidos(destinatariosCcObjectIds);
+
       logger.debug('Destinatarios ObjectId finales:', destinatariosObjectIds.length);
       logger.debug('Destinatarios CC ObjectId finales:', destinatariosCcObjectIds.length);
 
@@ -793,6 +818,7 @@ export class MensajeController {
       const borrador = await Mensaje.findOne({
         _id: id,
         remitente: req.user._id,
+        escuelaId: req.user.escuelaId,
         tipo: TipoMensaje.BORRADOR,
         estado: EstadoMensaje.BORRADOR,
       });
@@ -801,9 +827,22 @@ export class MensajeController {
         throw new ApiError(404, 'Borrador no encontrado');
       }
 
+      // Solo destinatarios ACTIVOS del mismo colegio (auditoría 3.C): se revalida al enviar porque el
+      // borrador pudo guardarse antes de este control o un destinatario pudo desactivarse después
+      const validosEnvio = await idsDestinatariosValidos(
+        [...(borrador.destinatarios || []), ...(borrador.destinatariosCc || [])],
+        String(req.user.escuelaId),
+      );
+      borrador.destinatarios = (borrador.destinatarios || []).filter((d: any) =>
+        validosEnvio.has(String(d?._id ?? d)),
+      ) as any;
+      borrador.destinatariosCc = (borrador.destinatariosCc || []).filter((d: any) =>
+        validosEnvio.has(String(d?._id ?? d)),
+      ) as any;
+
       // Verificar que tenga al menos un destinatario
       if (!borrador.destinatarios || borrador.destinatarios.length === 0) {
-        throw new ApiError(400, 'El mensaje debe tener al menos un destinatario');
+        throw new ApiError(400, 'El mensaje debe tener al menos un destinatario válido');
       }
 
       // Obtener todos los usuarios involucrados en el mensaje
@@ -851,6 +890,8 @@ export class MensajeController {
             tipo: TipoMensaje.INDIVIDUAL,
             estado: EstadoMensaje.ENVIADO,
             estadosUsuarios: estadosUsuarios,
+            destinatarios: borrador.destinatarios,
+            destinatariosCc: borrador.destinatariosCc,
             fechaAccion: ahora,
           },
         },
@@ -2364,6 +2405,8 @@ export class MensajeController {
       // Construir una consulta más segura
       const matchQuery = {
         _id: new mongoose.Types.ObjectId(id),
+        // Solo mensajes del colegio del usuario (auditoría 3.C)
+        escuelaId: req.user.escuelaId,
         $or: [
           { remitente: userObjId },
           { destinatarios: userObjId },
