@@ -60,6 +60,13 @@ interface RequestWithUser extends Request {
   };
 }
 
+// Populate proyectado (Fase 3.6): mismos tipos que antes, solo los campos necesarios
+const POBLAR_CALIFICACION = [
+  { path: 'estudianteId', select: 'nombre apellidos email estado info_academica.codigo_estudiante' },
+  { path: 'asignaturaId', select: 'nombre cursoId docenteId' },
+  { path: 'cursoId', select: 'nombre nivel grado grupo jornada año_academico' },
+];
+
 class CalificacionController {
   async crear(req: RequestWithUser, res: Response, next: NextFunction) {
     try {
@@ -113,7 +120,7 @@ class CalificacionController {
       };
 
       const calificacion = await Calificacion.create(calificacionData);
-      await calificacion.populate(['estudianteId', 'asignaturaId', 'cursoId']);
+      await calificacion.populate(POBLAR_CALIFICACION);
 
       res.status(201).json({
         success: true,
@@ -159,7 +166,7 @@ class CalificacionController {
 
       // El filtro de rol se combina con $and para que no lo pisen los parámetros del cliente
       const calificaciones = await Calificacion.find({ $and: [query, filtroRol] })
-        .populate(['estudianteId', 'asignaturaId', 'cursoId'])
+        .populate(POBLAR_CALIFICACION)
         .sort({ createdAt: -1 });
 
       res.json({
@@ -184,7 +191,7 @@ class CalificacionController {
 
       const calificacion = await Calificacion.findOne({
         $and: [{ _id: req.params.id, escuelaId: req.user.escuelaId }, filtroRol],
-      }).populate(['estudianteId', 'asignaturaId', 'cursoId']);
+      }).populate(POBLAR_CALIFICACION);
 
       if (!calificacion) {
         throw new ApiError(404, 'Calificación no encontrada');
@@ -221,7 +228,7 @@ class CalificacionController {
         },
         datos,
         { new: true, runValidators: true },
-      ).populate(['estudianteId', 'asignaturaId', 'cursoId']);
+      ).populate(POBLAR_CALIFICACION);
 
       if (!calificacion) {
         throw new ApiError(404, 'Calificación no encontrada');
@@ -261,7 +268,7 @@ class CalificacionController {
           },
         },
         { new: true, runValidators: true },
-      ).populate(['estudianteId', 'asignaturaId', 'cursoId']);
+      ).populate(POBLAR_CALIFICACION);
 
       if (!calificacion) {
         throw new ApiError(404, 'Calificación no encontrada');
@@ -298,7 +305,7 @@ class CalificacionController {
           },
         },
         { new: true, runValidators: true },
-      ).populate(['estudianteId', 'asignaturaId', 'cursoId']);
+      ).populate(POBLAR_CALIFICACION);
 
       if (!calificacion) {
         throw new ApiError(404, 'Calificación o logro no encontrado');

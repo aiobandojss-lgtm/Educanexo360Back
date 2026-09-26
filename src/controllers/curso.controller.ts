@@ -17,6 +17,13 @@ interface RequestWithUser extends Request {
   };
 }
 
+// Populate proyectado (Fase 3.6): mismos tipos (objetos) que antes para no romper APKs viejas,
+// pero solo con los campos que usan los clientes (antes: documentos de usuario completos)
+const POBLAR_CURSO = [
+  { path: 'director_grupo', select: 'nombre apellidos email tipo' },
+  { path: 'estudiantes', select: 'nombre apellidos email estado' },
+];
+
 class CursoController {
   async crear(req: RequestWithUser, res: Response, next: NextFunction) {
     try {
@@ -30,7 +37,7 @@ class CursoController {
       };
 
       const curso = await Curso.create(cursoData);
-      await curso.populate(['director_grupo', 'estudiantes']);
+      await curso.populate(POBLAR_CURSO);
 
       res.status(201).json({
         success: true,
@@ -49,7 +56,8 @@ class CursoController {
         throw new ApiError(401, 'No autorizado');
       }
 
-      const { año_academico, estado } = req.query;
+      const año_academico = typeof req.query.año_academico === 'string' ? req.query.año_academico : undefined;
+      const estado = typeof req.query.estado === 'string' ? req.query.estado : undefined;
       const query: any = { escuelaId: req.user.escuelaId };
 
       if (año_academico) {
@@ -65,9 +73,7 @@ class CursoController {
 
       // Si es ADMIN o RECTOR o COORDINADOR, puede ver todos los cursos
       if (['ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'].includes(req.user.tipo)) {
-        cursos = await Curso.find(query)
-          .populate(['director_grupo', 'estudiantes'])
-          .sort({ nombre: 1 });
+        cursos = await Curso.find(query).populate(POBLAR_CURSO).sort({ nombre: 1 }).lean();
       }
       // Si es DOCENTE, solo ve los cursos donde es director o imparte clases
       else if (req.user.tipo === 'DOCENTE') {
@@ -98,17 +104,31 @@ class CursoController {
         cursos = await Curso.find({
           _id: { $in: Array.from(cursosIds) },
         })
-          .populate(['director_grupo', 'estudiantes'])
-          .sort({ nombre: 1 });
+          .populate(POBLAR_CURSO)
+          .sort({ nombre: 1 })
+          .lean();
       }
       // Para otros roles (estudiantes, padres), no deberían acceder a esta función
       else {
         throw new ApiError(403, 'No tiene permisos para ver cursos');
       }
 
+      // Conteos (Flutter los lee si vienen): una sola agregación para todas las asignaturas
+      const idsCursos = (cursos as any[]).map((c) => c._id);
+      const conteoAsignaturas = await mongoose.model('Asignatura').aggregate([
+        { $match: { escuelaId: new mongoose.Types.ObjectId(req.user.escuelaId), cursoId: { $in: idsCursos } } },
+        { $group: { _id: '$cursoId', total: { $sum: 1 } } },
+      ]);
+      const asignaturasPorCurso = new Map(conteoAsignaturas.map((a: any) => [String(a._id), a.total]));
+      const cursosConConteo = (cursos as any[]).map((c) => ({
+        ...c,
+        estudiantesCount: Array.isArray(c.estudiantes) ? c.estudiantes.length : 0,
+        asignaturasCount: asignaturasPorCurso.get(String(c._id)) || 0,
+      }));
+
       res.json({
         success: true,
-        data: cursos,
+        data: cursosConConteo,
       });
     } catch (error) {
       next(error);
@@ -123,7 +143,7 @@ class CursoController {
       const curso = await Curso.findOne({
         _id: req.params.id,
         escuelaId: req.user.escuelaId,
-      }).populate(['director_grupo', 'estudiantes']);
+      }).populate(POBLAR_CURSO);
 
       if (!curso) {
         throw new ApiError(404, 'Curso no encontrado');
@@ -151,7 +171,7 @@ class CursoController {
         },
         req.body,
         { new: true, runValidators: true },
-      ).populate(['director_grupo', 'estudiantes']);
+      ).populate(POBLAR_CURSO);
 
       if (!curso) {
         throw new ApiError(404, 'Curso no encontrado');
@@ -209,7 +229,7 @@ class CursoController {
         },
         { $addToSet: { estudiantes: { $each: estudiantes } } },
         { new: true },
-      ).populate(['director_grupo', 'estudiantes']);
+      ).populate(POBLAR_CURSO);
 
       if (!curso) {
         throw new ApiError(404, 'Curso no encontrado');
@@ -239,7 +259,7 @@ class CursoController {
         },
         { $pullAll: { estudiantes } },
         { new: true },
-      ).populate(['director_grupo', 'estudiantes']);
+      ).populate(POBLAR_CURSO);
 
       if (!curso) {
         throw new ApiError(404, 'Curso no encontrado');

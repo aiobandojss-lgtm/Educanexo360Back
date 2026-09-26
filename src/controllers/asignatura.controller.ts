@@ -16,6 +16,10 @@ interface RequestWithUser extends Request {
   };
 }
 
+// Populate proyectado (Fase 3.6): mismos tipos que antes, solo los campos necesarios
+const POBLAR_CURSO_ASIGNATURA = { path: 'cursoId', select: 'nombre grado grupo nivel jornada año_academico' };
+const POBLAR_DOCENTE_ASIGNATURA = { path: 'docenteId', select: 'nombre apellidos email tipo estado' };
+
 class AsignaturaController {
   async crear(req: RequestWithUser, res: Response, next: NextFunction) {
     try {
@@ -29,7 +33,7 @@ class AsignaturaController {
       };
 
       const asignatura = await Asignatura.create(asignaturaData);
-      await asignatura.populate(['cursoId', 'docenteId']);
+      await asignatura.populate([POBLAR_CURSO_ASIGNATURA, POBLAR_DOCENTE_ASIGNATURA]);
 
       res.status(201).json({
         success: true,
@@ -152,7 +156,7 @@ class AsignaturaController {
             estado: 'ACTIVO', // Mantener activa
           },
           { new: true, runValidators: false }, // Desactivar validaciones para esta operación
-        ).populate(['docenteId']);
+        ).populate([POBLAR_DOCENTE_ASIGNATURA]);
 
         if (!asignatura) {
           throw new ApiError(404, 'Asignatura no encontrada');
@@ -176,7 +180,7 @@ class AsignaturaController {
         },
         updateData,
         { new: true, runValidators: true },
-      ).populate(['cursoId', 'docenteId']);
+      ).populate([POBLAR_CURSO_ASIGNATURA, POBLAR_DOCENTE_ASIGNATURA]);
 
       if (!asignatura) {
         throw new ApiError(404, 'Asignatura no encontrada');
@@ -234,7 +238,7 @@ class AsignaturaController {
         },
         { periodos },
         { new: true, runValidators: true },
-      ).populate(['cursoId', 'docenteId']);
+      ).populate([POBLAR_CURSO_ASIGNATURA, POBLAR_DOCENTE_ASIGNATURA]);
 
       if (!asignatura) {
         throw new ApiError(404, 'Asignatura no encontrada');
