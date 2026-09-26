@@ -88,7 +88,7 @@ async function obtenerOCrearUsuarioSistema(): Promise<{ _id: mongoose.Types.Obje
 async function obtenerPeriodoVigente(
   escuelaId: string,
   periodoId?: string,
-): Promise<{ id: string; desde?: Date; hasta?: Date }> {
+): Promise<{ id: string; desde?: Date; hastaExclusivo?: Date }> {
   const escuela = (await Escuela.findById(escuelaId).select('periodos_academicos').lean()) as any;
   const periodos: any[] = escuela?.periodos_academicos || [];
   const hoy = new Date();
@@ -97,10 +97,14 @@ async function obtenerPeriodoVigente(
     : // hasta el FIN del día de fecha_fin (hora Colombia): el último día del periodo no cae en 'sin-periodo'
       periodos.find((p) => new Date(p.fecha_inicio) <= hoy && hoy <= finDelDiaColombia(new Date(p.fecha_fin)));
   if (!periodo) return { id: periodoId || 'sin-periodo' };
+  // Las asistencias guardan la fecha como medianoche UTC: el rango termina (exclusivo) en la medianoche UTC
+  // del día siguiente a fecha_fin. Con finDelDiaColombia (05:00 UTC del día siguiente) entraba el primer día
+  // del periodo siguiente (auditoría 3.N); ese helper solo decide arriba si "hoy" cae en el periodo.
+  const fin = new Date(periodo.fecha_fin);
   return {
     id: String(periodo._id),
     desde: new Date(periodo.fecha_inicio),
-    hasta: finDelDiaColombia(new Date(periodo.fecha_fin)),
+    hastaExclusivo: new Date(Date.UTC(fin.getUTCFullYear(), fin.getUTCMonth(), fin.getUTCDate() + 1)),
   };
 }
 
@@ -264,7 +268,7 @@ export async function procesarAlertasAsistenciaCurso(params: {
     cursoId: new mongoose.Types.ObjectId(cursoId),
     escuelaId: new mongoose.Types.ObjectId(escuelaId),
   };
-  if (periodo.desde && periodo.hasta) match.fecha = { $gte: periodo.desde, $lte: periodo.hasta };
+  if (periodo.desde && periodo.hastaExclusivo) match.fecha = { $gte: periodo.desde, $lt: periodo.hastaExclusivo };
 
   const conteos = await Asistencia.aggregate([
     { $match: match },
