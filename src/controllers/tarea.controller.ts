@@ -31,7 +31,9 @@ const sincronizarEstadosEntregas = async (tarea: any): Promise<void> => {
     await Tarea.updateOne(
       { _id: tarea._id },
       { $set: { 'entregas.$[e].estado': 'ATRASADA' } },
-      { arrayFilters: [{ 'e._id': { $in: cambiadas } }] },
+      // Solo si la entrega sigue en un estado que puede pasar a ATRASADA: evita pisar una CALIFICADA
+      // (u otra transición) hecha entre la lectura y esta escritura
+      { arrayFilters: [{ 'e._id': { $in: cambiadas }, 'e.estado': { $in: ['PENDIENTE', 'VISTA', 'ENTREGADA'] } }] },
     );
   }
 };
