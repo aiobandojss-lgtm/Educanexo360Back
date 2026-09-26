@@ -12,6 +12,7 @@ import path from 'path';
 import { EstadoEvento } from '../interfaces/ICalendario';
 import pushNotificationService from '../services/pushNotification.service';
 import { logger } from '../utils/logger';
+import { contentDispositionAdjunto } from '../utils/contentDisposition';
 
 // Campos editables de un evento (lista blanca: escuelaId, creadorId y archivoAdjunto nunca vienen del cliente)
 const CAMPOS_EVENTO = [
@@ -794,12 +795,10 @@ class CalendarioController {
         throw new ApiError(404, 'Archivo no encontrado en el sistema');
       }
 
-      // Configurar respuesta (nombre codificado RFC 5987: caracteres no latin-1 lanzaban excepción)
-      const nombreArchivo = String(evento.archivoAdjunto.nombre || 'archivo');
-      const nombreAscii = nombreArchivo.replace(/[^\x20-\x7E]|"/g, '_');
+      // Configurar respuesta (Content-Disposition RFC 5987, ver utils/contentDisposition)
       res.set({
         'Content-Type': evento.archivoAdjunto.tipo,
-        'Content-Disposition': `attachment; filename="${nombreAscii}"; filename*=UTF-8''${encodeURIComponent(nombreArchivo)}`,
+        'Content-Disposition': contentDispositionAdjunto(evento.archivoAdjunto.nombre),
       });
 
       // Devolver el stream del archivo

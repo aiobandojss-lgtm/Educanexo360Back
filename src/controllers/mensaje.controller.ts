@@ -20,6 +20,7 @@ import pushNotificationService from '../services/pushNotification.service';
 import { numeroPagina, numeroLimite } from '../utils/paginacion';
 import { logger } from '../utils/logger';
 import { subirAdjuntosGridFS } from '../utils/adjuntosGridFS';
+import { contentDispositionAdjunto } from '../utils/contentDisposition';
 
 export const ROLES_CON_BORRADORES = ['ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO', 'DOCENTE'];
 
@@ -2790,12 +2791,10 @@ export class MensajeController {
         throw new ApiError(404, 'Archivo no encontrado en el sistema');
       }
 
-      // Configurar respuesta (nombre codificado RFC 5987: caracteres no latin-1 lanzaban excepción)
-      const nombreArchivo = String(adjunto.nombre || 'archivo');
-      const nombreAscii = nombreArchivo.replace(/[^\x20-\x7E]|"/g, '_');
+      // Configurar respuesta (Content-Disposition RFC 5987, ver utils/contentDisposition)
       res.set({
         'Content-Type': adjunto.tipo,
-        'Content-Disposition': `attachment; filename="${nombreAscii}"; filename*=UTF-8''${encodeURIComponent(nombreArchivo)}`,
+        'Content-Disposition': contentDispositionAdjunto(adjunto.nombre),
       });
 
       // Devolver el stream del archivo
