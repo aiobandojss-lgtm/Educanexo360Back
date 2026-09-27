@@ -38,13 +38,16 @@ async function main() {
   const usuarios = mongoose.connection.db.collection('usuarios');
   console.log(`\n${APLICAR ? '🔧 APLICANDO' : '🔍 SIMULACIÓN (sin cambios; use --aplicar)'} en ${mongoose.connection.name}\n`);
 
-  // 0. Tokens que no son string (auditoría 4.A: podían entrar por el pipeline sin $literal) → fuera
-  const noString = await usuarios.countDocuments({
-    $or: [{ 'fcmTokens.token': { $exists: true, $not: { $type: 'string' } } }, { fcmToken: { $exists: true, $nin: [null], $not: { $type: 'string' } } }],
-  });
-  if (APLICAR && noString > 0) {
-    await usuarios.updateMany({}, { $pull: { fcmTokens: { token: { $not: { $type: 'string' } } } } });
-    await usuarios.updateMany({ fcmToken: { $exists: true, $nin: [null], $not: { $type: 'string' } } }, { $set: { fcmToken: null } });
+  // 0. Tokens que no son string (auditoría 4.A: podían entrar por el pipeline sin $literal) → fuera.
+  //    Auditoría 4.X: $elemMatch encuentra también a quien tiene tokens válidos Y uno inválido (con
+  //    'fcmTokens.token': {$not: {$type: 'string'}} solo aparecían los que no tenían NINGUNO válido).
+  const elementoInvalido = { fcmTokens: { $elemMatch: { token: { $not: { $type: 'string' } } } } };
+  const antiguoInvalido = { fcmToken: { $exists: true, $nin: [null], $not: { $type: 'string' } } };
+  const noString = await usuarios.countDocuments({ $or: [elementoInvalido, antiguoInvalido] });
+  if (APLICAR) {
+    // Siempre con --aplicar (no depende del conteo)
+    await usuarios.updateMany(elementoInvalido, { $pull: { fcmTokens: { token: { $not: { $type: 'string' } } } } });
+    await usuarios.updateMany(antiguoInvalido, { $set: { fcmToken: null } });
   }
   console.log(`0. Usuarios con tokens que no son texto: ${noString} (se limpian).`);
 
