@@ -505,12 +505,14 @@ class MensajeService {
   async encolarDespacho(
     mensajeId: string,
     remitente: any,
-    prioridad?: string,
+    _prioridad?: string, // ya no decide la prioridad del despacho (4.AD); se conserva la firma
     opciones: { lanzarError?: boolean } = {},
   ): Promise<void> {
     const trabajo = {
       tipo: 'despachar-mensaje',
-      prioridad: (prioridad === PrioridadMensaje.ALTA ? 'alta' : 'normal') as 'alta' | 'normal',
+      // Auditoría 4.AD: siempre 'alta'. Es barato (campanita + encolar) y así la campanita y el push de un mensaje
+      // no esperan detrás de los lotes de correo de un masivo. Los correos/push que genera conservan su prioridad.
+      prioridad: 'alta' as const,
       escuelaId: String(remitente.escuelaId),
       claveUnica: `despacho:${mensajeId}`,
       payload: {
