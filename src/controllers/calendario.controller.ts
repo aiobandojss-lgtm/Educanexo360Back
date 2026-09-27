@@ -60,6 +60,8 @@ interface RequestWithUser extends Request {
 /**
  * Push a todos los usuarios del colegio cuando un evento queda publicado (ACTIVO). Fire-and-forget.
  * Se usa al crear un evento ACTIVO y cuando un evento pasa a ACTIVO (PATCH /estado o PUT con estado).
+ * Solo la PRIMERA vez (auditoría 3.Y): se reclama notificadoEn de forma atómica; si otro llamado ya lo
+ * reclamó (evento alternado ACTIVO→PENDIENTE→ACTIVO, o dos cambios simultáneos) no se repite el push.
  */
 const notificarEventoPublicado = (
   evento: { _id: unknown; titulo?: string; fechaInicio?: Date | string },
@@ -67,7 +69,14 @@ const notificarEventoPublicado = (
 ): void => {
   const titulo = evento.titulo || 'Nuevo evento';
   const fechaStr = evento.fechaInicio ? new Date(evento.fechaInicio).toLocaleDateString('es-CO') : '';
-  Usuario.find({ escuelaId, fcmToken: { $exists: true, $ne: null } }, { fcmToken: 1 })
+  EventoCalendario.findOneAndUpdate(
+    { _id: evento._id, escuelaId, notificadoEn: null }, // null también coincide con el campo ausente
+    { $set: { notificadoEn: new Date() } },
+  )
+    .then((reclamado) => {
+      if (!reclamado) return [];
+      return Usuario.find({ escuelaId, fcmToken: { $exists: true, $ne: null } }, { fcmToken: 1 });
+    })
     .then((usuarios: any[]) => {
       const tokens = usuarios.map((u) => u.fcmToken).filter(Boolean);
       if (tokens.length > 0) {

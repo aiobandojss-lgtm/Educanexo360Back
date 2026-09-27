@@ -109,6 +109,9 @@ const EventoCalendarioSchema = new Schema(
     invitados: [InvitadoSchema],
     recordatorios: [RecordatorioSchema],
     archivoAdjunto: ArchivoAdjuntoSchema,
+    // Cuándo se avisó al colegio por push al publicarse (ACTIVO). Sin default: ausente = aún no se avisó.
+    // Evita pushes repetidos si el evento se alterna ACTIVO→PENDIENTE→ACTIVO (auditoría 3.Y)
+    notificadoEn: { type: Date },
   },
   {
     timestamps: true,

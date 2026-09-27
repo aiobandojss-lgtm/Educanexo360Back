@@ -48,6 +48,7 @@ export interface IEventoCalendarioBase {
     tipo: string;
     tamaño: number;
   };
+  notificadoEn?: Date; // push de publicación ya enviado (auditoría 3.Y)
 }
 
 // Interfaz para el documento MongoDB
