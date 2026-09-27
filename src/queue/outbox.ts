@@ -34,6 +34,9 @@ const CFG = {
   maxIntentos: num('OUTBOX_MAX_INTENTOS', 5),
   lockMs: num('OUTBOX_LOCK_MS', 2 * 60 * 1000),
   backoffBaseMs: num('OUTBOX_BACKOFF_MS', 30 * 1000),
+  // Auditoría 4.G: tiempo máximo de un trabajo; siempre MENOR que el lock para que otro proceso no lo retome
+  // mientras sigue corriendo. Un proveedor colgado ya no frena la cola.
+  timeoutTrabajoMs: Math.min(num('OUTBOX_TIMEOUT_TRABAJO_MS', 90 * 1000), num('OUTBOX_LOCK_MS', 2 * 60 * 1000) - 1000),
   retencionMs: 7 * 24 * 60 * 60 * 1000,
 };
 
@@ -176,7 +179,20 @@ const ejecutarTrabajo = async (trabajo: IOutbox): Promise<void> => {
   let errorHandler: any = null;
   try {
     if (!handler) throw new Error(`Sin handler para el tipo de trabajo '${trabajo.tipo}'`);
-    await handler(trabajo, ctx);
+    let reloj: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        handler(trabajo, ctx),
+        new Promise((_, rechazar) => {
+          reloj = setTimeout(
+            () => rechazar(new Error(`Tiempo agotado: el trabajo superó ${CFG.timeoutTrabajoMs} ms`)),
+            CFG.timeoutTrabajoMs,
+          );
+        }),
+      ]);
+    } finally {
+      if (reloj) clearTimeout(reloj);
+    }
   } catch (error: any) {
     errorHandler = error ?? new Error('Error desconocido');
   }

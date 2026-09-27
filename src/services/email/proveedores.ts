@@ -22,6 +22,28 @@ export interface EmailProvider {
 
 const remitente = () => ({ nombre: config.email.senderName, email: config.email.senderEmail });
 
+// Auditoría 4.G: ningún proveedor puede colgar la cola. Timeout de conexión/respuesta (EMAIL_TIMEOUT_MS, 30 s):
+// un SMTP que acepta la conexión y nunca responde (p. ej. el de cPanel con MagicSpam) antes frenaba todo 10 min.
+const timeoutCorreoMs = (): number => {
+  const v = parseInt(process.env.EMAIL_TIMEOUT_MS || '', 10);
+  return Number.isFinite(v) && v > 0 ? v : 30000;
+};
+
+/** Ejecuta fn con un AbortSignal que se aborta al vencer el timeout de correo. */
+const conTimeout = async <T>(nombre: string, fn: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+  const ms = timeoutCorreoMs();
+  const control = new AbortController();
+  const reloj = setTimeout(() => control.abort(), ms);
+  try {
+    return await fn(control.signal);
+  } catch (error: any) {
+    if (control.signal.aborted) throw new Error(`${nombre}: tiempo agotado (${ms} ms)`);
+    throw error;
+  } finally {
+    clearTimeout(reloj);
+  }
+};
+
 // ===== SMTP (nodemailer con pool) =====
 const crearSmtp = (): EmailProvider => {
   const num = (v: string | undefined, d: number) => (Number.isFinite(parseInt(v || '', 10)) ? parseInt(v!, 10) : d);
@@ -36,6 +58,10 @@ const crearSmtp = (): EmailProvider => {
     secure: config.email.secure,
     auth: { user: config.email.user, pass: config.email.pass },
     tls: { rejectUnauthorized: config.email.tlsRejectUnauthorized },
+    // 4.G: sin esto nodemailer espera hasta 2 min para conectar, 30 s el saludo y 10 min por socket
+    connectionTimeout: timeoutCorreoMs(),
+    greetingTimeout: timeoutCorreoMs(),
+    socketTimeout: timeoutCorreoMs(),
   } as any);
   transporter
     .verify()
@@ -70,7 +96,7 @@ const crearSes = (): EmailProvider => {
     nombre: 'ses',
     async send(m) {
       const r = remitente();
-      const salida = await cliente.send(
+      const salida: any = await conTimeout('SES', (abortSignal) => cliente.send(
         new SendEmailCommand({
           FromEmailAddress: `"${r.nombre}" <${r.email}>`,
           Destination: { ToAddresses: [m.to] },
@@ -87,7 +113,8 @@ const crearSes = (): EmailProvider => {
             ConfigurationSetName: process.env.AWS_SES_CONFIGURATION_SET,
           }),
         }),
-      );
+        { abortSignal },
+      ));
       return { id: salida.MessageId };
     },
   };
@@ -101,7 +128,8 @@ const crearBrevo = (): EmailProvider => {
     nombre: 'brevo',
     async send(m) {
       const r = remitente();
-      const resp = await fetch('https://api.brevo.com/v3/smtp/email', {
+      const resp: Response = await conTimeout('Brevo', (signal) => fetch(process.env.BREVO_API_URL || 'https://api.brevo.com/v3/smtp/email', {
+        signal,
         method: 'POST',
         headers: { 'api-key': apiKey, 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({
@@ -111,7 +139,7 @@ const crearBrevo = (): EmailProvider => {
           ...(m.html && { htmlContent: m.html }),
           textContent: m.text || ' ',
         }),
-      });
+      }));
       if (!resp.ok) {
         // El cuerpo de error de Brevo no incluye la API key; se recorta por si acaso
         const detalle = (await resp.text().catch(() => '')).slice(0, 300);
