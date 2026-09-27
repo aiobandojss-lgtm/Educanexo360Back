@@ -200,3 +200,18 @@ de inmediato con la misma forma de siempre.
 - El enlace para cambiar la preferencia usa `EMAIL_PREFERENCIAS_URL` (opcional). Si no está, el correo dice
   "desde tu perfil".
 - ⚠️ El resumen depende de que el proceso esté despierto a las 18:00: ver "Passenger dormido" (cron de ping).
+
+## 4.7 Credenciales por correo
+
+- Al aprobar una solicitud de registro ya **no** se envían contraseñas en texto plano. Dentro de la misma
+  transacción que crea las cuentas se genera, para el acudiente y para cada estudiante nuevo, un token aleatorio
+  de 32 bytes. Solo se guarda su **hash** sha256 en `resetPasswordToken`, vence en **72 h** y es de **un solo uso**.
+- El correo de bienvenida (plantilla `credenciales`, prioridad alta, payload sensible) lleva los enlaces
+  `FRONTEND_URL/reset-password/<token>`, que abren la **página existente del React** (`/reset-password/:token`,
+  `pages/auth/ResetPassword.tsx`). Esa página llama a `POST /api/auth/reset-password { token, password }`, el
+  mismo flujo del reset. El acudiente recibe su enlace y uno por cada estudiante nuevo (los estudiantes tienen
+  correo generado por el sistema). Los estudiantes que ya tenían cuenta solo aparecen como asociados.
+- Si el enlace vence, el usuario usa "¿Olvidaste tu contraseña?". Se quitó el dominio fijo
+  (`educanexo360-web.vercel.app`): todo sale de `FRONTEND_URL`.
+- Para verificarlo en la web: aprobar una solicitud de prueba, abrir el enlace del correo
+  (`https://<FRONTEND_URL>/reset-password/<token>`), definir la contraseña e iniciar sesión.

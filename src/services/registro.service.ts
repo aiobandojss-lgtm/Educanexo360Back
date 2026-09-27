@@ -5,12 +5,29 @@ import Usuario from '../models/usuario.model';
 import Invitacion, { TipoInvitacion } from '../models/invitacion.model';
 import Curso from '../models/curso.model';
 import invitacionService from './invitacion.service';
-import emailService, { encolarCorreo } from '../services/email.service';
+import crypto from 'crypto';
+import { encolarCorreo } from '../services/email.service';
+import config from '../config/config';
 import { estudianteService } from './estudiante.service';
 import ApiError from '../utils/ApiError';
 import { generarPasswordAleatoria } from '../utils/passwordUtils';
 import mongoose from 'mongoose';
 import { logger } from '../utils/logger';
+
+// Fase 4.7: enlace para DEFINIR la contraseña (reutiliza el flujo de reset): token aleatorio de 32 bytes,
+// se guarda solo su hash sha256 en resetPasswordToken, vence en 72 h y es de un solo uso (resetPassword
+// lo borra al usarlo). El enlace apunta a la página existente del React: FRONTEND_URL/reset-password/:token
+const HORAS_ENLACE_DEFINIR = 72;
+const nuevoEnlaceDefinir = () => {
+  const token = crypto.randomBytes(32).toString('hex');
+  return {
+    url: `${config.frontendUrl}/reset-password/${token}`,
+    campos: {
+      resetPasswordToken: crypto.createHash('sha256').update(token).digest('hex'),
+      resetPasswordExpires: new Date(Date.now() + HORAS_ENLACE_DEFINIR * 60 * 60 * 1000),
+    },
+  };
+};
 
 class RegistroService {
   /**
@@ -210,12 +227,16 @@ Por favor, revise la solicitud en el panel de administración.
 
       logger.debug('Credenciales de acudiente generadas con éxito');
 
+      // La contraseña aleatoria NUNCA se envía: el acudiente define la suya con un enlace (Fase 4.7)
+      const enlaceAcudiente = nuevoEnlaceDefinir();
+
       // 1. CREAR ACUDIENTE
       const acudiente = new Usuario({
         nombre: solicitud.nombre,
         apellidos: solicitud.apellidos,
         email: acudienteCredenciales.email,
         password: acudienteCredenciales.password,
+        ...enlaceAcudiente.campos,
         tipo: 'ACUDIENTE',
         estado: 'ACTIVO',
         escuelaId: solicitud.escuelaId,
@@ -278,7 +299,6 @@ Por favor, revise la solicitud en el panel de administración.
             estudiantesParaEmail.push({
               nombre: `${estudianteExistente.nombre} ${estudianteExistente.apellidos}`,
               email: estudianteExistente.email,
-              password: 'Usar credenciales existentes',
               codigo: estudianteExistente.codigo_estudiante || 'N/A',
               curso: estudianteExistente.curso?.nombre || 'No especificado',
               esExistente: true,
@@ -317,12 +337,14 @@ Por favor, revise la solicitud en el panel de administración.
             console.error('Error al obtener información del curso:', error);
           }
 
-          // Crear estudiante
+          // Crear estudiante (su contraseña también se define con un enlace; el correo lo recibe el acudiente)
+          const enlaceEstudiante = nuevoEnlaceDefinir();
           const estudiante = new Usuario({
             nombre: estData.nombre,
             apellidos: estData.apellidos,
             email: credenciales.email,
             password: credenciales.password,
+            ...enlaceEstudiante.campos,
             tipo: 'ESTUDIANTE',
             estado: 'ACTIVO',
             escuelaId: solicitud.escuelaId,
@@ -359,7 +381,7 @@ Por favor, revise la solicitud en el panel de administración.
           estudiantesParaEmail.push({
             nombre: `${estData.nombre} ${estData.apellidos}`,
             email: credenciales.email,
-            password: credenciales.password,
+            enlace: enlaceEstudiante.url,
             codigo: credenciales.codigo,
             curso: cursoInfo.nombre,
             emailGenerado: !estData.email,
@@ -395,13 +417,20 @@ Por favor, revise la solicitud en el panel de administración.
       await session.commitTransaction();
       logger.debug('Transacción completada exitosamente');
 
-      // 5. Enviar email con credenciales
-      await this.enviarCorreoConfirmacion(
-        acudienteCredenciales.email,
-        `${solicitud.nombre} ${solicitud.apellidos}`,
-        acudienteCredenciales.password,
-        estudiantesParaEmail,
-      );
+      // 5. Correo de bienvenida con ENLACES para definir contraseñas (nunca contraseñas en texto plano),
+      //    por la cola con prioridad alta: se reintenta y no se pierde. Si no se pudiera encolar, la
+      //    aprobación ya quedó hecha: se registra y el acudiente puede usar "¿Olvidaste tu contraseña?".
+      try {
+        await this.enviarCorreoConfirmacion(
+          acudienteCredenciales.email,
+          `${solicitud.nombre} ${solicitud.apellidos}`,
+          enlaceAcudiente.url,
+          estudiantesParaEmail,
+          String(solicitud.escuelaId),
+        );
+      } catch (errorCorreo) {
+        console.error(`[Registro] No se pudo encolar el correo de bienvenida de la solicitud ${solicitudId}:`, errorCorreo);
+      }
 
       return {
         mensaje: 'Solicitud aprobada exitosamente',
@@ -652,102 +681,39 @@ El equipo de EducaNexo360`,
   }
 
   /**
-   * Envía correo de confirmación con credenciales - MEJORADO
-   */
-  /**
-   * Envía correo de confirmación con credenciales - MEJORADO CON URL
+   * Correo de bienvenida al aprobar una solicitud (Fase 4.7): enlaces para DEFINIR la contraseña del
+   * acudiente y de cada estudiante nuevo (72 h, un solo uso), nunca contraseñas en texto plano.
+   * Prioridad alta y payload sensible (se borra del trabajo al enviarse).
    */
   private async enviarCorreoConfirmacion(
     email: string,
     nombreCompleto: string,
-    passwordAcudiente: string,
-    credencialesEstudiantes: Array<{
+    enlaceAcudiente: string,
+    estudiantes: Array<{
       nombre: string;
       email: string;
-      password: string;
+      enlace?: string;
       codigo: string;
       curso?: string;
       emailGenerado?: boolean;
       esExistente?: boolean;
     }>,
+    escuelaId?: string,
   ) {
-    // Obtener URL de la plataforma desde variables de entorno o usar por defecto
-    const PLATFORM_URL = process.env.FRONTEND_URL || 'https://educanexo360-web.vercel.app';
-    const LOGIN_URL = `${PLATFORM_URL}/login`;
-
-    // Construir lista de estudiantes para el correo
-    let listaEstudiantes = '';
-
-    credencialesEstudiantes.forEach((est) => {
-      if (est.esExistente) {
-        listaEstudiantes += `
-- Estudiante: ${est.nombre} (EXISTENTE - ya asociado)
-  Código: ${est.codigo}
-  Curso: ${est.curso || 'No especificado'}
-  Email: ${est.email}
-  Contraseña: ${est.password}
-      `;
-      } else {
-        listaEstudiantes += `
-- Estudiante: ${est.nombre} (NUEVO)
-  Código: ${est.codigo}
-  Curso: ${est.curso || 'No especificado'}
-  Email: ${est.email}${est.emailGenerado ? ' (generado por el sistema)' : ''}
-  Contraseña: ${est.password}
-      `;
-      }
-    });
-
-    // Enviar correo con las credenciales MEJORADO
-    await emailService.sendEmail({
-      to: email,
-      subject: '🎓 ¡Bienvenido a EducaNexo360! - Credenciales de Acceso',
-      text: `¡Bienvenido/a ${nombreCompleto} a EducaNexo360!
-
-Su solicitud de registro ha sido aprobada. A continuación encontrará las credenciales de acceso para usted y sus estudiantes asociados:
-
-🔗 ACCEDER A LA PLATAFORMA:
-   ${LOGIN_URL}
-
-📱 TAMBIÉN DISPONIBLE EN MÓVIL:
-   Próximamente en Play Store y App Store
-
-═══════════════════════════════════════════════════
-
-👨‍👩‍👧‍👦 SUS CREDENCIALES DE ACUDIENTE:
-- Email: ${email}
-- Contraseña: ${passwordAcudiente}
-
-🎓 ESTUDIANTES ASOCIADOS:
-${listaEstudiantes}
-
-═══════════════════════════════════════════════════
-
-📋 NOTA IMPORTANTE:
-- Los estudiantes marcados como "EXISTENTES" ya tenían cuenta en el sistema y ahora han sido asociados a usted como acudiente adicional.
-- Los estudiantes marcados como "NUEVOS" son cuentas creadas específicamente para esta solicitud.
-
-🔐 SEGURIDAD:
-Por favor, conserve estas credenciales en un lugar seguro y cámbielas en su primer inicio de sesión por su propia seguridad.
-
-🌐 ACCESO:
-Puede acceder al sistema desde cualquier dispositivo con internet:
-• Computador: ${LOGIN_URL}
-• Celular o Tablet: ${LOGIN_URL}
-• Aplicación Móvil: Próximamente disponible
-
-📞 ¿NECESITA AYUDA?
-Si tiene dificultades para ingresar, contacte a la institución educativa o escriba a soporte técnico.
-
-¡Esperamos que disfrute de la experiencia EducaNexo360!
-
-Saludos cordiales,
-El equipo de EducaNexo360
-
-───────────────────────────────────────────────────
-Este es un mensaje automático del sistema EducaNexo360.
-Para soporte técnico: soporte@educanexo360.creativebycode.com
-whatsApp: +57 3185489198`,
+    await encolarCorreo({
+      destinatarios: [{ email, nombre: nombreCompleto }],
+      plantilla: 'credenciales',
+      datos: {
+        nombre: nombreCompleto,
+        email,
+        enlace: enlaceAcudiente,
+        horas: HORAS_ENLACE_DEFINIR,
+        loginUrl: `${config.frontendUrl}/login`,
+        estudiantes,
+      },
+      prioridad: 'alta',
+      escuelaId,
+      sensible: true,
     });
   }
 }

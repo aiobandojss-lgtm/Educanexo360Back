@@ -110,6 +110,46 @@ export const PLANTILLAS: Record<string, Plantilla> = {
     ),
   }),
 
+  // Bienvenida al aprobar una solicitud (Fase 4.7): ENLACES para definir contraseñas, nunca contraseñas
+  credenciales: (d) => {
+    const estudiantes: any[] = Array.isArray(d.estudiantes) ? d.estudiantes : [];
+    const horas = Number(d.horas) || 72;
+    const textoEst = estudiantes
+      .map((est) =>
+        est.esExistente
+          ? `- ${est.nombre} (ya tenía cuenta; ahora está asociado a usted). Usuario: ${est.email}. Código: ${est.codigo}.`
+          : `- ${est.nombre} (${est.curso || 'curso sin especificar'}). Usuario: ${est.email}. Código: ${est.codigo}.\n  Definir su contraseña: ${est.enlace}`,
+      )
+      .join('\n');
+    const htmlEst = estudiantes
+      .map((est) =>
+        est.esExistente
+          ? `<li><strong>${e(est.nombre)}</strong> — ya tenía cuenta y ahora está asociado a usted.<br>Usuario: ${e(est.email)} · Código: ${e(est.codigo)}</li>`
+          : `<li><strong>${e(est.nombre)}</strong> — ${e(est.curso || 'curso sin especificar')}<br>Usuario: ${e(est.email)} · Código: ${e(est.codigo)}<br><a href="${urlSegura(est.enlace)}">Definir la contraseña del estudiante</a></li>`,
+      )
+      .join('');
+    return {
+      subject: '🎓 ¡Bienvenido a EducaNexo360! - Active su cuenta',
+      text:
+        `¡Bienvenido/a ${d.nombre} a EducaNexo360!\n\nSu solicitud de registro fue aprobada.\n\n` +
+        `SU CUENTA DE ACUDIENTE\nUsuario: ${d.email}\nDefina su contraseña aquí: ${d.enlace}\n\n` +
+        (estudiantes.length ? `ESTUDIANTES ASOCIADOS\n${textoEst}\n\n` : '') +
+        `Por seguridad, cada enlace sirve UNA sola vez y vence en ${horas} horas. Si vence, use ` +
+        `"¿Olvidaste tu contraseña?" en ${d.loginUrl}.\n\nEl equipo de EducaNexo360`,
+      html: layout(
+        '¡Bienvenido a EducaNexo360!',
+        `<p>Hola ${e(d.nombre)},</p>
+         <p>Su solicitud de registro fue aprobada.</p>
+         <h3>Su cuenta de acudiente</h3>
+         <p>Usuario: <strong>${e(d.email)}</strong></p>
+         ${boton(d.enlace, 'Definir mi contraseña')}
+         ${estudiantes.length ? `<h3>Estudiantes asociados</h3><ul>${htmlEst}</ul>` : ''}
+         <p style="font-size: 13px; color: #555;">Por seguridad, cada enlace sirve <strong>una sola vez</strong> y vence en
+         ${horas} horas. Si vence, use "¿Olvidaste tu contraseña?" en <a href="${urlSegura(d.loginUrl)}">${e(d.loginUrl)}</a>.</p>`,
+      ),
+    };
+  },
+
   // Resumen diario de mensajes no leídos (Fase 4.5). Cada destinatario trae sus propios items.
   resumen: (d, dest: any) => {
     const items: any[] = Array.isArray(dest.items) ? dest.items : [];
