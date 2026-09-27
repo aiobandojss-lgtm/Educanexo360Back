@@ -283,6 +283,9 @@ MensajeSchema.index({ asunto: 'text', contenido: 'text' });
 // Nuevos índices para estadosUsuarios
 // {estadosUsuarios.usuarioId} y {estadosUsuarios.estado} sueltos quitados: cubiertos por este compuesto
 MensajeSchema.index({ 'estadosUsuarios.usuarioId': 1, 'estadosUsuarios.estado': 1 });
+// Auditoría 3.X (extra): la verificación "¿algún mensaje usa estos archivos?" del rollback de adjuntos
+// recorría toda la colección. Sparse: solo los mensajes con adjuntos ocupan el índice.
+MensajeSchema.index({ 'adjuntos.fileId': 1 }, { sparse: true });
 // Fase 4.2: una sola copia a acudientes por (mensaje original, estudiante). Parcial: solo las copias nuevas.
 MensajeSchema.index(
   { 'copiaDe.mensajeId': 1, 'copiaDe.estudianteId': 1 },
