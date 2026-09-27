@@ -29,3 +29,9 @@ export const desregistrarTokenValidation = [
     .matches(/^[A-Za-z0-9:_.-]+$/)
     .withMessage('Token FCM inválido'),
 ];
+
+// Auditoría 4.AN: las campanitas de 'Mensaje' las crea solo el despacho (índice único mensaje_usuario_unico); a mano
+// chocarían con él (500) y podrían ocultar la real. Ni React ni Flutter envían entidadTipo a estos endpoints.
+export const crearNotificacionValidation = [
+  body('entidadTipo').optional().not().equals('Mensaje').withMessage("No se pueden crear notificaciones de tipo 'Mensaje'"),
+];

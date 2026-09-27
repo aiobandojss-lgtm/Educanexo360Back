@@ -469,6 +469,10 @@ export class NotificacionController {
         metadata,
         enviarEmail = false,
       } = req.body;
+      // Auditoría 4.AN: las de 'Mensaje' solo las crea el despacho (índice único)
+      if (entidadTipo === 'Mensaje') {
+        throw new ApiError(400, "No se pueden crear notificaciones de tipo 'Mensaje'");
+      }
 
       const notificacion = await notificacionService.crearNotificacion({
         usuarioId,
@@ -511,6 +515,11 @@ export class NotificacionController {
         metadata,
         enviarEmail = false,
       } = req.body;
+
+      // Auditoría 4.AN: las de 'Mensaje' solo las crea el despacho (índice único)
+      if (entidadTipo === 'Mensaje') {
+        throw new ApiError(400, "No se pueden crear notificaciones de tipo 'Mensaje'");
+      }
 
       if (!usuarioIds || !Array.isArray(usuarioIds) || usuarioIds.length === 0) {
         throw new ApiError(400, 'Debe especificar al menos un usuario destinatario');

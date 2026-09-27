@@ -5,6 +5,7 @@ import { validate } from '../middleware/validate.middleware';
 import {
   registrarTokenValidation,
   desregistrarTokenValidation,
+  crearNotificacionValidation,
 } from '../validations/notificacion.validation';
 
 const router = express.Router();
@@ -141,11 +142,11 @@ router.put('/:id/archivar', (req: any, res: Response, next: NextFunction) => {
 });
 
 // ✅ CORREGIDO: RUTAS PARA ADMINISTRADORES
-router.post('/', authorize('ADMIN'), (req: any, res: Response, next: NextFunction) => {
+router.post('/', authorize('ADMIN'), validate(crearNotificacionValidation), (req: any, res: Response, next: NextFunction) => {
   notificacionController.crearNotificacion(req, res, next);
 });
 
-router.post('/masiva', authorize('ADMIN'), (req: any, res: Response, next: NextFunction) => {
+router.post('/masiva', authorize('ADMIN'), validate(crearNotificacionValidation), (req: any, res: Response, next: NextFunction) => {
   notificacionController.crearNotificacionMasiva(req, res, next);
 });
 
