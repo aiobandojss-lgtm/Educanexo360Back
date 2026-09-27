@@ -166,8 +166,9 @@ const ejecutarTrabajo = async (trabajo: IOutbox): Promise<void> => {
     marcarEnviados: async (ids: string[]) => {
       const nuevos = ids.map(String).filter((id) => !enviados.has(id));
       if (nuevos.length === 0) return;
-      nuevos.forEach((id) => enviados.add(id));
+      // Primero la base y DESPUÉS la memoria: si la escritura falla, un reintento de marcar sí la repite (4.J)
       await Outbox.updateOne({ _id: trabajo._id }, { $addToSet: { enviados: { $each: nuevos } } });
+      nuevos.forEach((id) => enviados.add(id));
     },
   };
 

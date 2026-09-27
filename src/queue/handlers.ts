@@ -14,6 +14,19 @@ import mensajeService from '../services/mensaje.service';
 import Mensaje from '../models/mensaje.model';
 import { logger } from '../utils/logger';
 
+/** Marca un id como atendido reintentando ante fallos de red (el envío ya ocurrió: nunca se reenvía por esto). */
+const marcarConReintentos = async (ctx: { marcarEnviados: (ids: string[]) => Promise<void> }, id: string) => {
+  for (let intento = 1; ; intento++) {
+    try {
+      await ctx.marcarEnviados([id]);
+      return;
+    } catch (error) {
+      if (intento >= 3) throw error;
+      await new Promise((r) => setTimeout(r, 200 * intento));
+    }
+  }
+};
+
 /**
  * 'email': un lote de hasta ~50 destinatarios con la misma plantilla.
  * - Cada destinatario atendido se registra en `enviados` (por email): un reintento no lo repite.
@@ -49,11 +62,14 @@ registrarHandler('email', async (trabajo, ctx) => {
     try {
       const correo = renderizarCorreo(plantilla, datos, dest);
       await obtenerProveedor().send({ to: dest.email, ...correo });
-      await ctx.marcarEnviados([clave]);
     } catch (error: any) {
       await liberarCupo(prioridad, 1, diaCupo);
       errores.push(`${clave}: ${String(error?.message || error).slice(0, 150)}`);
+      continue;
     }
+    // El correo YA salió (auditoría 4.J): si marcarlo falla se reintenta SOLO el marcado; no se libera cupo ni
+    // se reenvía. Si ni así se puede, el trabajo falla (un reintento podría repetir ESTE correo: al menos una vez).
+    await marcarConReintentos(ctx, clave);
   }
 
   if (errores.length > 0) {
