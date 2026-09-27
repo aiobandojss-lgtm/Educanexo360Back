@@ -660,22 +660,16 @@ class MensajeController {
                     escuelaId: req.user.escuelaId,
                     estado: 'ACTIVO',
                 })
-                    .select('_id email nombre tipo preferencias fcmToken fcmTokens.token')
+                    .select('_id tipo')
                     .lean();
                 const setDest = new Set(destinatariosIds);
-                const setCc = new Set(ccIds);
-                await mensaje_service_1.default.despacharMensaje({
-                    mensajeId: String(mensajeEnviado._id),
-                    asunto: mensajeEnviado.asunto,
-                    prioridad: mensajeEnviado.prioridad,
-                    remitente: req.user,
-                    tieneAdjuntos: (mensajeEnviado.adjuntos || []).length > 0,
-                    destinatarios: usuariosDestino.filter((u) => setDest.has(String(u._id))),
-                    cc: usuariosDestino.filter((u) => setCc.has(String(u._id))),
-                });
-                const estudiantesIds = usuariosDestino
-                    .filter((u) => u.tipo === 'ESTUDIANTE' && setDest.has(String(u._id)))
-                    .map((u) => String(u._id));
+                await mensaje_service_1.default.encolarDespacho(String(mensajeEnviado._id), req.user, mensajeEnviado.prioridad);
+                const esMasivoPorCurso = (mensajeEnviado.cursoIds || []).length > 0;
+                const estudiantesIds = esMasivoPorCurso
+                    ? []
+                    : usuariosDestino
+                        .filter((u) => u.tipo === 'ESTUDIANTE' && setDest.has(String(u._id)))
+                        .map((u) => String(u._id));
                 await mensaje_service_1.default.encolarCopiasAcudientes(String(mensajeEnviado._id), estudiantesIds, {
                     asunto: mensajeEnviado.asunto,
                     contenido: mensajeEnviado.contenido,

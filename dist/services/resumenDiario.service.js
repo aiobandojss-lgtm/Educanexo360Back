@@ -15,47 +15,46 @@ const preferencias_1 = require("../utils/preferencias");
 const fechas_1 = require("../utils/fechas");
 const config_1 = __importDefault(require("../config/config"));
 const logger_1 = require("../utils/logger");
-const DESFASE_COLOMBIA_MS = 5 * 60 * 60 * 1000;
 const MAX_ITEMS_POR_CORREO = 30;
+const VENTANA_MARCAS_MS = 48 * 60 * 60 * 1000;
 const horaResumen = () => {
     const h = parseInt(process.env.RESUMEN_HORA || '', 10);
     return Number.isFinite(h) && h >= 0 && h <= 23 ? h : 18;
 };
-let ultimoDiaEncolado = null;
+const diasEncolados = new Set();
 const encolarResumenSiCorresponde = async (ahora = new Date()) => {
     if (process.env.RESUMEN_DIARIO_DESACTIVADO === 'true')
         return false;
-    const dia = (0, fechas_1.fechaColombiaISO)(ahora);
-    if (ultimoDiaEncolado === dia || (0, fechas_1.horaColombia)(ahora) < horaResumen())
+    const dia = (0, fechas_1.horaColombia)(ahora) >= horaResumen()
+        ? (0, fechas_1.fechaColombiaISO)(ahora)
+        : (0, fechas_1.fechaColombiaISO)(new Date(ahora.getTime() - 24 * 60 * 60 * 1000));
+    if (diasEncolados.has(dia))
         return false;
     await (0, outbox_1.encolar)({ tipo: 'resumen-diario', payload: { dia }, claveUnica: `resumen:${dia}` });
-    ultimoDiaEncolado = dia;
+    diasEncolados.add(dia);
+    if (diasEncolados.size > 7)
+        diasEncolados.delete(diasEncolados.values().next().value);
     return true;
 };
 exports.encolarResumenSiCorresponde = encolarResumenSiCorresponde;
 const reiniciarEstadoResumen = () => {
-    ultimoDiaEncolado = null;
+    diasEncolados.clear();
 };
 exports.reiniciarEstadoResumen = reiniciarEstadoResumen;
-const rangoDia = (dia) => {
-    const [y, m, d] = dia.split('-').map(Number);
-    const desde = new Date(Date.UTC(y, m - 1, d) + DESFASE_COLOMBIA_MS);
-    return { desde, hasta: new Date(desde.getTime() + 24 * 60 * 60 * 1000) };
-};
-const procesarResumenDiario = async (dia) => {
-    const { desde, hasta } = rangoDia(dia);
+const procesarResumenDiario = async (dia, ahora = new Date()) => {
     const grupos = await notificacion_model_1.default.aggregate([
         {
             $match: {
                 'metadata.resumen': true,
                 tipo: INotificacion_1.TipoNotificacion.MENSAJE,
-                createdAt: { $gte: desde, $lt: hasta },
+                createdAt: { $gte: new Date(ahora.getTime() - VENTANA_MARCAS_MS) },
             },
         },
         { $sort: { createdAt: 1 } },
         {
             $group: {
                 _id: '$usuarioId',
+                notifIds: { $push: '$_id' },
                 items: { $push: { mensajeId: '$entidadId', titulo: '$titulo', remitente: '$metadata.remitente', fecha: '$createdAt' } },
             },
         },
@@ -80,6 +79,8 @@ const procesarResumenDiario = async (dia) => {
         (m.lecturas || []).forEach((l) => leidos.add(`${m._id}:${l.usuarioId}`));
     });
     const itemsPorUsuario = new Map(grupos.map((g) => [String(g._id), g.items]));
+    const notifsPorUsuario = new Map(grupos.map((g) => [String(g._id), g.notifIds]));
+    const atendidas = [];
     const porEscuela = new Map();
     for (const u of usuarios) {
         if (!u.email || (0, email_service_1.esEmailFicticio)(u.email) || (0, preferencias_1.preferenciaEmail)(u) === 'ninguno')
@@ -92,8 +93,11 @@ const procesarResumenDiario = async (dia) => {
             fecha: i.fecha,
             url: `${config_1.default.frontendUrl}/mensajes/${i.mensajeId}`,
         }));
-        if (pendientes.length === 0)
+        if (pendientes.length === 0) {
+            atendidas.push({ ids: notifsPorUsuario.get(String(u._id)) || [], enviado: false });
             continue;
+        }
+        atendidas.push({ ids: notifsPorUsuario.get(String(u._id)) || [], enviado: true });
         const escuela = String(u.escuelaId);
         if (!porEscuela.has(escuela))
             porEscuela.set(escuela, []);
@@ -126,6 +130,14 @@ const procesarResumenDiario = async (dia) => {
     }
     if (trabajos.length > 0)
         await (0, outbox_1.encolar)(trabajos);
+    const idsEnviados = atendidas.filter((a) => a.enviado).flatMap((a) => a.ids);
+    const idsLeidos = atendidas.filter((a) => !a.enviado).flatMap((a) => a.ids);
+    if (idsEnviados.length > 0) {
+        await notificacion_model_1.default.updateMany({ _id: { $in: idsEnviados } }, { $unset: { 'metadata.resumen': '' }, $set: { 'metadata.resumenEnviadoEn': ahora } });
+    }
+    if (idsLeidos.length > 0) {
+        await notificacion_model_1.default.updateMany({ _id: { $in: idsLeidos } }, { $unset: { 'metadata.resumen': '' } });
+    }
     logger_1.logger.info(`[Resumen] ${dia}: ${correos} correo(s) de resumen encolados en ${trabajos.length} trabajo(s)`);
     return correos;
 };

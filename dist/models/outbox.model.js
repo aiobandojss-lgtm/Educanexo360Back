@@ -33,10 +33,13 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.ORDEN_PRIORIDAD = void 0;
 const mongoose_1 = __importStar(require("mongoose"));
+exports.ORDEN_PRIORIDAD = { critica: 0, alta: 1, normal: 2 };
 const OutboxSchema = new mongoose_1.Schema({
     tipo: { type: String, required: true },
-    prioridad: { type: String, enum: ['alta', 'normal'], default: 'normal' },
+    prioridad: { type: String, enum: ['critica', 'alta', 'normal'], default: 'normal' },
+    orden: { type: Number, default: 2 },
     payload: { type: mongoose_1.Schema.Types.Mixed, default: {} },
     estado: {
         type: String,
@@ -52,7 +55,7 @@ const OutboxSchema = new mongoose_1.Schema({
     enviados: { type: [String], default: [] },
     expireAt: { type: Date },
 }, { timestamps: true, collection: 'outbox', minimize: false });
-OutboxSchema.index({ estado: 1, prioridad: 1, nextRunAt: 1 });
+OutboxSchema.index({ estado: 1, orden: 1, nextRunAt: 1 });
 OutboxSchema.index({ expireAt: 1 }, { expireAfterSeconds: 0 });
 OutboxSchema.index({ claveUnica: 1 }, { unique: true, partialFilterExpression: { claveUnica: { $type: 'string' } } });
 exports.default = mongoose_1.default.model('Outbox', OutboxSchema);

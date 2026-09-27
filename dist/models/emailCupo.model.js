@@ -38,6 +38,7 @@ const CupoSchema = new mongoose_1.Schema({
     _id: { type: String },
     enviados: { type: Number, default: 0 },
     altaEnviados: { type: Number, default: 0 },
+    criticaEnviados: { type: Number, default: 0 },
     expireAt: { type: Date },
 }, { collection: 'email_cupo', versionKey: false });
 CupoSchema.index({ expireAt: 1 }, { expireAfterSeconds: 0 });

@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.simuladoPush = exports.USUARIOS_POR_TRABAJO_PUSH = void 0;
+exports.simuladoPush = exports.MAX_REINTENTOS_TOKENS = exports.USUARIOS_POR_TRABAJO_PUSH = void 0;
 const mongoose_1 = __importDefault(require("mongoose"));
 const usuario_model_1 = __importDefault(require("../models/usuario.model"));
 const logger_1 = require("../utils/logger");
@@ -14,6 +14,16 @@ const ERRORES_TOKEN_INVALIDO = [
     'messaging/registration-token-not-registered',
     'messaging/invalid-registration-token',
 ];
+const ERRORES_TOKEN_TRANSITORIO = [
+    'messaging/server-unavailable',
+    'messaging/internal-error',
+    'messaging/unknown-error',
+    'messaging/message-rate-exceeded',
+    'messaging/device-message-rate-exceeded',
+    'messaging/quota-exceeded',
+    'messaging/unavailable',
+];
+exports.MAX_REINTENTOS_TOKENS = 3;
 const dataComoTexto = (data) => {
     const salida = {};
     Object.entries(data || {}).forEach(([k, v]) => {
@@ -29,7 +39,6 @@ const construirMensaje = (c) => {
         data: { ...data, timestamp: Date.now().toString() },
         android: {
             notification: { channelId: 'educanexo360_messages', priority: 'high', sound: c.sound || 'default' },
-            data,
         },
         apns: {
             payload: { aps: { alert: { title: c.titulo, body: c.mensaje }, sound: c.sound || 'default' } },
@@ -37,14 +46,16 @@ const construirMensaje = (c) => {
         },
     };
 };
-exports.simuladoPush = { fallar: false };
+exports.simuladoPush = { fallar: false, transitorio: false };
 const messagingSimulado = {
     async sendEachForMulticast(msg) {
         if (exports.simuladoPush.fallar)
             throw new Error('FCM simulado: fallo forzado');
         const responses = msg.tokens.map((t) => t.startsWith('invalido')
             ? { success: false, error: { code: 'messaging/registration-token-not-registered', message: 'no registrado' } }
-            : { success: true, messageId: `sim-${t}` });
+            : exports.simuladoPush.transitorio && t.startsWith('transitorio')
+                ? { success: false, error: { code: 'messaging/server-unavailable', message: 'no disponible' } }
+                : { success: true, messageId: `sim-${t}` });
         await mongoose_1.default.connection.collection('push_simulado').insertOne({
             tokens: msg.tokens,
             titulo: msg.notification?.title,
@@ -159,7 +170,7 @@ class PushNotificationService {
         const usuarios = await usuario_model_1.default.find({ _id: { $in: usuarioIds }, estado: 'ACTIVO' }, { fcmTokens: 1, fcmToken: 1 }).lean();
         const tokens = new Set();
         usuarios.forEach((u) => {
-            (u.fcmTokens || []).forEach((t) => t?.token && tokens.add(t.token));
+            (u.fcmTokens || []).forEach((t) => typeof t?.token === 'string' && t.token && tokens.add(t.token));
             if (typeof u.fcmToken === 'string' && u.fcmToken)
                 tokens.add(u.fcmToken);
         });
@@ -167,9 +178,10 @@ class PushNotificationService {
     }
     async enviarMulticast(tokens, contenido) {
         if (!this.firebaseInitialized || tokens.length === 0)
-            return { exitos: 0, fallos: 0, invalidos: 0 };
+            return { exitos: 0, fallos: 0, invalidos: 0, transitorios: [] };
         const mensaje = construirMensaje(contenido);
         const invalidos = [];
+        const transitorios = [];
         let exitos = 0;
         let fallos = 0;
         for (let i = 0; i < tokens.length; i += TOKENS_POR_MULTICAST) {
@@ -180,11 +192,13 @@ class PushNotificationService {
             (respuesta.responses || []).forEach((r, idx) => {
                 if (!r.success && ERRORES_TOKEN_INVALIDO.includes(r.error?.code))
                     invalidos.push(bloque[idx]);
+                if (!r.success && ERRORES_TOKEN_TRANSITORIO.includes(r.error?.code))
+                    transitorios.push(bloque[idx]);
             });
         }
         if (invalidos.length > 0)
             await this.limpiarTokensInvalidos(invalidos);
-        return { exitos, fallos, invalidos: invalidos.length };
+        return { exitos, fallos, invalidos: invalidos.length, transitorios };
     }
     async limpiarTokensInvalidos(tokens) {
         if (tokens.length === 0)

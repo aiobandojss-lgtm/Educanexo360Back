@@ -54,6 +54,7 @@ router.get('/docentes', authMiddleware.authorize('ADMIN', 'DOCENTE', 'RECTOR', '
 router.get('/:id', usuario_controller_1.default.obtenerUsuario);
 router.put('/:id', (0, validate_middleware_1.validate)(usuario_validation_1.actualizarUsuarioValidation), usuario_controller_1.default.actualizarUsuario);
 router.delete('/:id', authMiddleware.authorize('ADMIN', 'RECTOR', 'COORDINADOR'), usuario_controller_1.default.eliminarUsuario);
+router.post('/:id/reenviar-enlace-password', authMiddleware.authorize('ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO', 'SUPER_ADMIN'), (0, validate_middleware_1.validate)(usuario_validation_1.reenviarEnlacePasswordValidation), usuario_controller_1.default.reenviarEnlacePassword);
 router.post('/:id/cambiar-password', (0, validate_middleware_1.validate)(usuario_validation_1.cambiarPasswordValidation), usuario_controller_1.default.cambiarPassword);
 router.get('/:id/estudiantes-asociados', authMiddleware.authorize('ADMIN', 'DOCENTE', 'ACUDIENTE', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'), usuario_controller_1.default.obtenerEstudiantesAsociados);
 router.post('/:id/estudiantes-asociados', authMiddleware.authorize('ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'), (0, validate_middleware_1.validate)(usuario_validation_1.asociarEstudianteValidation), usuario_controller_1.default.asociarEstudiante);

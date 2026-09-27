@@ -81,8 +81,12 @@ exports.PLANTILLAS = {
             text: `¡Bienvenido/a ${d.nombre} a EducaNexo360!\n\nSu solicitud de registro fue aprobada.\n\n` +
                 `SU CUENTA DE ACUDIENTE\nUsuario: ${d.email}\nDefina su contraseña aquí: ${d.enlace}\n\n` +
                 (estudiantes.length ? `ESTUDIANTES ASOCIADOS\n${textoEst}\n\n` : '') +
-                `Por seguridad, cada enlace sirve UNA sola vez y vence en ${horas} horas. Si vence, use ` +
-                `"¿Olvidaste tu contraseña?" en ${d.loginUrl}.\n\nEl equipo de EducaNexo360`,
+                `Por seguridad, cada enlace sirve UNA sola vez y vence en ${horas} horas. Si el suyo vence, use ` +
+                `"¿Olvidaste tu contraseña?" en ${d.loginUrl}.` +
+                (estudiantes.some((est) => !est.esExistente)
+                    ? ` Si vence el enlace de un estudiante, pida al colegio que reenvíe el enlace (el estudiante no recibe correos).`
+                    : '') +
+                `\n\nEl equipo de EducaNexo360`,
             html: layout('¡Bienvenido a EducaNexo360!', `<p>Hola ${(0, escapeHtml_1.escapeHtml)(d.nombre)},</p>
          <p>Su solicitud de registro fue aprobada.</p>
          <h3>Su cuenta de acudiente</h3>
@@ -90,7 +94,26 @@ exports.PLANTILLAS = {
          ${boton(d.enlace, 'Definir mi contraseña')}
          ${estudiantes.length ? `<h3>Estudiantes asociados</h3><ul>${htmlEst}</ul>` : ''}
          <p style="font-size: 13px; color: #555;">Por seguridad, cada enlace sirve <strong>una sola vez</strong> y vence en
-         ${horas} horas. Si vence, use "¿Olvidaste tu contraseña?" en <a href="${(0, escapeHtml_1.urlSegura)(d.loginUrl)}">${(0, escapeHtml_1.escapeHtml)(d.loginUrl)}</a>.</p>`),
+         ${horas} horas. Si el suyo vence, use "¿Olvidaste tu contraseña?" en <a href="${(0, escapeHtml_1.urlSegura)(d.loginUrl)}">${(0, escapeHtml_1.escapeHtml)(d.loginUrl)}</a>.${estudiantes.some((est) => !est.esExistente)
+                ? ' Si vence el enlace de un estudiante, pida al colegio que reenvíe el enlace (el estudiante no recibe correos).'
+                : ''}</p>`),
+        };
+    },
+    'enlace-contrasena': (d) => {
+        const horas = Number(d.horas) || 72;
+        const para = d.esPropio ? 'su cuenta' : `la cuenta del estudiante ${d.nombreUsuario}`;
+        return {
+            subject: 'Defina su contraseña - EducaNexo360',
+            text: `Hola ${d.nombre},\n\nEl colegio le envía un enlace para definir la contraseña de ${para} en EducaNexo360.\n` +
+                `Usuario: ${d.usuario}\n\nDefina la contraseña aquí: ${d.enlace}\n\n` +
+                `El enlace sirve UNA sola vez y vence en ${horas} horas. Los enlaces enviados antes para esta cuenta ya no ` +
+                `funcionan. Si vence, pida al colegio que lo reenvíe.\n\nEl equipo de EducaNexo360`,
+            html: layout('Defina su contraseña', `<p>Hola ${(0, escapeHtml_1.escapeHtml)(d.nombre)},</p>
+         <p>El colegio le envía un enlace para definir la contraseña de ${d.esPropio ? 'su cuenta' : `la cuenta del estudiante <strong>${(0, escapeHtml_1.escapeHtml)(d.nombreUsuario)}</strong>`} en EducaNexo360.</p>
+         <p>Usuario: <strong>${(0, escapeHtml_1.escapeHtml)(d.usuario)}</strong></p>
+         ${boton(d.enlace, 'Definir contraseña')}
+         <p style="font-size: 13px; color: #555;">El enlace sirve <strong>una sola vez</strong> y vence en ${horas} horas.
+         Los enlaces enviados antes para esta cuenta ya no funcionan. Si vence, pida al colegio que lo reenvíe.</p>`),
         };
     },
     resumen: (d, dest) => {

@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.enviarCorreoAhora = exports.construirTrabajosCorreo = exports.encolarCorreo = exports.DESTINATARIOS_POR_TRABAJO = void 0;
 exports.esEmailFicticio = esEmailFicticio;
 const logger_1 = require("../utils/logger");
+const enmascarar_1 = require("../utils/enmascarar");
 const outbox_1 = require("../queue/outbox");
 const proveedores_1 = require("./email/proveedores");
 const cupo_1 = require("./email/cupo");
@@ -51,14 +52,15 @@ const construirTrabajosCorreo = (opciones) => {
 exports.construirTrabajosCorreo = construirTrabajosCorreo;
 const enviarCorreoAhora = async (opciones) => {
     const correo = (0, plantillas_1.renderizarCorreo)(opciones.plantilla, opciones.datos, opciones.destinatario);
-    if (!(await (0, cupo_1.reservarCupo)(opciones.prioridad)))
+    const diaCupo = await (0, cupo_1.reservarCupo)(opciones.prioridad);
+    if (!diaCupo)
         return false;
     try {
         await (0, proveedores_1.obtenerProveedor)().send({ to: opciones.destinatario.email, ...correo });
         return true;
     }
     catch (error) {
-        await (0, cupo_1.liberarCupo)(opciones.prioridad);
+        await (0, cupo_1.liberarCupo)(opciones.prioridad, 1, diaCupo);
         throw error;
     }
 };
@@ -69,8 +71,9 @@ class EmailService {
         let ok = true;
         for (const to of destinos) {
             try {
-                if (!(await (0, cupo_1.reservarCupo)('normal'))) {
-                    logger_1.logger.warn(`[Email] Cupo diario agotado: no se envió "${options.subject}" a ${to}`);
+                const diaCupo = await (0, cupo_1.reservarCupo)('normal');
+                if (!diaCupo) {
+                    logger_1.logger.warn(`[Email] Cupo diario agotado: no se envió "${options.subject}" a ${(0, enmascarar_1.enmascararEmail)(to)}`);
                     ok = false;
                     continue;
                 }
@@ -78,12 +81,12 @@ class EmailService {
                     await (0, proveedores_1.obtenerProveedor)().send({ to, subject: options.subject, text: options.text, html: options.html });
                 }
                 catch (error) {
-                    await (0, cupo_1.liberarCupo)('normal');
+                    await (0, cupo_1.liberarCupo)('normal', 1, diaCupo);
                     throw error;
                 }
             }
             catch (error) {
-                logger_1.logger.error(`[Email] Error enviando "${options.subject}" a ${to}:`, error?.message || error);
+                logger_1.logger.error(`[Email] Error enviando "${options.subject}" a ${(0, enmascarar_1.enmascararEmail)(to)}:`, error?.message || error);
                 ok = false;
             }
         }
@@ -93,11 +96,11 @@ class EmailService {
         try {
             const ok = await (0, exports.enviarCorreoAhora)({ destinatario: { email: to }, plantilla: 'mensaje', datos: mensajeInfo, prioridad: 'normal' });
             if (!ok)
-                logger_1.logger.warn(`[Email] Cupo diario agotado: no se envió la notificación de mensaje a ${to}`);
+                logger_1.logger.warn(`[Email] Cupo diario agotado: no se envió la notificación de mensaje a ${(0, enmascarar_1.enmascararEmail)(to)}`);
             return ok;
         }
         catch (error) {
-            logger_1.logger.error(`[Email] Error enviando notificación de mensaje a ${to}:`, error?.message || error);
+            logger_1.logger.error(`[Email] Error enviando notificación de mensaje a ${(0, enmascarar_1.enmascararEmail)(to)}:`, error?.message || error);
             return false;
         }
     }

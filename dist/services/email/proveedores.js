@@ -3,12 +3,51 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.obtenerProveedor = exports.crearProveedor = exports.simulado = void 0;
+exports.obtenerProveedor = exports.crearProveedor = exports.simulado = exports.esErrorPermanente = void 0;
 const nodemailer_1 = __importDefault(require("nodemailer"));
 const mongoose_1 = __importDefault(require("mongoose"));
 const config_1 = __importDefault(require("../../config/config"));
 const logger_1 = require("../../utils/logger");
 const remitente = () => ({ nombre: config_1.default.email.senderName, email: config_1.default.email.senderEmail });
+const timeoutCorreoMs = () => {
+    const v = parseInt(process.env.EMAIL_TIMEOUT_MS || '', 10);
+    return Number.isFinite(v) && v > 0 ? v : 30000;
+};
+const esErrorPermanente = (proveedor, error) => {
+    if (!error)
+        return false;
+    if (proveedor === 'smtp') {
+        const rcpt = /RCPT/i.test(String(error.command || ''));
+        return error.code === 'EENVELOPE' || (rcpt && error.responseCode >= 550 && error.responseCode <= 554);
+    }
+    if (proveedor === 'brevo')
+        return error.status === 400 || error.status === 422;
+    if (proveedor === 'ses')
+        return ['MessageRejected', 'InvalidParameterValue', 'MailFromDomainNotVerifiedException'].includes(error.name);
+    return false;
+};
+exports.esErrorPermanente = esErrorPermanente;
+const marcarPermanente = (proveedor, error) => {
+    if (error && typeof error === 'object' && (0, exports.esErrorPermanente)(proveedor, error))
+        error.permanente = true;
+    return error;
+};
+const conTimeout = async (nombre, fn) => {
+    const ms = timeoutCorreoMs();
+    const control = new AbortController();
+    const reloj = setTimeout(() => control.abort(), ms);
+    try {
+        return await fn(control.signal);
+    }
+    catch (error) {
+        if (control.signal.aborted)
+            throw new Error(`${nombre}: tiempo agotado (${ms} ms)`);
+        throw error;
+    }
+    finally {
+        clearTimeout(reloj);
+    }
+};
 const crearSmtp = () => {
     const num = (v, d) => (Number.isFinite(parseInt(v || '', 10)) ? parseInt(v, 10) : d);
     const transporter = nodemailer_1.default.createTransport({
@@ -21,6 +60,9 @@ const crearSmtp = () => {
         secure: config_1.default.email.secure,
         auth: { user: config_1.default.email.user, pass: config_1.default.email.pass },
         tls: { rejectUnauthorized: config_1.default.email.tlsRejectUnauthorized },
+        connectionTimeout: timeoutCorreoMs(),
+        greetingTimeout: timeoutCorreoMs(),
+        socketTimeout: timeoutCorreoMs(),
     });
     transporter
         .verify()
@@ -30,14 +72,19 @@ const crearSmtp = () => {
         nombre: 'smtp',
         async send(m) {
             const r = remitente();
-            const info = await transporter.sendMail({
-                from: `"${r.nombre}" <${r.email}>`,
-                to: m.to,
-                subject: m.subject,
-                text: m.text || '',
-                html: m.html || undefined,
-            });
-            return { id: info.messageId };
+            try {
+                const info = await transporter.sendMail({
+                    from: `"${r.nombre}" <${r.email}>`,
+                    to: m.to,
+                    subject: m.subject,
+                    text: m.text || '',
+                    html: m.html || undefined,
+                });
+                return { id: info.messageId };
+            }
+            catch (error) {
+                throw marcarPermanente('smtp', error);
+            }
         },
     };
 };
@@ -51,7 +98,7 @@ const crearSes = () => {
         nombre: 'ses',
         async send(m) {
             const r = remitente();
-            const salida = await cliente.send(new SendEmailCommand({
+            const salida = await conTimeout('SES', (abortSignal) => cliente.send(new SendEmailCommand({
                 FromEmailAddress: `"${r.nombre}" <${r.email}>`,
                 Destination: { ToAddresses: [m.to] },
                 Content: {
@@ -66,7 +113,9 @@ const crearSes = () => {
                 ...(process.env.AWS_SES_CONFIGURATION_SET && {
                     ConfigurationSetName: process.env.AWS_SES_CONFIGURATION_SET,
                 }),
-            }));
+            }), { abortSignal })).catch((error) => {
+                throw marcarPermanente('ses', error);
+            });
             return { id: salida.MessageId };
         },
     };
@@ -79,7 +128,8 @@ const crearBrevo = () => {
         nombre: 'brevo',
         async send(m) {
             const r = remitente();
-            const resp = await fetch('https://api.brevo.com/v3/smtp/email', {
+            const resp = await conTimeout('Brevo', (signal) => fetch(process.env.BREVO_API_URL || 'https://api.brevo.com/v3/smtp/email', {
+                signal,
                 method: 'POST',
                 headers: { 'api-key': apiKey, 'Content-Type': 'application/json', Accept: 'application/json' },
                 body: JSON.stringify({
@@ -89,10 +139,12 @@ const crearBrevo = () => {
                     ...(m.html && { htmlContent: m.html }),
                     textContent: m.text || ' ',
                 }),
-            });
+            }));
             if (!resp.ok) {
                 const detalle = (await resp.text().catch(() => '')).slice(0, 300);
-                throw new Error(`Brevo respondió ${resp.status}: ${detalle}`);
+                const error = new Error(`Brevo respondió ${resp.status}: ${detalle}`);
+                error.status = resp.status;
+                throw marcarPermanente('brevo', error);
             }
             const json = await resp.json().catch(() => ({}));
             return { id: json.messageId };
@@ -102,6 +154,7 @@ const crearBrevo = () => {
 exports.simulado = {
     fallar: process.env.EMAIL_SIMULADO_FALLA === 'true',
     fallarPara: '',
+    rechazarPara: '',
 };
 const crearSimulado = () => ({
     nombre: 'simulado',
@@ -111,6 +164,11 @@ const crearSimulado = () => ({
             await new Promise((r) => setTimeout(r, demora));
         if (exports.simulado.fallar)
             throw new Error('Proveedor simulado: fallo forzado');
+        if (exports.simulado.rechazarPara && m.to.includes(exports.simulado.rechazarPara)) {
+            const e = new Error('550 5.1.1 destinatario inexistente (simulado)');
+            e.permanente = true;
+            throw e;
+        }
         if (exports.simulado.fallarPara && m.to.includes(exports.simulado.fallarPara)) {
             throw new Error(`Proveedor simulado: rechazo para ${m.to}`);
         }

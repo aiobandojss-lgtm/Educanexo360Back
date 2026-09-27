@@ -9,6 +9,8 @@ exports.registrarTokenValidation = [
         .withMessage('Token FCM es requerido')
         .trim()
         .isLength({ min: 1, max: 4096 })
+        .withMessage('Token FCM inválido')
+        .matches(/^[A-Za-z0-9:_.-]+$/)
         .withMessage('Token FCM inválido'),
     (0, express_validator_1.body)('platform').optional().isIn(['ios', 'android']).withMessage('Platform debe ser "ios" o "android"'),
 ];
@@ -19,6 +21,8 @@ exports.desregistrarTokenValidation = [
         .withMessage('Token FCM es requerido')
         .trim()
         .isLength({ min: 1, max: 4096 })
+        .withMessage('Token FCM inválido')
+        .matches(/^[A-Za-z0-9:_.-]+$/)
         .withMessage('Token FCM inválido'),
 ];
 //# sourceMappingURL=notificacion.validation.js.map

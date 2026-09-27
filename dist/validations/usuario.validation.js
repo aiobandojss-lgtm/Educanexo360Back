@@ -1,7 +1,10 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.preferenciasValidation = exports.asociarEstudianteValidation = exports.cambiarPasswordValidation = exports.actualizarUsuarioValidation = void 0;
+exports.preferenciasValidation = exports.asociarEstudianteValidation = exports.cambiarPasswordValidation = exports.actualizarUsuarioValidation = exports.reenviarEnlacePasswordValidation = void 0;
 const express_validator_1 = require("express-validator");
+exports.reenviarEnlacePasswordValidation = [
+    (0, express_validator_1.param)('id').isMongoId().withMessage('ID de usuario inválido'),
+];
 exports.actualizarUsuarioValidation = [
     (0, express_validator_1.body)('nombre').optional().isString().withMessage('El nombre debe ser un texto'),
     (0, express_validator_1.body)('apellidos').optional().isString().withMessage('Los apellidos deben ser un texto'),

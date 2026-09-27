@@ -44,25 +44,13 @@ const usuario_model_1 = __importDefault(require("../models/usuario.model"));
 const invitacion_model_1 = __importDefault(require("../models/invitacion.model"));
 const curso_model_1 = __importDefault(require("../models/curso.model"));
 const invitacion_service_1 = __importDefault(require("./invitacion.service"));
-const crypto_1 = __importDefault(require("crypto"));
 const email_service_1 = require("../services/email.service");
-const config_1 = __importDefault(require("../config/config"));
+const cuentas_1 = require("../services/email/cuentas");
 const estudiante_service_1 = require("./estudiante.service");
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
 const passwordUtils_1 = require("../utils/passwordUtils");
 const mongoose_2 = __importDefault(require("mongoose"));
 const logger_1 = require("../utils/logger");
-const HORAS_ENLACE_DEFINIR = 72;
-const nuevoEnlaceDefinir = () => {
-    const token = crypto_1.default.randomBytes(32).toString('hex');
-    return {
-        url: `${config_1.default.frontendUrl}/reset-password/${token}`,
-        campos: {
-            resetPasswordToken: crypto_1.default.createHash('sha256').update(token).digest('hex'),
-            resetPasswordExpires: new Date(Date.now() + HORAS_ENLACE_DEFINIR * 60 * 60 * 1000),
-        },
-    };
-};
 class RegistroService {
     async notificarNuevaSolicitud(solicitud) {
         try {
@@ -169,13 +157,11 @@ Por favor, revise la solicitud en el panel de administración.
         try {
             const acudienteCredenciales = this.generarCredencialesUnicas(solicitud.nombre, solicitud.apellidos, solicitud.email);
             logger_1.logger.debug('Credenciales de acudiente generadas con éxito');
-            const enlaceAcudiente = nuevoEnlaceDefinir();
             const acudiente = new usuario_model_1.default({
                 nombre: solicitud.nombre,
                 apellidos: solicitud.apellidos,
                 email: acudienteCredenciales.email,
                 password: acudienteCredenciales.password,
-                ...enlaceAcudiente.campos,
                 tipo: 'ACUDIENTE',
                 estado: 'ACTIVO',
                 escuelaId: solicitud.escuelaId,
@@ -238,13 +224,11 @@ Por favor, revise la solicitud en el panel de administración.
                     catch (error) {
                         console.error('Error al obtener información del curso:', error);
                     }
-                    const enlaceEstudiante = nuevoEnlaceDefinir();
                     const estudiante = new usuario_model_1.default({
                         nombre: estData.nombre,
                         apellidos: estData.apellidos,
                         email: credenciales.email,
                         password: credenciales.password,
-                        ...enlaceEstudiante.campos,
                         tipo: 'ESTUDIANTE',
                         estado: 'ACTIVO',
                         escuelaId: solicitud.escuelaId,
@@ -273,7 +257,7 @@ Por favor, revise la solicitud en el panel de administración.
                     estudiantesParaEmail.push({
                         nombre: `${estData.nombre} ${estData.apellidos}`,
                         email: credenciales.email,
-                        enlace: enlaceEstudiante.url,
+                        usuarioId: String(estudiante._id),
                         codigo: credenciales.codigo,
                         curso: cursoInfo.nombre,
                         emailGenerado: !estData.email,
@@ -293,7 +277,13 @@ Por favor, revise la solicitud en el panel de administración.
             await session.commitTransaction();
             logger_1.logger.debug('Transacción completada exitosamente');
             try {
-                await this.enviarCorreoConfirmacion(acudienteCredenciales.email, `${solicitud.nombre} ${solicitud.apellidos}`, enlaceAcudiente.url, estudiantesParaEmail, String(solicitud.escuelaId));
+                await (0, cuentas_1.encolarCorreoCuenta)({
+                    tipo: 'bienvenida',
+                    acudienteId: acudienteId,
+                    nombre: `${solicitud.nombre} ${solicitud.apellidos}`,
+                    estudiantes: estudiantesParaEmail,
+                    escuelaId: String(solicitud.escuelaId),
+                });
             }
             catch (errorCorreo) {
                 console.error(`[Registro] No se pudo encolar el correo de bienvenida de la solicitud ${solicitudId}:`, errorCorreo);
@@ -343,7 +333,7 @@ Por favor, revise la solicitud en el panel de administración.
         await (0, email_service_1.encolarCorreo)({
             destinatarios: [{ email: solicitud.email, nombre: solicitud.nombre }],
             plantilla: 'texto',
-            prioridad: 'alta',
+            prioridad: 'critica',
             escuelaId: solicitud.escuelaId ? String(solicitud.escuelaId) : undefined,
             datos: {
                 subject: 'Solicitud de registro - No aprobada',
@@ -460,23 +450,6 @@ El equipo de EducaNexo360`,
             password,
             codigo,
         };
-    }
-    async enviarCorreoConfirmacion(email, nombreCompleto, enlaceAcudiente, estudiantes, escuelaId) {
-        await (0, email_service_1.encolarCorreo)({
-            destinatarios: [{ email, nombre: nombreCompleto }],
-            plantilla: 'credenciales',
-            datos: {
-                nombre: nombreCompleto,
-                email,
-                enlace: enlaceAcudiente,
-                horas: HORAS_ENLACE_DEFINIR,
-                loginUrl: `${config_1.default.frontendUrl}/login`,
-                estudiantes,
-            },
-            prioridad: 'alta',
-            escuelaId,
-            sensible: true,
-        });
     }
 }
 exports.registroService = new RegistroService();

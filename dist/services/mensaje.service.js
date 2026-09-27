@@ -276,7 +276,7 @@ class MensajeService {
                 escuelaId: user.escuelaId,
                 estado: 'ACTIVO',
             })
-                .select('_id email nombre tipo preferencias fcmToken fcmTokens.token')
+                .select('_id')
                 .lean();
             const idsValidos = new Set(validos.map((u) => String(u._id)));
             destinatariosFinales = destinatariosFinales.filter((id) => idsValidos.has(id));
@@ -312,17 +312,7 @@ class MensajeService {
                     .filter((id) => id !== null),
             }));
             if (estado !== IMensaje_1.EstadoMensaje.BORRADOR) {
-                const setDest = new Set(destinatariosFinales);
-                const setCc = new Set(destinatariosCcFinales);
-                await this.despacharMensaje({
-                    mensajeId: nuevoMensaje._id.toString(),
-                    asunto,
-                    prioridad,
-                    remitente: user,
-                    tieneAdjuntos: adjuntos.length > 0,
-                    destinatarios: validos.filter((u) => setDest.has(String(u._id))),
-                    cc: validos.filter((u) => setCc.has(String(u._id))),
-                });
+                await this.encolarDespacho(nuevoMensaje._id.toString(), user, prioridad);
             }
             await nuevoMensaje.populate([
                 { path: 'remitente', select: 'nombre apellidos email tipo' },
@@ -375,74 +365,122 @@ class MensajeService {
         logger_1.logger.debug(`✅ Destinatarios de cursos obtenidos: ${destinatarios.length}`);
         return destinatarios;
     }
-    async despacharMensaje(p) {
+    async encolarDespacho(mensajeId, remitente, prioridad, opciones = {}) {
+        const trabajo = {
+            tipo: 'despachar-mensaje',
+            prioridad: (prioridad === IMensaje_1.PrioridadMensaje.ALTA ? 'alta' : 'normal'),
+            escuelaId: String(remitente.escuelaId),
+            claveUnica: `despacho:${mensajeId}`,
+            payload: {
+                mensajeId,
+                remitente: {
+                    _id: String(remitente._id),
+                    nombre: remitente.nombre,
+                    apellidos: remitente.apellidos,
+                    escuelaId: String(remitente.escuelaId),
+                },
+            },
+        };
         try {
-            const todos = [...new Map([...p.destinatarios, ...p.cc].map((u) => [String(u._id), u])).values()];
-            if (todos.length === 0)
-                return;
-            const nombreRemitente = `${p.remitente.nombre ?? ''} ${p.remitente.apellidos ?? ''}`.trim();
-            const url = `${config_1.default.frontendUrl}/mensajes/${p.mensajeId}`;
-            const escuelaId = String(p.remitente.escuelaId);
+            await (0, outbox_1.encolar)(trabajo);
+        }
+        catch (error) {
+            try {
+                await (0, outbox_1.encolar)(trabajo);
+            }
+            catch (error2) {
+                if (opciones.lanzarError)
+                    throw error2;
+                console.error(`[Mensajes] No se pudo encolar el despacho del mensaje ${mensajeId}:`, error2);
+            }
+        }
+    }
+    async procesarDespacho(mensajeId, remitente) {
+        const mensaje = await mensaje_model_1.default.findById(mensajeId)
+            .select('destinatarios destinatariosCc asunto prioridad adjuntos escuelaId')
+            .lean();
+        if (!mensaje)
+            return;
+        const escuelaId = String(mensaje.escuelaId || remitente.escuelaId);
+        const idsDest = (mensaje.destinatarios || []).map(String);
+        const idsCc = (mensaje.destinatariosCc || []).map(String);
+        const usuarios = await usuario_model_1.default.find({
+            _id: { $in: [...new Set([...idsDest, ...idsCc])] },
+            escuelaId,
+            estado: 'ACTIVO',
+        })
+            .select('_id email nombre tipo preferencias fcmToken fcmTokens.token')
+            .lean();
+        if (usuarios.length === 0)
+            return;
+        const setDest = new Set(idsDest);
+        const nombreRemitente = `${remitente.nombre ?? ''} ${remitente.apellidos ?? ''}`.trim();
+        const url = `${config_1.default.frontendUrl}/mensajes/${mensajeId}`;
+        const prioridad = mensaje.prioridad;
+        const asunto = mensaje.asunto;
+        const tieneAdjuntos = (mensaje.adjuntos || []).length > 0;
+        const mensajeObjId = new mongoose_1.default.Types.ObjectId(mensajeId);
+        const yaNotificados = new Set((await notificacion_model_1.default.find({ entidadId: mensajeObjId, usuarioId: { $in: usuarios.map((u) => u._id) } })
+            .select('usuarioId')
+            .lean()).map((n) => String(n.usuarioId)));
+        const faltan = usuarios.filter((u) => !yaNotificados.has(String(u._id)));
+        if (faltan.length > 0) {
             const ahora = new Date();
             const escuelaObjId = new mongoose_1.default.Types.ObjectId(escuelaId);
-            const alResumen = new Set(todos
-                .filter((u) => this.correoAlResumen(u, p.prioridad))
-                .map((u) => String(u._id)));
-            await notificacion_model_1.default.insertMany(todos.map((u) => ({
+            await notificacion_model_1.default.insertMany(faltan.map((u) => ({
                 usuarioId: new mongoose_1.default.Types.ObjectId(String(u._id)),
-                titulo: `Nuevo mensaje: ${p.asunto}`,
+                titulo: `Nuevo mensaje: ${asunto}`,
                 mensaje: `Has recibido un nuevo mensaje de ${nombreRemitente}`,
                 tipo: INotificacion_1.TipoNotificacion.MENSAJE,
                 estado: INotificacion_2.EstadoNotificacion.PENDIENTE,
                 escuelaId: escuelaObjId,
-                entidadId: new mongoose_1.default.Types.ObjectId(p.mensajeId),
+                entidadId: mensajeObjId,
                 entidadTipo: 'Mensaje',
                 metadata: {
                     remitente: nombreRemitente,
-                    tieneAdjuntos: p.tieneAdjuntos,
-                    mensajeId: p.mensajeId,
+                    tieneAdjuntos,
+                    mensajeId,
                     url,
-                    ...(alResumen.has(String(u._id)) && { resumen: true }),
+                    ...(this.correoAlResumen(u, prioridad) && { resumen: true }),
                 },
                 createdAt: ahora,
                 updatedAt: ahora,
             })), { ordered: false, lean: true });
-            const correoInmediato = todos.filter((u) => this.correoInmediato(u, p.prioridad));
-            const urgente = p.prioridad === IMensaje_1.PrioridadMensaje.ALTA || /urgente|emergencia/i.test(String(p.asunto || ''));
-            const trabajos = [
-                ...(0, email_service_1.construirTrabajosCorreo)({
-                    destinatarios: correoInmediato.map((u) => ({ email: u.email, nombre: u.nombre, usuarioId: String(u._id) })),
-                    plantilla: 'mensaje',
-                    datos: { remitente: nombreRemitente, asunto: p.asunto, fecha: new Date(), tieneAdjuntos: p.tieneAdjuntos, url },
-                    prioridad: p.prioridad === IMensaje_1.PrioridadMensaje.ALTA ? 'alta' : 'normal',
-                    escuelaId,
-                }),
-                ...pushNotification_service_1.default.construirTrabajosPush({
-                    usuarioIds: p.destinatarios
-                        .filter((u) => !('fcmToken' in u || 'fcmTokens' in u) || u.fcmToken || (u.fcmTokens || []).length > 0)
-                        .map((u) => String(u._id)),
-                    contenido: urgente
-                        ? {
-                            titulo: `🚨 URGENTE: ${nombreRemitente}`,
-                            mensaje: p.asunto,
-                            data: { tipo: 'urgente', mensajeId: p.mensajeId, prioridad: 'ALTA', remitente: nombreRemitente },
-                            sound: 'emergency',
-                        }
-                        : {
-                            titulo: `💬 Nuevo mensaje de ${nombreRemitente}`,
-                            mensaje: p.asunto,
-                            data: { tipo: 'mensaje', mensajeId: p.mensajeId, prioridad: p.prioridad || 'NORMAL', remitente: nombreRemitente },
-                        },
-                    prioridad: urgente ? 'alta' : 'normal',
-                    escuelaId,
-                }),
-            ];
-            if (trabajos.length > 0)
-                await (0, outbox_1.encolar)(trabajos);
         }
-        catch (error) {
-            console.error('[Mensajes] Error despachando notificaciones del mensaje', p.mensajeId, error);
-        }
+        const urgente = prioridad === IMensaje_1.PrioridadMensaje.ALTA || /urgente|emergencia/i.test(String(asunto || ''));
+        const conClave = (trabajos, canal) => trabajos.map((t, i) => ({ ...t, claveUnica: `despacho:${mensajeId}:${canal}:${i}` }));
+        const trabajos = [
+            ...conClave((0, email_service_1.construirTrabajosCorreo)({
+                destinatarios: usuarios
+                    .filter((u) => this.correoInmediato(u, prioridad))
+                    .map((u) => ({ email: u.email, nombre: u.nombre, usuarioId: String(u._id) })),
+                plantilla: 'mensaje',
+                datos: { remitente: nombreRemitente, asunto, fecha: new Date(), tieneAdjuntos, url },
+                prioridad: prioridad === IMensaje_1.PrioridadMensaje.ALTA ? 'alta' : 'normal',
+                escuelaId,
+            }), 'email'),
+            ...conClave(pushNotification_service_1.default.construirTrabajosPush({
+                usuarioIds: usuarios
+                    .filter((u) => setDest.has(String(u._id)) && (u.fcmToken || (u.fcmTokens || []).length > 0))
+                    .map((u) => String(u._id)),
+                contenido: urgente
+                    ? {
+                        titulo: `🚨 URGENTE: ${nombreRemitente}`,
+                        mensaje: asunto,
+                        data: { tipo: 'urgente', mensajeId, prioridad: 'ALTA', remitente: nombreRemitente },
+                        sound: 'emergency',
+                    }
+                    : {
+                        titulo: `💬 Nuevo mensaje de ${nombreRemitente}`,
+                        mensaje: asunto,
+                        data: { tipo: 'mensaje', mensajeId, prioridad: prioridad || 'NORMAL', remitente: nombreRemitente },
+                    },
+                prioridad: urgente ? 'alta' : 'normal',
+                escuelaId,
+            }), 'push'),
+        ];
+        if (trabajos.length > 0)
+            await (0, outbox_1.encolar)(trabajos);
     }
     correoInmediato(usuario, prioridad) {
         if (!usuario?.email || (0, email_service_1.esEmailFicticio)(usuario.email))

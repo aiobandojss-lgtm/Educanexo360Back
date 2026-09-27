@@ -13,6 +13,8 @@ const notificacion_service_1 = __importDefault(require("../services/notificacion
 const INotificacion_1 = require("../interfaces/INotificacion");
 const accesoAcademico_1 = require("../utils/accesoAcademico");
 const preferencias_1 = require("../utils/preferencias");
+const email_service_1 = require("../services/email.service");
+const cuentas_1 = require("../services/email/cuentas");
 const perfilPorRutas = (perfil) => {
     const datos = {};
     if (perfil && typeof perfil === 'object') {
@@ -372,6 +374,12 @@ class UsuarioController {
                 }))) {
                 throw new ApiError_1.default(409, 'Eres el único administrador activo del colegio; asigna otro antes de eliminar tu cuenta');
             }
+            const previo = {
+                estado: usuario.estado,
+                fcmToken: usuario.get('fcmToken') ?? null,
+                fcmTokens: (usuario.get('fcmTokens') || []).map((t) => (t?.toObject ? t.toObject() : t)),
+                eliminacionCuenta: usuario.get('eliminacionCuenta')?.toObject?.() ?? usuario.get('eliminacionCuenta'),
+            };
             usuario.estado = 'INACTIVO';
             usuario.set('fcmToken', null);
             usuario.set('fcmTokens', []);
@@ -381,6 +389,18 @@ class UsuarioController {
                 motivo: motivo || undefined,
             });
             await usuario.save();
+            if (usuario.tipo === 'ADMIN' &&
+                !(await usuario_model_1.default.exists({
+                    escuelaId: req.user.escuelaId,
+                    tipo: 'ADMIN',
+                    estado: 'ACTIVO',
+                    _id: { $ne: usuario._id },
+                }))) {
+                await usuario_model_1.default.updateOne({ _id: usuario._id }, previo.eliminacionCuenta
+                    ? { $set: { estado: previo.estado, fcmToken: previo.fcmToken, fcmTokens: previo.fcmTokens, eliminacionCuenta: previo.eliminacionCuenta } }
+                    : { $set: { estado: previo.estado, fcmToken: previo.fcmToken, fcmTokens: previo.fcmTokens }, $unset: { eliminacionCuenta: '' } });
+                throw new ApiError_1.default(409, 'Eres el único administrador activo del colegio; asigna otro antes de eliminar tu cuenta');
+            }
             try {
                 const admins = await usuario_model_1.default.find({
                     escuelaId: req.user.escuelaId,
@@ -406,6 +426,73 @@ class UsuarioController {
             res.json({
                 success: true,
                 message: 'Solicitud de eliminación registrada. Tu cuenta ha sido desactivada y será eliminada por el colegio.',
+            });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    async reenviarEnlacePassword(req, res, next) {
+        try {
+            if (!req.user) {
+                throw new ApiError_1.default(401, 'No autorizado');
+            }
+            const esSuperAdmin = req.user.tipo === 'SUPER_ADMIN';
+            if (!esSuperAdmin && !mongoose_1.default.isValidObjectId(req.user.escuelaId)) {
+                throw new ApiError_1.default(403, 'No tiene permisos para esta acción');
+            }
+            const objetivo = await usuario_model_1.default.findOne({
+                _id: req.params.id,
+                ...(!esSuperAdmin && { escuelaId: req.user.escuelaId }),
+                estado: 'ACTIVO',
+            })
+                .select('_id tipo email escuelaId')
+                .lean();
+            if (!objetivo) {
+                throw new ApiError_1.default(404, 'Usuario no encontrado');
+            }
+            if (!(0, accesoAcademico_1.puedeGestionarRol)(req.user.tipo, objetivo.tipo)) {
+                throw new ApiError_1.default(403, 'No tiene permisos para gestionar usuarios de este rol');
+            }
+            let enviarA = [];
+            if (objetivo.tipo === 'ESTUDIANTE') {
+                const acudientes = await usuario_model_1.default.find({
+                    escuelaId: objetivo.escuelaId,
+                    tipo: 'ACUDIENTE',
+                    estado: 'ACTIVO',
+                    'info_academica.estudiantes_asociados': objetivo._id,
+                })
+                    .select('_id email')
+                    .lean();
+                enviarA = acudientes.filter((a) => a.email && !(0, email_service_1.esEmailFicticio)(a.email)).map((a) => String(a._id));
+                if (enviarA.length === 0) {
+                    throw new ApiError_1.default(409, 'El estudiante no tiene acudientes activos con correo para enviarle el enlace');
+                }
+            }
+            else {
+                if (!objetivo.email || (0, email_service_1.esEmailFicticio)(objetivo.email)) {
+                    throw new ApiError_1.default(409, 'El usuario no tiene un correo real para enviarle el enlace');
+                }
+                enviarA = [String(objetivo._id)];
+            }
+            try {
+                await (0, cuentas_1.encolarCorreoCuenta)({
+                    tipo: 'definir',
+                    usuarioId: String(objetivo._id),
+                    enviarA,
+                    escuelaId: String(objetivo.escuelaId),
+                });
+            }
+            catch (errorCola) {
+                console.error('[Usuarios] No se pudo encolar el reenvío del enlace:', errorCola);
+                throw new ApiError_1.default(503, 'No se pudo enviar el enlace en este momento; intente de nuevo');
+            }
+            res.json({
+                success: true,
+                data: { destinatarios: enviarA.length },
+                message: objetivo.tipo === 'ESTUDIANTE'
+                    ? 'El enlace para definir la contraseña se envió a los acudientes del estudiante'
+                    : 'El enlace para definir la contraseña se envió al correo del usuario',
             });
         }
         catch (error) {

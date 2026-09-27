@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.NotificacionController = void 0;
+exports.NotificacionController = exports.limpiarDeviceInfo = void 0;
 const notificacion_model_1 = __importDefault(require("../models/notificacion.model"));
 const usuario_model_1 = __importDefault(require("../models/usuario.model"));
 const notificacion_service_1 = __importDefault(require("../services/notificacion.service"));
@@ -21,6 +21,24 @@ const sincronizarCamposAntiguos = {
         fcmTokenUpdatedAt: '$$NOW',
     },
 };
+const lit = (valor) => ({ $literal: valor });
+const limpiarDeviceInfo = (valor) => {
+    if (!valor || typeof valor !== 'object' || Array.isArray(valor))
+        return {};
+    const limpio = {};
+    for (const [clave, v] of Object.entries(valor).slice(0, 10)) {
+        if (!/^[A-Za-z0-9_]{1,40}$/.test(clave))
+            continue;
+        if (typeof v === 'string')
+            limpio[clave] = v.slice(0, 200);
+        else if (typeof v === 'number' && Number.isFinite(v))
+            limpio[clave] = v;
+        else if (typeof v === 'boolean')
+            limpio[clave] = v;
+    }
+    return limpio;
+};
+exports.limpiarDeviceInfo = limpiarDeviceInfo;
 const AGREGAR_TOKEN = (token, platform, deviceInfo) => [
     {
         $set: {
@@ -33,7 +51,7 @@ const AGREGAR_TOKEN = (token, platform, deviceInfo) => [
                                     {
                                         $and: [
                                             { $eq: [{ $type: '$fcmToken' }, 'string'] },
-                                            { $ne: ['$fcmToken', token] },
+                                            { $ne: ['$fcmToken', lit(token)] },
                                             { $not: [{ $in: ['$fcmToken', { $ifNull: ['$fcmTokens.token', []] }] }] },
                                         ],
                                     },
@@ -51,16 +69,16 @@ const AGREGAR_TOKEN = (token, platform, deviceInfo) => [
                                 $filter: {
                                     input: { $ifNull: ['$fcmTokens', []] },
                                     as: 'd',
-                                    cond: { $ne: ['$$d.token', token] },
+                                    cond: { $ne: ['$$d.token', lit(token)] },
                                 },
                             },
-                            [{ token, platform, deviceInfo, updatedAt: '$$NOW' }],
+                            [{ token: lit(token), platform: lit(platform), deviceInfo: lit(deviceInfo), updatedAt: '$$NOW' }],
                         ],
                     },
                     -MAX_DISPOSITIVOS,
                 ],
             },
-            deviceInfo,
+            deviceInfo: lit(deviceInfo),
         },
     },
     sincronizarCamposAntiguos,
@@ -69,11 +87,11 @@ const QUITAR_TOKEN = (token) => [
     {
         $set: {
             fcmTokens: {
-                $filter: { input: { $ifNull: ['$fcmTokens', []] }, as: 'd', cond: { $ne: ['$$d.token', token] } },
+                $filter: { input: { $ifNull: ['$fcmTokens', []] }, as: 'd', cond: { $ne: ['$$d.token', lit(token)] } },
             },
             _resincronizar: {
                 $or: [
-                    { $eq: ['$fcmToken', token] },
+                    { $eq: ['$fcmToken', lit(token)] },
                     { $in: ['$fcmToken', { $ifNull: ['$fcmTokens.token', []] }] },
                 ],
             },
@@ -125,7 +143,7 @@ class NotificacionController {
             logger_1.logger.debug(`📱 Registrando token FCM para usuario: ${req.user._id}`);
             const registrar = async () => {
                 await usuario_model_1.default.updateMany({ _id: { $ne: req.user._id }, $or: [{ 'fcmTokens.token': fcmToken }, { fcmToken }] }, QUITAR_TOKEN(fcmToken));
-                return usuario_model_1.default.findOneAndUpdate({ _id: req.user._id }, AGREGAR_TOKEN(fcmToken, platform, deviceInfo || {}), { new: true, projection: { _id: 1, nombre: 1, apellidos: 1 } }).lean();
+                return usuario_model_1.default.findOneAndUpdate({ _id: req.user._id }, AGREGAR_TOKEN(fcmToken, platform, (0, exports.limpiarDeviceInfo)(deviceInfo)), { new: true, projection: { _id: 1, nombre: 1, apellidos: 1 } }).lean();
             };
             let usuarioActualizado;
             try {
