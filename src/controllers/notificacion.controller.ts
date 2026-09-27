@@ -37,6 +37,27 @@ const sincronizarCamposAntiguos = {
   },
 };
 
+// Auditoría 4.A: TODO valor que viene del usuario va envuelto en $literal. Dentro de un update con pipeline un
+// string que empieza por '$' se evalúa como ruta ("$_id", "$$ROOT" copiaría el documento con el hash de la
+// contraseña) y un objeto como expresión. $literal lo guarda tal cual.
+const lit = (valor: unknown) => ({ $literal: valor });
+
+/**
+ * deviceInfo que llega del cliente: solo un objeto plano, máx. 10 claves simples (sin '$' ni '.') con valores
+ * primitivos (strings hasta 200 caracteres). Se LIMPIA en vez de rechazar para no romper las APK viejas.
+ */
+export const limpiarDeviceInfo = (valor: unknown): Record<string, string | number | boolean> => {
+  if (!valor || typeof valor !== 'object' || Array.isArray(valor)) return {};
+  const limpio: Record<string, string | number | boolean> = {};
+  for (const [clave, v] of Object.entries(valor as Record<string, unknown>).slice(0, 10)) {
+    if (!/^[A-Za-z0-9_]{1,40}$/.test(clave)) continue;
+    if (typeof v === 'string') limpio[clave] = v.slice(0, 200);
+    else if (typeof v === 'number' && Number.isFinite(v)) limpio[clave] = v;
+    else if (typeof v === 'boolean') limpio[clave] = v;
+  }
+  return limpio;
+};
+
 const AGREGAR_TOKEN = (token: string, platform: string, deviceInfo: Record<string, unknown>) => [
   {
     $set: {
@@ -50,7 +71,7 @@ const AGREGAR_TOKEN = (token: string, platform: string, deviceInfo: Record<strin
                   {
                     $and: [
                       { $eq: [{ $type: '$fcmToken' }, 'string'] },
-                      { $ne: ['$fcmToken', token] },
+                      { $ne: ['$fcmToken', lit(token)] },
                       { $not: [{ $in: ['$fcmToken', { $ifNull: ['$fcmTokens.token', []] }] }] },
                     ],
                   },
@@ -69,16 +90,16 @@ const AGREGAR_TOKEN = (token: string, platform: string, deviceInfo: Record<strin
                 $filter: {
                   input: { $ifNull: ['$fcmTokens', []] },
                   as: 'd',
-                  cond: { $ne: ['$$d.token', token] },
+                  cond: { $ne: ['$$d.token', lit(token)] },
                 },
               },
-              [{ token, platform, deviceInfo, updatedAt: '$$NOW' }],
+              [{ token: lit(token), platform: lit(platform), deviceInfo: lit(deviceInfo), updatedAt: '$$NOW' }],
             ],
           },
           -MAX_DISPOSITIVOS, // se quedan los 5 más recientes: sale el más viejo
         ],
       },
-      deviceInfo,
+      deviceInfo: lit(deviceInfo),
     },
   },
   sincronizarCamposAntiguos,
@@ -90,11 +111,11 @@ const QUITAR_TOKEN = (token: string) => [
   {
     $set: {
       fcmTokens: {
-        $filter: { input: { $ifNull: ['$fcmTokens', []] }, as: 'd', cond: { $ne: ['$$d.token', token] } },
+        $filter: { input: { $ifNull: ['$fcmTokens', []] }, as: 'd', cond: { $ne: ['$$d.token', lit(token)] } },
       },
       _resincronizar: {
         $or: [
-          { $eq: ['$fcmToken', token] },
+          { $eq: ['$fcmToken', lit(token)] },
           { $in: ['$fcmToken', { $ifNull: ['$fcmTokens.token', []] }] },
         ],
       },
@@ -138,7 +159,8 @@ export class NotificacionController {
 
       const { fcmToken, deviceInfo } = req.body;
 
-      // fcmToken null: desvincular (las APK 1.0.0 lo envían así al cerrar sesión). Sin token concreto → TODOS
+      // fcmToken null: desvincular (las APK 1.0.0 lo envían así al cerrar sesión). INTENCIONAL (auditoría 4.Q):
+      // sin un token concreto no se sabe qué dispositivo cerró sesión, así que se quitan TODOS los del usuario.
       if (fcmToken === null) {
         await Usuario.updateOne({ _id: req.user._id }, QUITAR_TODOS_LOS_TOKENS());
         res.json({ success: true, message: 'Token FCM eliminado', data: { tokenRegistered: false } });
@@ -166,7 +188,7 @@ export class NotificacionController {
         );
         return Usuario.findOneAndUpdate(
           { _id: req.user!._id },
-          AGREGAR_TOKEN(fcmToken, platform, deviceInfo || {}),
+          AGREGAR_TOKEN(fcmToken, platform, limpiarDeviceInfo(deviceInfo)),
           { new: true, projection: { _id: 1, nombre: 1, apellidos: 1 } },
         ).lean();
       };

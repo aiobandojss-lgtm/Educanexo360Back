@@ -246,7 +246,8 @@ class PushNotificationService {
     ).lean();
     const tokens = new Set<string>();
     usuarios.forEach((u: any) => {
-      (u.fcmTokens || []).forEach((t: any) => t?.token && tokens.add(t.token));
+      // Solo strings (auditoría 4.A): un token no-string haría fallar sendEachForMulticast para todo el lote
+      (u.fcmTokens || []).forEach((t: any) => typeof t?.token === 'string' && t.token && tokens.add(t.token));
       if (typeof u.fcmToken === 'string' && u.fcmToken) tokens.add(u.fcmToken);
     });
     return [...tokens];

@@ -4,6 +4,7 @@
  * _autoIndex:false para que no se cree al arrancar).
  *
  * Pasos:
+ *   0. Tokens que no son string (entraban por el pipeline sin $literal, auditoría 4.A): se quitan.
  *   1. Tokens antiguos repetidos entre usuarios: se queda el usuario con el registro más reciente
  *      (fcmTokenUpdatedAt, luego updatedAt); a los demás se les quita.
  *   1b. Token antiguo que ya está en el arreglo de otro usuario: gana el arreglo (más reciente).
@@ -36,6 +37,16 @@ async function main() {
   await mongoose.connect(URI);
   const usuarios = mongoose.connection.db.collection('usuarios');
   console.log(`\n${APLICAR ? '🔧 APLICANDO' : '🔍 SIMULACIÓN (sin cambios; use --aplicar)'} en ${mongoose.connection.name}\n`);
+
+  // 0. Tokens que no son string (auditoría 4.A: podían entrar por el pipeline sin $literal) → fuera
+  const noString = await usuarios.countDocuments({
+    $or: [{ 'fcmTokens.token': { $exists: true, $not: { $type: 'string' } } }, { fcmToken: { $exists: true, $nin: [null], $not: { $type: 'string' } } }],
+  });
+  if (APLICAR && noString > 0) {
+    await usuarios.updateMany({}, { $pull: { fcmTokens: { token: { $not: { $type: 'string' } } } } });
+    await usuarios.updateMany({ fcmToken: { $exists: true, $nin: [null], $not: { $type: 'string' } } }, { $set: { fcmToken: null } });
+  }
+  console.log(`0. Usuarios con tokens que no son texto: ${noString} (se limpian).`);
 
   // 1. Tokens antiguos repetidos
   const repetidosAntiguos = await usuarios
