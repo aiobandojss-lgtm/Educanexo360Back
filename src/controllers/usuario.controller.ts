@@ -524,6 +524,14 @@ class UsuarioController {
         throw new ApiError(409, 'Eres el único administrador activo del colegio; asigna otro antes de eliminar tu cuenta');
       }
 
+      // Estado previo, por si hay que revertir (auditoría 4.M)
+      const previo = {
+        estado: usuario.estado,
+        fcmToken: usuario.get('fcmToken') ?? null,
+        fcmTokens: (usuario.get('fcmTokens') || []).map((t: any) => (t?.toObject ? t.toObject() : t)),
+        eliminacionCuenta: (usuario.get('eliminacionCuenta') as any)?.toObject?.() ?? usuario.get('eliminacionCuenta'),
+      };
+
       // Desactivar de inmediato (bloquea el login), limpiar token push
       // y registrar la solicitud de eliminación
       usuario.estado = 'INACTIVO';
@@ -535,6 +543,26 @@ class UsuarioController {
         motivo: motivo || undefined,
       });
       await usuario.save();
+
+      // Auditoría 4.M: dos ADMIN pidiendo la eliminación a la vez pasaban ambos el control de arriba (cada uno veía
+      // al otro activo). Se re-verifica ya guardado: si no queda otro ADMIN activo, se revierte esta cuenta → 409.
+      if (
+        usuario.tipo === 'ADMIN' &&
+        !(await Usuario.exists({
+          escuelaId: req.user.escuelaId,
+          tipo: 'ADMIN',
+          estado: 'ACTIVO',
+          _id: { $ne: usuario._id },
+        }))
+      ) {
+        await Usuario.updateOne(
+          { _id: usuario._id },
+          previo.eliminacionCuenta
+            ? { $set: { estado: previo.estado, fcmToken: previo.fcmToken, fcmTokens: previo.fcmTokens, eliminacionCuenta: previo.eliminacionCuenta } }
+            : { $set: { estado: previo.estado, fcmToken: previo.fcmToken, fcmTokens: previo.fcmTokens }, $unset: { eliminacionCuenta: '' } },
+        );
+        throw new ApiError(409, 'Eres el único administrador activo del colegio; asigna otro antes de eliminar tu cuenta');
+      }
 
       // Notificar a los administradores de la escuela (no bloquea la solicitud)
       try {
