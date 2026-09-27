@@ -72,7 +72,8 @@ const dataComoTexto = (data?: Record<string, unknown>): Record<string, string> =
   return salida;
 };
 
-// Mensaje FCM con la MISMA forma que antes (canal Android, prioridad alta, APNs)
+// Mensaje FCM con la MISMA forma que antes (canal Android, prioridad alta, APNs). Auditoría 4.L: sin android.data,
+// que en FCM v1 REEMPLAZA a data en Android (se perdía timestamp); Android recibe el mismo data que iOS.
 const construirMensaje = (c: ContenidoPush) => {
   const data = dataComoTexto(c.data);
   return {
@@ -80,7 +81,6 @@ const construirMensaje = (c: ContenidoPush) => {
     data: { ...data, timestamp: Date.now().toString() },
     android: {
       notification: { channelId: 'educanexo360_messages', priority: 'high' as const, sound: c.sound || 'default' },
-      data,
     },
     apns: {
       payload: { aps: { alert: { title: c.titulo, body: c.mensaje }, sound: c.sound || 'default' } },
