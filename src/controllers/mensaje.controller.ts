@@ -46,7 +46,7 @@ interface ILectura {
   fechaLectura: Date;
 }
 
-export /**
+/**
  * IDs (string) de los usuarios ACTIVOS del colegio entre los recibidos (mismo criterio que crearMensaje):
  * los destinatarios de otro colegio o inactivos se descartan.
  */
@@ -59,7 +59,7 @@ const idsDestinatariosValidos = async (ids: unknown[], escuelaId: string): Promi
   return new Set(validos.map((u: any) => String(u._id)));
 };
 
-class MensajeController {
+export class MensajeController {
   // Método para obtener posibles destinatarios según el rol del usuario
   async getPosiblesDestinatarios(
     req: RequestWithUser,
