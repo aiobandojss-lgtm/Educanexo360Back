@@ -36,7 +36,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.estadoWorker = exports.detenerWorker = exports.iniciarWorker = exports.ejecutarTick = exports.encolar = exports.registrarTareaPeriodica = exports.registrarHandler = exports.TrabajoCancelado = exports.FalloDefinitivo = exports.ReprogramarTrabajo = exports.configuracionWorker = void 0;
+exports.estadoWorker = exports.detenerWorker = exports.iniciarWorker = exports.ejecutarTick = exports.encolar = exports.registrarTareaPeriodica = exports.registrarHandler = exports.registrarObservadorFallido = exports.TIPOS_CORREO = exports.TrabajoCancelado = exports.FalloDefinitivo = exports.ReprogramarTrabajo = exports.configuracionWorker = void 0;
 const mongoose_1 = __importDefault(require("mongoose"));
 const outbox_model_1 = __importStar(require("../models/outbox.model"));
 const logger_1 = require("../utils/logger");
@@ -71,6 +71,8 @@ const CFG = {
     lote: num('OUTBOX_BATCH', 20),
     concurrencia: num('OUTBOX_CONCURRENCY', 5),
     maxIntentos: num('OUTBOX_MAX_INTENTOS', 5),
+    maxIntentosCorreo: num('OUTBOX_MAX_INTENTOS_CORREO', 8),
+    backoffMaxMs: num('OUTBOX_BACKOFF_MAX_MS', 30 * 60 * 1000),
     lockMs: LOCK_MS,
     backoffBaseMs: num('OUTBOX_BACKOFF_MS', 30 * 1000),
     timeoutTrabajoMs: TIMEOUT.timeoutMs,
@@ -102,6 +104,24 @@ class TrabajoCancelado extends Error {
     }
 }
 exports.TrabajoCancelado = TrabajoCancelado;
+exports.TIPOS_CORREO = ['email', 'correo-cuenta'];
+const maxIntentosDe = (tipo) => (exports.TIPOS_CORREO.includes(tipo) ? CFG.maxIntentosCorreo : CFG.maxIntentos);
+const observadoresFallido = [];
+const registrarObservadorFallido = (fn) => {
+    observadoresFallido.push(fn);
+};
+exports.registrarObservadorFallido = registrarObservadorFallido;
+const avisarFallido = (trabajo, error) => {
+    const t = { ...(trabajo.toObject ? trabajo.toObject() : trabajo), error };
+    for (const fn of observadoresFallido) {
+        try {
+            fn(t);
+        }
+        catch (e) {
+            logger_1.logger.error(`[Outbox] observador de FALLIDO: ${textoError(e)}`);
+        }
+    }
+};
 const handlers = new Map();
 const tareasPeriodicas = [];
 const registrarHandler = (tipo, handler) => {
@@ -154,7 +174,7 @@ let deteniendo = false;
 let ultimoTick = null;
 let trabajosEnCurso = 0;
 const redactar = (trabajo) => trabajo.payload?.sensible ? { payload: { sensible: true, redactado: true } } : {};
-const retrasoBackoff = (intentos) => CFG.backoffBaseMs * Math.pow(2, Math.max(intentos - 1, 0));
+const retrasoBackoff = (intentos) => Math.min(CFG.backoffBaseMs * Math.pow(2, Math.max(intentos - 1, 0)), CFG.backoffMaxMs);
 const cerrarTrabajo = async (trabajo, update, que) => {
     for (let intento = 1; intento <= 3; intento++) {
         try {
@@ -210,21 +230,26 @@ const ejecutarTrabajo = async (trabajo) => {
             clearTimeout(reloj);
         if (resultado.vencido) {
             cancelacion.abort();
-            const aviso = `Tiempo agotado (${CFG.timeoutTrabajoMs} ms): cancelado; se retoma al vencer el lock`;
+            const aviso = `Tiempo agotado (${CFG.timeoutTrabajoMs} ms): cancelado`;
             logger_1.logger.warn(`[Outbox] ${trabajo.tipo} ${trabajo._id}: ${aviso}`);
             let espera;
-            await Promise.race([
-                ejecucion.catch(() => undefined),
+            const tras = await Promise.race([
+                ejecucion.then(() => ({ resuelto: true, error: null }), (error) => ({ resuelto: true, error: error ?? new Error('Error desconocido') })),
                 new Promise((r) => {
-                    espera = setTimeout(r, CFG.esperaCancelacionMs);
+                    espera = setTimeout(() => r({ resuelto: false, error: null }), CFG.esperaCancelacionMs);
                 }),
             ]);
             if (espera)
                 clearTimeout(espera);
-            await outbox_model_1.default.updateOne({ _id: trabajo._id, estado: 'PROCESANDO', lockedUntil: trabajo.lockedUntil }, { $set: { error: aviso } }).catch(() => undefined);
-            return;
+            if (!tras.resuelto) {
+                await outbox_model_1.default.updateOne({ _id: trabajo._id, estado: 'PROCESANDO', lockedUntil: trabajo.lockedUntil }, { $set: { error: `${aviso}; se retoma al vencer el lock` } }).catch(() => undefined);
+                return;
+            }
+            errorHandler = tras.error;
         }
-        errorHandler = resultado.error;
+        else {
+            errorHandler = resultado.error;
+        }
     }
     if (!errorHandler) {
         await cerrarTrabajo(trabajo, {
@@ -242,21 +267,30 @@ const ejecutarTrabajo = async (trabajo) => {
         logger_1.logger.warn(`[Outbox] ${trabajo.tipo} ${trabajo._id} aplazado hasta ${errorHandler.fecha.toISOString()}: ${textoError(errorHandler)}`);
         return;
     }
-    const mensaje = textoError(errorHandler);
-    if (trabajo.intentos >= CFG.maxIntentos || errorHandler?.definitivo === true) {
-        await cerrarTrabajo(trabajo, {
+    let mensaje = textoError(errorHandler);
+    let definitivo = errorHandler?.definitivo === true;
+    const nextRunAt = new Date(Date.now() + retrasoBackoff(trabajo.intentos));
+    const caducaEn = trabajo.payload?.caducaEn ? new Date(trabajo.payload.caducaEn) : null;
+    if (!definitivo && caducaEn && nextRunAt.getTime() > caducaEn.getTime()) {
+        definitivo = true;
+        mensaje = `${mensaje} | El siguiente intento sería después de que venza el enlace`.slice(0, 1000);
+    }
+    if (trabajo.intentos >= maxIntentosDe(trabajo.tipo) || definitivo) {
+        const cerrado = await cerrarTrabajo(trabajo, {
             $set: {
                 estado: 'FALLIDO',
                 error: mensaje,
                 expireAt: new Date(Date.now() + CFG.retencionMs),
+                ...(definitivo && { definitivo: true }),
                 ...redactar(trabajo),
             },
             $unset: { lockedUntil: 1 },
         }, 'FALLIDO');
         logger_1.logger.error(`[Outbox] ${trabajo.tipo} ${trabajo._id} FALLIDO tras ${trabajo.intentos} intento(s): ${mensaje}`);
+        if (cerrado)
+            avisarFallido(trabajo, mensaje);
     }
     else {
-        const nextRunAt = new Date(Date.now() + retrasoBackoff(trabajo.intentos));
         await cerrarTrabajo(trabajo, { $set: { estado: 'PENDIENTE', error: mensaje, nextRunAt }, $unset: { lockedUntil: 1 } }, 'para reintento');
         logger_1.logger.warn(`[Outbox] ${trabajo.tipo} ${trabajo._id} intento ${trabajo.intentos} falló (reintento ${nextRunAt.toISOString()}): ${mensaje}`);
     }
@@ -300,7 +334,13 @@ const ejecutarTick = async () => {
         ultimoTick = new Date();
         try {
             const vencido = { estado: 'PROCESANDO', lockedUntil: { $lt: new Date() } };
-            await outbox_model_1.default.updateMany({ ...vencido, intentos: { $gte: CFG.maxIntentos } }, {
+            const agotados = {
+                $or: [
+                    { tipo: { $in: exports.TIPOS_CORREO }, intentos: { $gte: CFG.maxIntentosCorreo } },
+                    { tipo: { $nin: exports.TIPOS_CORREO }, intentos: { $gte: CFG.maxIntentos } },
+                ],
+            };
+            await outbox_model_1.default.updateMany({ ...vencido, ...agotados }, {
                 $set: {
                     estado: 'FALLIDO',
                     error: 'Proceso interrumpido en cada intento (lock vencido)',
@@ -308,7 +348,7 @@ const ejecutarTick = async () => {
                 },
                 $unset: { lockedUntil: 1 },
             });
-            await outbox_model_1.default.updateMany({ ...vencido, intentos: { $lt: CFG.maxIntentos } }, { $set: { estado: 'PENDIENTE' }, $unset: { lockedUntil: 1 } });
+            await outbox_model_1.default.updateMany({ ...vencido, $nor: [agotados] }, { $set: { estado: 'PENDIENTE' }, $unset: { lockedUntil: 1 } });
             await completarOrdenFaltante().catch((err) => logger_1.logger.error(`[Outbox] completar orden: ${textoError(err)}`));
             for (const tarea of tareasPeriodicas) {
                 if (deteniendo)

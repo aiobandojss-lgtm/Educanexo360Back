@@ -104,11 +104,14 @@ const procesarCorreoCuenta = async (payload, ctx) => {
             throw new outbox_1.FalloDefinitivo('Acudiente inexistente');
         comprobar();
         const dia = await reservarCritico(caducaEn);
-        const enlace = await (0, exports.crearEnlaceContrasena)(String(acudiente._id), exports.HORAS_ENLACE_DEFINIR);
+        const enlaceAcudiente = nuevoEnlace();
+        const porGuardar = [{ usuarioId: String(acudiente._id), hash: enlaceAcudiente.hash }];
         const estudiantes = [];
         for (const est of payload.estudiantes || []) {
             if (!est.esExistente && est.usuarioId && mongoose_1.default.isValidObjectId(est.usuarioId)) {
-                estudiantes.push({ ...est, enlace: await (0, exports.crearEnlaceContrasena)(String(est.usuarioId), exports.HORAS_ENLACE_DEFINIR) });
+                const e = nuevoEnlace();
+                porGuardar.push({ usuarioId: String(est.usuarioId), hash: e.hash });
+                estudiantes.push({ ...est, enlace: e.url });
             }
             else {
                 estudiantes.push(est);
@@ -118,11 +121,13 @@ const procesarCorreoCuenta = async (payload, ctx) => {
         await enviar(dia, { email: acudiente.email, nombre }, 'credenciales', {
             nombre,
             email: acudiente.email,
-            enlace,
+            enlace: enlaceAcudiente.url,
             horas: exports.HORAS_ENLACE_DEFINIR,
             loginUrl: `${config_1.default.frontendUrl}/login`,
             estudiantes,
         });
+        for (const g of porGuardar)
+            await guardarEnlace(g.usuarioId, g.hash, exports.HORAS_ENLACE_DEFINIR);
         return;
     }
     if (payload.tipo === 'definir') {
@@ -184,8 +189,16 @@ const procesarCorreoCuenta = async (payload, ctx) => {
                 throw error;
             }
             entregados++;
-            if (entregados === 1)
-                await guardarEnlace(String(usuario._id), enlace.hash, exports.HORAS_ENLACE_DEFINIR);
+            if (entregados === 1) {
+                try {
+                    await guardarEnlace(String(usuario._id), enlace.hash, exports.HORAS_ENLACE_DEFINIR);
+                }
+                catch (error) {
+                    for (let j = i + 1; j < conCorreo.length; j++)
+                        await (0, cupo_1.liberarCupo)('critica', 1, dias[j]);
+                    throw error;
+                }
+            }
         }
         if (entregados === 0) {
             throw new outbox_1.FalloDefinitivo(`Ningún destinatario aceptó el enlace (${rechazados.join(', ')}); el enlace anterior sigue vigente`);

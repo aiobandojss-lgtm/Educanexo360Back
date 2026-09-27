@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.obtenerProveedor = exports.crearProveedor = exports.simulado = exports.esErrorPermanente = void 0;
+exports.obtenerProveedor = exports.registrarObservadorEnvios = exports.crearProveedor = exports.simulado = exports.reiniciarCortocircuito = exports.estadoCortocircuito = exports.esErrorPermanente = void 0;
 const nodemailer_1 = __importDefault(require("nodemailer"));
 const mongoose_1 = __importDefault(require("mongoose"));
 const config_1 = __importDefault(require("../../config/config"));
@@ -13,19 +13,26 @@ const timeoutCorreoMs = () => {
     const v = parseInt(process.env.EMAIL_TIMEOUT_MS || '', 10);
     return Number.isFinite(v) && v > 0 ? v : 30000;
 };
+const CODIGO_DESTINATARIO_INEXISTENTE = /\b5\.1\.(1|2|10)\b/;
+const TEXTO_DESTINATARIO_INEXISTENTE = /user unknown|unknown user|no such user|does not exist|mailbox unavailable/i;
+const TEXTO_TRANSITORIO = /\b5\.7\.\d+|policy|spam|blacklist|blocked|\brate\b|exceeded|sender|relay/i;
 const esErrorPermanente = (proveedor, error) => {
     if (!error)
+        return false;
+    const texto = String(error.response ?? error.detalle ?? error.message ?? '');
+    if (TEXTO_TRANSITORIO.test(texto))
         return false;
     if (proveedor === 'smtp') {
         const rcpt = /^RCPT TO$/i.test(String(error.command || '').trim());
         const codigo = Number(error.responseCode);
-        return rcpt && codigo >= 550 && codigo <= 554;
+        if (!rcpt || codigo < 550 || codigo > 554)
+            return false;
+        return CODIGO_DESTINATARIO_INEXISTENTE.test(texto) || TEXTO_DESTINATARIO_INEXISTENTE.test(texto);
     }
-    const texto = String(error.detalle ?? error.message ?? '');
     if (proveedor === 'brevo') {
         if (error.status !== 400 && error.status !== 422)
             return false;
-        if (/sender|remitente/i.test(texto))
+        if (/remitente/i.test(texto))
             return false;
         return /(invalid|not valid).{0,40}(\bto\b|recipient|email)|(\bto\b|recipient|email).{0,40}(invalid|not valid)/i.test(texto);
     }
@@ -39,17 +46,48 @@ const esErrorPermanente = (proveedor, error) => {
     return false;
 };
 exports.esErrorPermanente = esErrorPermanente;
-const marcarPermanente = (proveedor, error) => {
-    if (error && typeof error === 'object' && (0, exports.esErrorPermanente)(proveedor, error))
-        error.permanente = true;
+const VENTANA_CORTOCIRCUITO_MS = 10 * 60 * 1000;
+const DURACION_CORTOCIRCUITO_MS = 30 * 60 * 1000;
+const DOMINIOS_CORTOCIRCUITO = 5;
+let permanentesRecientes = [];
+let cortocircuitoHasta = 0;
+const estadoCortocircuito = () => ({ activoHasta: cortocircuitoHasta > Date.now() ? new Date(cortocircuitoHasta) : null });
+exports.estadoCortocircuito = estadoCortocircuito;
+const reiniciarCortocircuito = () => {
+    permanentesRecientes = [];
+    cortocircuitoHasta = 0;
+};
+exports.reiniciarCortocircuito = reiniciarCortocircuito;
+const marcarPermanente = (proveedor, error, destinatario) => {
+    if (!error || typeof error !== 'object' || !(0, exports.esErrorPermanente)(proveedor, error))
+        return error;
+    const ahora = Date.now();
+    if (cortocircuitoHasta > ahora)
+        return error;
+    const dominio = String(destinatario || '').split('@')[1]?.toLowerCase() || '';
+    permanentesRecientes = permanentesRecientes.filter((p) => ahora - p.t < VENTANA_CORTOCIRCUITO_MS);
+    permanentesRecientes.push({ dominio, t: ahora });
+    const dominios = new Set(permanentesRecientes.map((p) => p.dominio));
+    if (dominios.size >= DOMINIOS_CORTOCIRCUITO) {
+        cortocircuitoHasta = ahora + DURACION_CORTOCIRCUITO_MS;
+        permanentesRecientes = [];
+        logger_1.logger.error(`[Email] ${dominios.size} rechazos "permanentes" a dominios distintos en 10 min: posible bloqueo del proveedor. ` +
+            `Durante 30 min se tratan como transitorios (se reintentan).`);
+        return error;
+    }
+    error.permanente = true;
     return error;
 };
 const conTimeout = async (nombre, fn) => {
     const ms = timeoutCorreoMs();
     const control = new AbortController();
     const reloj = setTimeout(() => control.abort(), ms);
+    const vencido = new Promise((_, rechazar) => {
+        control.signal.addEventListener('abort', () => rechazar(new Error(`${nombre}: tiempo agotado (${ms} ms)`)), { once: true });
+    });
+    vencido.catch(() => undefined);
     try {
-        return await fn(control.signal);
+        return await Promise.race([fn(control.signal), vencido]);
     }
     catch (error) {
         if (control.signal.aborted)
@@ -85,17 +123,17 @@ const crearSmtp = () => {
         async send(m) {
             const r = remitente();
             try {
-                const info = await transporter.sendMail({
+                const info = await conTimeout('SMTP', () => transporter.sendMail({
                     from: `"${r.nombre}" <${r.email}>`,
                     to: m.to,
                     subject: m.subject,
                     text: m.text || '',
                     html: m.html || undefined,
-                });
+                }));
                 return { id: info.messageId };
             }
             catch (error) {
-                throw marcarPermanente('smtp', error);
+                throw marcarPermanente('smtp', error, m.to);
             }
         },
     };
@@ -126,7 +164,7 @@ const crearSes = () => {
                     ConfigurationSetName: process.env.AWS_SES_CONFIGURATION_SET,
                 }),
             }), { abortSignal })).catch((error) => {
-                throw marcarPermanente('ses', error);
+                throw marcarPermanente('ses', error, m.to);
             });
             return { id: salida.MessageId };
         },
@@ -157,7 +195,7 @@ const crearBrevo = () => {
                 const error = new Error(`Brevo respondió ${resp.status}: ${detalle}`);
                 error.status = resp.status;
                 error.detalle = detalle;
-                throw marcarPermanente('brevo', error);
+                throw marcarPermanente('brevo', error, m.to);
             }
             const json = await resp.json().catch(() => ({}));
             return { id: json.messageId };
@@ -211,10 +249,39 @@ const crearProveedor = (nombre) => {
     }
 };
 exports.crearProveedor = crearProveedor;
+const observadoresEnvio = [];
+const registrarObservadorEnvios = (fn) => {
+    observadoresEnvio.push(fn);
+};
+exports.registrarObservadorEnvios = registrarObservadorEnvios;
+const avisarEnvio = (resultado) => {
+    for (const fn of observadoresEnvio) {
+        try {
+            fn(resultado);
+        }
+        catch (e) {
+            logger_1.logger.error(`[Email] observador de envíos: ${e?.message || e}`);
+        }
+    }
+};
 const obtenerProveedor = () => {
     if (proveedor)
         return proveedor;
-    proveedor = (0, exports.crearProveedor)(process.env.EMAIL_PROVIDER || 'smtp');
+    const real = (0, exports.crearProveedor)(process.env.EMAIL_PROVIDER || 'smtp');
+    proveedor = {
+        nombre: real.nombre,
+        async send(m) {
+            try {
+                const r = await real.send(m);
+                avisarEnvio('exito');
+                return r;
+            }
+            catch (error) {
+                avisarEnvio(error?.permanente ? 'rechazo' : 'fallo');
+                throw error;
+            }
+        },
+    };
     logger_1.logger.info(`[Email] Proveedor de correo: ${proveedor.nombre}`);
     return proveedor;
 };

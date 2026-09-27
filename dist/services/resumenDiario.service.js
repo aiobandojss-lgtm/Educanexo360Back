@@ -42,7 +42,8 @@ const reiniciarEstadoResumen = () => {
     diasEncolados.clear();
 };
 exports.reiniciarEstadoResumen = reiniciarEstadoResumen;
-const procesarResumenDiario = async (dia, ahora = new Date()) => {
+const procesarResumenDiario = async (dia, ahora = new Date(), ctx) => {
+    const comprobar = () => ctx?.comprobarCancelacion();
     const grupos = await notificacion_model_1.default.aggregate([
         {
             $match: {
@@ -62,6 +63,7 @@ const procesarResumenDiario = async (dia, ahora = new Date()) => {
     ]);
     if (grupos.length === 0)
         return 0;
+    comprobar();
     const usuarioIds = grupos.map((g) => g._id);
     const mensajeIds = [...new Set(grupos.flatMap((g) => g.items.map((i) => String(i.mensajeId))))]
         .filter((id) => mongoose_1.default.isValidObjectId(id))
@@ -129,6 +131,7 @@ const procesarResumenDiario = async (dia, ahora = new Date()) => {
             });
         }
     }
+    comprobar();
     if (trabajos.length > 0)
         await (0, outbox_1.encolar)(trabajos);
     const idsEnviados = atendidas.filter((a) => a.enviado).flatMap((a) => a.ids);

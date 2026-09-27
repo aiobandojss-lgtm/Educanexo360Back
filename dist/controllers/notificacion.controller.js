@@ -371,6 +371,9 @@ class NotificacionController {
                 throw new ApiError_1.default(403, 'No tiene permisos para crear notificaciones');
             }
             const { usuarioId, titulo, mensaje, tipo, entidadId, entidadTipo, metadata, enviarEmail = false, } = req.body;
+            if (entidadTipo === 'Mensaje') {
+                throw new ApiError_1.default(400, "No se pueden crear notificaciones de tipo 'Mensaje'");
+            }
             const notificacion = await notificacion_service_1.default.crearNotificacion({
                 usuarioId,
                 titulo,
@@ -400,6 +403,9 @@ class NotificacionController {
                 throw new ApiError_1.default(403, 'No tiene permisos para crear notificaciones masivas');
             }
             const { usuarioIds, titulo, mensaje, tipo, entidadId, entidadTipo, metadata, enviarEmail = false, } = req.body;
+            if (entidadTipo === 'Mensaje') {
+                throw new ApiError_1.default(400, "No se pueden crear notificaciones de tipo 'Mensaje'");
+            }
             if (!usuarioIds || !Array.isArray(usuarioIds) || usuarioIds.length === 0) {
                 throw new ApiError_1.default(400, 'Debe especificar al menos un usuario destinatario');
             }

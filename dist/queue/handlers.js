@@ -37,6 +37,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const outbox_1 = require("./outbox");
+const monitorEnvios_1 = require("./monitorEnvios");
 const resumenDiario_service_1 = require("../services/resumenDiario.service");
 const email_service_1 = require("../services/email.service");
 const proveedores_1 = require("../services/email/proveedores");
@@ -49,6 +50,9 @@ const mensaje_model_1 = __importDefault(require("../models/mensaje.model"));
 const logger_1 = require("../utils/logger");
 const enmascarar_1 = require("../utils/enmascarar");
 const cuentas_1 = require("../services/email/cuentas");
+(0, proveedores_1.registrarObservadorEnvios)((resultado) => (0, monitorEnvios_1.registrarEnvioProveedor)(resultado));
+(0, outbox_1.registrarObservadorFallido)((trabajo) => (0, monitorEnvios_1.registrarFallido)(trabajo));
+(0, outbox_1.registrarTareaPeriodica)('monitor-envios', async () => (0, monitorEnvios_1.revisarCierre)());
 const marcarConReintentos = async (ctx, id) => {
     for (let intento = 1;; intento++) {
         try {
@@ -189,14 +193,14 @@ const marcarConReintentos = async (ctx, id) => {
 (0, outbox_1.registrarTareaPeriodica)('resumen-diario', async () => {
     await (0, resumenDiario_service_1.encolarResumenSiCorresponde)();
 });
-(0, outbox_1.registrarHandler)('despachar-mensaje', async (trabajo) => {
+(0, outbox_1.registrarHandler)('despachar-mensaje', async (trabajo, ctx) => {
     const { mensajeId, remitente } = trabajo.payload || {};
-    await mensaje_service_1.default.procesarDespacho(String(mensajeId), remitente || {});
+    await mensaje_service_1.default.procesarDespacho(String(mensajeId), remitente || {}, ctx);
 });
 (0, outbox_1.registrarHandler)('correo-cuenta', async (trabajo, ctx) => {
     await (0, cuentas_1.procesarCorreoCuenta)(trabajo.payload || {}, ctx);
 });
-(0, outbox_1.registrarHandler)('resumen-diario', async (trabajo) => {
-    await (0, resumenDiario_service_1.procesarResumenDiario)(String(trabajo.payload?.dia));
+(0, outbox_1.registrarHandler)('resumen-diario', async (trabajo, ctx) => {
+    await (0, resumenDiario_service_1.procesarResumenDiario)(String(trabajo.payload?.dia), new Date(), ctx);
 });
 //# sourceMappingURL=handlers.js.map

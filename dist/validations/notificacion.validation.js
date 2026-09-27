@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.desregistrarTokenValidation = exports.registrarTokenValidation = void 0;
+exports.crearNotificacionValidation = exports.desregistrarTokenValidation = exports.registrarTokenValidation = void 0;
 const express_validator_1 = require("express-validator");
 exports.registrarTokenValidation = [
     (0, express_validator_1.body)('fcmToken')
@@ -24,5 +24,8 @@ exports.desregistrarTokenValidation = [
         .withMessage('Token FCM inválido')
         .matches(/^[A-Za-z0-9:_.-]+$/)
         .withMessage('Token FCM inválido'),
+];
+exports.crearNotificacionValidation = [
+    (0, express_validator_1.body)('entidadTipo').optional().not().equals('Mensaje').withMessage("No se pueden crear notificaciones de tipo 'Mensaje'"),
 ];
 //# sourceMappingURL=notificacion.validation.js.map

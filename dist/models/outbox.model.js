@@ -54,6 +54,7 @@ const OutboxSchema = new mongoose_1.Schema({
     claveUnica: { type: String },
     enviados: { type: [String], default: [] },
     expireAt: { type: Date },
+    definitivo: { type: Boolean },
 }, { timestamps: true, collection: 'outbox', minimize: false });
 OutboxSchema.index({ estado: 1, orden: 1, nextRunAt: 1 });
 OutboxSchema.index({ expireAt: 1 }, { expireAfterSeconds: 0 });

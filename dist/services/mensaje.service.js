@@ -396,7 +396,8 @@ class MensajeService {
             }
         }
     }
-    async procesarDespacho(mensajeId, remitente) {
+    async procesarDespacho(mensajeId, remitente, ctx) {
+        const comprobar = () => ctx?.comprobarCancelacion();
         const mensaje = await mensaje_model_1.default.findById(mensajeId)
             .select('destinatarios destinatariosCc asunto prioridad adjuntos escuelaId')
             .lean();
@@ -422,14 +423,18 @@ class MensajeService {
         const asunto = mensaje.asunto;
         const tieneAdjuntos = (mensaje.adjuntos || []).length > 0;
         const mensajeObjId = new mongoose_1.default.Types.ObjectId(mensajeId);
-        const yaNotificados = new Set((await notificacion_model_1.default.find({
+        const existentes = await notificacion_model_1.default.find({
             entidadTipo: 'Mensaje',
             entidadId: mensajeObjId,
             usuarioId: { $in: usuarios.map((u) => u._id) },
         })
-            .select('usuarioId')
-            .lean()).map((n) => String(n.usuarioId)));
+            .select('usuarioId metadata.emailEncolado metadata.pushEncolado')
+            .lean();
+        const yaNotificados = new Set(existentes.map((n) => String(n.usuarioId)));
+        const conEmail = new Set(existentes.filter((n) => n.metadata?.emailEncolado).map((n) => String(n.usuarioId)));
+        const conPush = new Set(existentes.filter((n) => n.metadata?.pushEncolado).map((n) => String(n.usuarioId)));
         const faltan = usuarios.filter((u) => !yaNotificados.has(String(u._id)));
+        comprobar();
         if (faltan.length > 0) {
             const ahora = new Date();
             const escuelaObjId = new mongoose_1.default.Types.ObjectId(escuelaId);
@@ -461,10 +466,17 @@ class MensajeService {
         const urgente = prioridad === IMensaje_1.PrioridadMensaje.ALTA || /urgente|emergencia/i.test(String(asunto || ''));
         const idsDelLote = (t) => t.payload.usuarioIds || (t.payload.destinatarios || []).map((d) => d.usuarioId || d.email);
         const conClave = (trabajos, canal) => trabajos.map((t) => ({ ...t, claveUnica: (0, claveLote_1.claveDeLote)(`despacho:${mensajeId}:${canal}`, idsDelLote(t)) }));
+        const paraEmail = usuarios
+            .filter((u) => this.correoInmediato(u, prioridad) && !conEmail.has(String(u._id)))
+            .map((u) => String(u._id));
+        const setEmail = new Set(paraEmail);
+        const paraPush = usuarios
+            .filter((u) => setDest.has(String(u._id)) && (u.fcmToken || (u.fcmTokens || []).length > 0) && !conPush.has(String(u._id)))
+            .map((u) => String(u._id));
         const trabajos = [
             ...conClave((0, email_service_1.construirTrabajosCorreo)({
                 destinatarios: usuarios
-                    .filter((u) => this.correoInmediato(u, prioridad))
+                    .filter((u) => setEmail.has(String(u._id)))
                     .map((u) => ({ email: u.email, nombre: u.nombre, usuarioId: String(u._id) })),
                 plantilla: 'mensaje',
                 datos: { remitente: nombreRemitente, asunto, fecha: new Date(), tieneAdjuntos, url },
@@ -472,9 +484,7 @@ class MensajeService {
                 escuelaId,
             }), 'email'),
             ...conClave(pushNotification_service_1.default.construirTrabajosPush({
-                usuarioIds: usuarios
-                    .filter((u) => setDest.has(String(u._id)) && (u.fcmToken || (u.fcmTokens || []).length > 0))
-                    .map((u) => String(u._id)),
+                usuarioIds: paraPush,
                 contenido: urgente
                     ? {
                         titulo: `🚨 URGENTE: ${nombreRemitente}`,
@@ -491,8 +501,16 @@ class MensajeService {
                 escuelaId,
             }), 'push'),
         ];
+        comprobar();
         if (trabajos.length > 0)
             await (0, outbox_1.encolar)(trabajos);
+        const marcar = async (ids, campo) => {
+            if (ids.length === 0)
+                return;
+            await notificacion_model_1.default.updateMany({ entidadTipo: 'Mensaje', entidadId: mensajeObjId, usuarioId: { $in: ids.map((id) => new mongoose_1.default.Types.ObjectId(id)) } }, { $set: { [`metadata.${campo}`]: true } });
+        };
+        await marcar(paraEmail, 'emailEncolado');
+        await marcar(paraPush, 'pushEncolado');
     }
     correoInmediato(usuario, prioridad) {
         if (!usuario?.email || (0, email_service_1.esEmailFicticio)(usuario.email))

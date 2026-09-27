@@ -36,10 +36,10 @@ router.put('/leer-todas', (req, res, next) => {
 router.put('/:id/archivar', (req, res, next) => {
     notificacion_controller_1.default.archivarNotificacion(req, res, next);
 });
-router.post('/', (0, auth_middleware_1.authorize)('ADMIN'), (req, res, next) => {
+router.post('/', (0, auth_middleware_1.authorize)('ADMIN'), (0, validate_middleware_1.validate)(notificacion_validation_1.crearNotificacionValidation), (req, res, next) => {
     notificacion_controller_1.default.crearNotificacion(req, res, next);
 });
-router.post('/masiva', (0, auth_middleware_1.authorize)('ADMIN'), (req, res, next) => {
+router.post('/masiva', (0, auth_middleware_1.authorize)('ADMIN'), (0, validate_middleware_1.validate)(notificacion_validation_1.crearNotificacionValidation), (req, res, next) => {
     notificacion_controller_1.default.crearNotificacionMasiva(req, res, next);
 });
 exports.default = router;
