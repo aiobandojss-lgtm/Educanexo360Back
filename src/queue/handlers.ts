@@ -13,6 +13,7 @@ import pushNotificationService from '../services/pushNotification.service';
 import mensajeService from '../services/mensaje.service';
 import Mensaje from '../models/mensaje.model';
 import { logger } from '../utils/logger';
+import { enmascararEmail, enmascararEmailsEnTexto } from '../utils/enmascarar';
 
 /** Marca un id como atendido reintentando ante fallos de red (el envío ya ocurrió: nunca se reenvía por esto). */
 const marcarConReintentos = async (ctx: { marcarEnviados: (ids: string[]) => Promise<void> }, id: string) => {
@@ -64,7 +65,14 @@ registrarHandler('email', async (trabajo, ctx) => {
       await obtenerProveedor().send({ to: dest.email, ...correo });
     } catch (error: any) {
       await liberarCupo(prioridad, 1, diaCupo);
-      errores.push(`${clave}: ${String(error?.message || error).slice(0, 150)}`);
+      if (error?.permanente) {
+        // Rechazo permanente (dirección inexistente/rechazada, auditoría 4.H): no se reintenta, se da por atendido
+        logger.warn(`[Email] Rechazo permanente para ${enmascararEmail(clave)}: ${enmascararEmailsEnTexto(String(error?.message || error).slice(0, 150))}`);
+        await marcarConReintentos(ctx, clave);
+        continue;
+      }
+      // En el error del trabajo (se guarda en outbox y va al log) el correo va enmascarado
+      errores.push(`${enmascararEmail(clave)}: ${enmascararEmailsEnTexto(String(error?.message || error).slice(0, 150))}`);
       continue;
     }
     // El correo YA salió (auditoría 4.J): si marcarlo falla se reintenta SOLO el marcado; no se libera cupo ni

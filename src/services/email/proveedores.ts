@@ -29,6 +29,27 @@ const timeoutCorreoMs = (): number => {
   return Number.isFinite(v) && v > 0 ? v : 30000;
 };
 
+/**
+ * ¿El error es PERMANENTE para ese destinatario? (auditoría 4.H) Reintentar no sirve: la dirección no existe o
+ * fue rechazada. Los errores de cuenta/credenciales (535, 401/403, cuenta de SES pausada) NO son permanentes por
+ * destinatario: se reintentan y terminan en FALLIDO registrado (hay que corregir la configuración).
+ */
+export const esErrorPermanente = (proveedor: string, error: any): boolean => {
+  if (!error) return false;
+  if (proveedor === 'smtp') {
+    const rcpt = /RCPT/i.test(String(error.command || ''));
+    return error.code === 'EENVELOPE' || (rcpt && error.responseCode >= 550 && error.responseCode <= 554);
+  }
+  if (proveedor === 'brevo') return error.status === 400 || error.status === 422; // dirección inválida
+  if (proveedor === 'ses') return ['MessageRejected', 'InvalidParameterValue', 'MailFromDomainNotVerifiedException'].includes(error.name);
+  return false;
+};
+
+const marcarPermanente = (proveedor: string, error: any) => {
+  if (error && typeof error === 'object' && esErrorPermanente(proveedor, error)) error.permanente = true;
+  return error;
+};
+
 /** Ejecuta fn con un AbortSignal que se aborta al vencer el timeout de correo. */
 const conTimeout = async <T>(nombre: string, fn: (signal: AbortSignal) => Promise<T>): Promise<T> => {
   const ms = timeoutCorreoMs();
@@ -71,14 +92,18 @@ const crearSmtp = (): EmailProvider => {
     nombre: 'smtp',
     async send(m) {
       const r = remitente();
-      const info = await transporter.sendMail({
-        from: `"${r.nombre}" <${r.email}>`,
-        to: m.to,
-        subject: m.subject,
-        text: m.text || '',
-        html: m.html || undefined,
-      });
-      return { id: info.messageId };
+      try {
+        const info = await transporter.sendMail({
+          from: `"${r.nombre}" <${r.email}>`,
+          to: m.to,
+          subject: m.subject,
+          text: m.text || '',
+          html: m.html || undefined,
+        });
+        return { id: info.messageId };
+      } catch (error) {
+        throw marcarPermanente('smtp', error);
+      }
     },
   };
 };
@@ -114,7 +139,9 @@ const crearSes = (): EmailProvider => {
           }),
         }),
         { abortSignal },
-      ));
+      )).catch((error: any) => {
+        throw marcarPermanente('ses', error);
+      });
       return { id: salida.MessageId };
     },
   };
@@ -143,7 +170,9 @@ const crearBrevo = (): EmailProvider => {
       if (!resp.ok) {
         // El cuerpo de error de Brevo no incluye la API key; se recorta por si acaso
         const detalle = (await resp.text().catch(() => '')).slice(0, 300);
-        throw new Error(`Brevo respondió ${resp.status}: ${detalle}`);
+        const error: any = new Error(`Brevo respondió ${resp.status}: ${detalle}`);
+        error.status = resp.status;
+        throw marcarPermanente('brevo', error);
       }
       const json: any = await resp.json().catch(() => ({}));
       return { id: json.messageId };
@@ -157,6 +186,8 @@ export const simulado = {
   fallar: process.env.EMAIL_SIMULADO_FALLA === 'true',
   // Solo pruebas: falla para los destinatarios que contengan este texto
   fallarPara: '' as string,
+  // Solo pruebas: rechazo PERMANENTE (como un 550) para los destinatarios que contengan este texto
+  rechazarPara: '' as string,
 };
 const crearSimulado = (): EmailProvider => ({
   nombre: 'simulado',
@@ -165,6 +196,11 @@ const crearSimulado = (): EmailProvider => ({
     const demora = parseInt(process.env.EMAIL_SIMULADO_DEMORA_MS || '0', 10);
     if (demora > 0) await new Promise((r) => setTimeout(r, demora));
     if (simulado.fallar) throw new Error('Proveedor simulado: fallo forzado');
+    if (simulado.rechazarPara && m.to.includes(simulado.rechazarPara)) {
+      const e: any = new Error('550 5.1.1 destinatario inexistente (simulado)');
+      e.permanente = true;
+      throw e;
+    }
     if (simulado.fallarPara && m.to.includes(simulado.fallarPara)) {
       throw new Error(`Proveedor simulado: rechazo para ${m.to}`);
     }

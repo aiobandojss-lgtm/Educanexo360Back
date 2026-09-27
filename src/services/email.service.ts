@@ -1,6 +1,7 @@
 // src/services/email.service.ts
 
 import { logger } from '../utils/logger';
+import { enmascararEmail } from '../utils/enmascarar';
 import { encolar, NuevoTrabajo } from '../queue/outbox';
 import { obtenerProveedor } from './email/proveedores';
 import { reservarCupo, liberarCupo } from './email/cupo';
@@ -112,7 +113,7 @@ class EmailService {
       try {
         const diaCupo = await reservarCupo('normal');
         if (!diaCupo) {
-          logger.warn(`[Email] Cupo diario agotado: no se envió "${options.subject}" a ${to}`);
+          logger.warn(`[Email] Cupo diario agotado: no se envió "${options.subject}" a ${enmascararEmail(to)}`);
           ok = false;
           continue;
         }
@@ -123,7 +124,7 @@ class EmailService {
           throw error;
         }
       } catch (error: any) {
-        logger.error(`[Email] Error enviando "${options.subject}" a ${to}:`, error?.message || error);
+        logger.error(`[Email] Error enviando "${options.subject}" a ${enmascararEmail(to)}:`, error?.message || error);
         ok = false;
       }
     }
@@ -137,10 +138,10 @@ class EmailService {
   ): Promise<boolean> {
     try {
       const ok = await enviarCorreoAhora({ destinatario: { email: to }, plantilla: 'mensaje', datos: mensajeInfo, prioridad: 'normal' });
-      if (!ok) logger.warn(`[Email] Cupo diario agotado: no se envió la notificación de mensaje a ${to}`);
+      if (!ok) logger.warn(`[Email] Cupo diario agotado: no se envió la notificación de mensaje a ${enmascararEmail(to)}`);
       return ok;
     } catch (error: any) {
-      logger.error(`[Email] Error enviando notificación de mensaje a ${to}:`, error?.message || error);
+      logger.error(`[Email] Error enviando notificación de mensaje a ${enmascararEmail(to)}:`, error?.message || error);
       return false;
     }
   }
