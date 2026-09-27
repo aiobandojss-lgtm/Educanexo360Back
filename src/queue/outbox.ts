@@ -338,6 +338,32 @@ const ejecutarTrabajo = async (trabajo: IOutbox): Promise<void> => {
   }
 };
 
+/**
+ * Auditoría 4.AA: los trabajos creados antes del deploy de la 4.E no tienen 'orden' y el sort ascendente los
+ * pondría por delante de los 'critica'. Una vez por proceso (primer tick) se completa según su prioridad.
+ */
+let ordenCompletado = false;
+const completarOrdenFaltante = async (): Promise<void> => {
+  if (ordenCompletado) return;
+  const r = await Outbox.updateMany({ orden: { $exists: false } }, [
+    {
+      $set: {
+        orden: {
+          $switch: {
+            branches: [
+              { case: { $eq: ['$prioridad', 'critica'] }, then: ORDEN_PRIORIDAD.critica },
+              { case: { $eq: ['$prioridad', 'alta'] }, then: ORDEN_PRIORIDAD.alta },
+            ],
+            default: ORDEN_PRIORIDAD.normal,
+          },
+        },
+      },
+    },
+  ]);
+  ordenCompletado = true;
+  if (r.modifiedCount > 0) logger.info(`[Outbox] Campo orden completado en ${r.modifiedCount} trabajo(s) previos`);
+};
+
 /** Toma atómicamente el siguiente trabajo listo (crítica, luego alta, luego normal). */
 const tomarSiguiente = async (): Promise<IOutbox | null> => {
   const ahora = new Date();
@@ -379,6 +405,8 @@ export const ejecutarTick = async (): Promise<void> => {
         { ...vencido, intentos: { $lt: CFG.maxIntentos } },
         { $set: { estado: 'PENDIENTE' }, $unset: { lockedUntil: 1 } },
       );
+
+      await completarOrdenFaltante().catch((err) => logger.error(`[Outbox] completar orden: ${textoError(err)}`));
 
       // 2. Tareas periódicas (baratas: cada una decide si le toca)
       for (const tarea of tareasPeriodicas) {
