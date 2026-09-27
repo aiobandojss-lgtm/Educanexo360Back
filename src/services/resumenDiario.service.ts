@@ -15,13 +15,15 @@ import { logger } from '../utils/logger';
  *
  * - Todos los días a las RESUMEN_HORA (18 por defecto, hora Colombia) el worker encola UNA vez el trabajo
  *   'resumen-diario' del día (claveUnica 'resumen:YYYY-MM-DD'; idempotente aunque el proceso se reinicie).
- * - Incluye SOLO los mensajes del día cuyo correo inmediato se OMITIÓ por la preferencia 'resumen'
- *   (notificaciones marcadas con metadata.resumen) y que el usuario todavía no ha leído.
+ * - Incluye SOLO los mensajes cuyo correo inmediato se OMITIÓ por la preferencia 'resumen' (notificaciones
+ *   marcadas con metadata.resumen) y que el usuario todavía no ha leído. Auditoría 4.B: se toma por MARCAS, no
+ *   por día calendario: todo lo marcado de las últimas 48 h, y al encolar el correo del usuario sus marcas se
+ *   quitan (metadata.resumenEnviadoEn). Así lo que llega después de las 18:00 va en el resumen siguiente.
  * - No se envía resumen vacío. Quien cambió a 'ninguno' no lo recibe.
  * - Un correo por usuario, en trabajos de correo de ~50 destinatarios (plantilla 'resumen').
  */
-const DESFASE_COLOMBIA_MS = 5 * 60 * 60 * 1000;
 const MAX_ITEMS_POR_CORREO = 30;
+const VENTANA_MARCAS_MS = 48 * 60 * 60 * 1000;
 
 const horaResumen = (): number => {
   const h = parseInt(process.env.RESUMEN_HORA || '', 10);
@@ -46,32 +48,25 @@ export const reiniciarEstadoResumen = (): void => {
   ultimoDiaEncolado = null;
 };
 
-/** Rango [inicio, fin) del día calendario de Colombia 'YYYY-MM-DD'. */
-const rangoDia = (dia: string): { desde: Date; hasta: Date } => {
-  const [y, m, d] = dia.split('-').map(Number);
-  const desde = new Date(Date.UTC(y, m - 1, d) + DESFASE_COLOMBIA_MS);
-  return { desde, hasta: new Date(desde.getTime() + 24 * 60 * 60 * 1000) };
-};
-
 /**
- * Handler 'resumen-diario': arma y encola los correos de resumen del día. Devuelve cuántos correos encoló.
+ * Handler 'resumen-diario': arma y encola los correos de resumen pendientes. Devuelve cuántos correos encoló.
+ * 'dia' identifica la corrida (claveUnica de los trabajos de correo); el contenido sale de las marcas.
  */
-export const procesarResumenDiario = async (dia: string): Promise<number> => {
-  const { desde, hasta } = rangoDia(dia);
-
-  // 1. Notificaciones del día que se reservaron para el resumen, agrupadas por usuario
+export const procesarResumenDiario = async (dia: string, ahora: Date = new Date()): Promise<number> => {
+  // 1. Notificaciones aún marcadas para el resumen (últimas 48 h), agrupadas por usuario
   const grupos = await Notificacion.aggregate([
     {
       $match: {
         'metadata.resumen': true,
         tipo: TipoNotificacion.MENSAJE,
-        createdAt: { $gte: desde, $lt: hasta },
+        createdAt: { $gte: new Date(ahora.getTime() - VENTANA_MARCAS_MS) },
       },
     },
     { $sort: { createdAt: 1 } },
     {
       $group: {
         _id: '$usuarioId',
+        notifIds: { $push: '$_id' },
         items: { $push: { mensajeId: '$entidadId', titulo: '$titulo', remitente: '$metadata.remitente', fecha: '$createdAt' } },
       },
     },
@@ -97,6 +92,9 @@ export const procesarResumenDiario = async (dia: string): Promise<number> => {
     (m.lecturas || []).forEach((l: any) => leidos.add(`${m._id}:${l.usuarioId}`));
   });
   const itemsPorUsuario = new Map(grupos.map((g: any) => [String(g._id), g.items]));
+  const notifsPorUsuario = new Map(grupos.map((g: any) => [String(g._id), g.notifIds]));
+  // Marcas ya atendidas: las del usuario con correo encolado y las de quien ya leyó todo (nunca irían)
+  const atendidas: { ids: any[]; enviado: boolean }[] = [];
 
   // 3. Un correo por usuario con al menos un mensaje sin leer (nunca vacío)
   const porEscuela = new Map<string, any[]>();
@@ -110,7 +108,11 @@ export const procesarResumenDiario = async (dia: string): Promise<number> => {
         fecha: i.fecha,
         url: `${config.frontendUrl}/mensajes/${i.mensajeId}`,
       }));
-    if (pendientes.length === 0) continue;
+    if (pendientes.length === 0) {
+      atendidas.push({ ids: notifsPorUsuario.get(String(u._id)) || [], enviado: false });
+      continue;
+    }
+    atendidas.push({ ids: notifsPorUsuario.get(String(u._id)) || [], enviado: true });
     const escuela = String(u.escuelaId);
     if (!porEscuela.has(escuela)) porEscuela.set(escuela, []);
     porEscuela.get(escuela)!.push({
@@ -143,6 +145,20 @@ export const procesarResumenDiario = async (dia: string): Promise<number> => {
     }
   }
   if (trabajos.length > 0) await encolar(trabajos);
+
+  // 5. Quitar las marcas SOLO después de encolar (si esto falla, el reintento encuentra las mismas marcas y los
+  //    mismos lotes: la claveUnica evita correos repetidos)
+  const idsEnviados = atendidas.filter((a) => a.enviado).flatMap((a) => a.ids);
+  const idsLeidos = atendidas.filter((a) => !a.enviado).flatMap((a) => a.ids);
+  if (idsEnviados.length > 0) {
+    await Notificacion.updateMany(
+      { _id: { $in: idsEnviados } },
+      { $unset: { 'metadata.resumen': '' }, $set: { 'metadata.resumenEnviadoEn': ahora } },
+    );
+  }
+  if (idsLeidos.length > 0) {
+    await Notificacion.updateMany({ _id: { $in: idsLeidos } }, { $unset: { 'metadata.resumen': '' } });
+  }
   logger.info(`[Resumen] ${dia}: ${correos} correo(s) de resumen encolados en ${trabajos.length} trabajo(s)`);
   return correos;
 };
