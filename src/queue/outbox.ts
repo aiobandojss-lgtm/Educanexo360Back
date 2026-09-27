@@ -280,27 +280,37 @@ const ejecutarTrabajo = async (trabajo: IOutbox): Promise<void> => {
     if (reloj) clearTimeout(reloj);
 
     if (resultado.vencido) {
-      // Auditoría 4.S: NO se devuelve a PENDIENTE (otro carril lo tomaría mientras esta ejecución sigue enviando).
-      // Se cancela, se espera a que el handler lo observe (a lo sumo el envío en curso) y el trabajo queda
-      // PROCESANDO hasta que venza su lock; al retomarlo, `enviados` evita repetir lo que ya salió.
+      // Auditoría 4.S: se cancela y se espera a que el handler lo observe (a lo sumo el envío en curso).
       cancelacion.abort();
-      const aviso = `Tiempo agotado (${CFG.timeoutTrabajoMs} ms): cancelado; se retoma al vencer el lock`;
+      const aviso = `Tiempo agotado (${CFG.timeoutTrabajoMs} ms): cancelado`;
       logger.warn(`[Outbox] ${trabajo.tipo} ${trabajo._id}: ${aviso}`);
       let espera: NodeJS.Timeout | undefined;
-      await Promise.race([
-        ejecucion.catch(() => undefined),
-        new Promise((r) => {
-          espera = setTimeout(r, CFG.esperaCancelacionMs);
+      const tras = await Promise.race([
+        ejecucion.then(
+          () => ({ resuelto: true, error: null as any }),
+          (error: any) => ({ resuelto: true, error: error ?? new Error('Error desconocido') }),
+        ),
+        new Promise<{ resuelto: boolean; error: any }>((r) => {
+          espera = setTimeout(() => r({ resuelto: false, error: null }), CFG.esperaCancelacionMs);
         }),
       ]);
       if (espera) clearTimeout(espera);
-      await Outbox.updateOne(
-        { _id: trabajo._id, estado: 'PROCESANDO', lockedUntil: trabajo.lockedUntil },
-        { $set: { error: aviso } },
-      ).catch(() => undefined);
-      return;
+      if (!tras.resuelto) {
+        // Sigue corriendo: NO se devuelve a PENDIENTE (otro carril lo tomaría mientras esta ejecución sigue
+        // enviando). Queda PROCESANDO hasta que venza su lock; al retomarlo, `enviados` evita repetir lo que salió.
+        await Outbox.updateOne(
+          { _id: trabajo._id, estado: 'PROCESANDO', lockedUntil: trabajo.lockedUntil },
+          { $set: { error: `${aviso}; se retoma al vencer el lock` } },
+        ).catch(() => undefined);
+        return;
+      }
+      // Auditoría 4.AI: la ejecución YA terminó (éxito, error o cancelación observada): se cierra con su resultado
+      // normal. Antes quedaba PROCESANDO y se reejecutaba (en correo-cuenta, sin 'enviados', salía un 2.º correo
+      // que invalidaba el enlace del primero).
+      errorHandler = tras.error;
+    } else {
+      errorHandler = resultado.error;
     }
-    errorHandler = resultado.error;
   }
 
   // 2. Cierre FUERA del try del handler (auditoría 4.F): un fallo al marcar HECHO no reejecuta el trabajo
