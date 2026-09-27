@@ -427,10 +427,12 @@ class MensajeService {
 
       // ✅ POPULATE OPTIMIZADO (solo campos necesarios)
       // Destinatarios sin email (ningún cliente lo usa; en masivos eran miles de correos en la respuesta)
+      // lean en destinatarios/CC: sin hidratar miles de documentos de Usuario (mismo JSON: solo campos
+      // no sensibles y el schema no tiene virtuals). Fase 4.2, mensaje a todo el colegio.
       await nuevoMensaje.populate([
         { path: 'remitente', select: 'nombre apellidos email tipo' },
-        { path: 'destinatarios', select: 'nombre apellidos tipo' },
-        { path: 'destinatariosCc', select: 'nombre apellidos tipo' },
+        { path: 'destinatarios', select: 'nombre apellidos tipo', options: { lean: true } },
+        { path: 'destinatariosCc', select: 'nombre apellidos tipo', options: { lean: true } },
       ]);
 
       // 🔄 INVALIDAR CACHE RELACIONADO
