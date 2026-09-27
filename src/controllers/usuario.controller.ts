@@ -268,11 +268,12 @@ class UsuarioController {
 
         Object.assign(datosPermitidos, perfilPorRutas(perfil));
 
-        // Cambiar el tipo: el nuevo tipo debe ser de rango inferior al del actor (SUPER_ADMIN lo bloquea la
-        // validación). Si llega igual al actual se ignora: el formulario web siempre lo envía.
+        // Cambiar el tipo de un usuario existente: SOLO ADMIN y SUPER_ADMIN (decisión de Aymer, auditoría 3.U).
+        // RECTOR, COORDINADOR y ADMINISTRATIVO no cambian el tipo de nadie. Si llega igual al actual se
+        // ignora: el formulario web siempre lo envía. SUPER_ADMIN como nuevo tipo lo bloquea la validación.
         if (tipo !== undefined && tipo !== usuarioObjetivo.tipo) {
-          // El nuevo tipo también debe ser de rango inferior al del actor
-          if (!puedeGestionarRol(req.user.tipo, tipo)) {
+          const puedeCambiarTipo = req.user.tipo === 'ADMIN' || req.user.tipo === 'SUPER_ADMIN';
+          if (!puedeCambiarTipo || !puedeGestionarRol(req.user.tipo, tipo)) {
             throw new ApiError(403, 'No tienes permiso para cambiar el tipo de usuario');
           }
           datosPermitidos.tipo = tipo;
