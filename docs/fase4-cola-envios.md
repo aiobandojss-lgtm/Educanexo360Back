@@ -54,3 +54,73 @@ En el log de arranque debe aparecer `[Outbox] Worker iniciado (cada 5000 ms, con
 | `OUTBOX_LOCK_MS` | 120000 | Tiempo tras el cual un `PROCESANDO` se considera abandonado |
 | `OUTBOX_BACKOFF_MS` | 30000 | Base del backoff exponencial |
 | `OUTBOX_DISABLED` | — | `true` desactiva el worker (scripts y pruebas) |
+
+## 4.4 Proveedor de correo intercambiable
+
+- `EMAIL_PROVIDER` = `smtp` (por defecto, lo de antes) | `ses` | `brevo` | `simulado` (desarrollo y pruebas:
+  guarda en la colección `email_simulado`, nada sale a internet).
+- Todo correo sale por la cola (`encolarCorreo`): reintentos, cupo diario y lotes de ~50 destinatarios.
+  Los proveedores **lanzan error** si el envío falla; nunca se descarta en silencio.
+- **Cupo diario persistido** (colección `email_cupo`, un documento por día de Colombia): reemplaza el tope en
+  memoria de 250/día. `EMAIL_DAILY_LIMIT` es el total del día; `EMAIL_RESERVA_ALTA` se reserva para
+  prioridad alta (reset de contraseña, alertas, cuentas). Lo que no cabe queda `PENDIENTE` para el día
+  siguiente a las 00:05 (hora Colombia), sin gastar intento, y se registra en el log.
+- Plantillas en `src/services/email/plantillas.ts`: todo dato de usuario pasa por `escapeHtml` y los enlaces
+  por `urlSegura` (solo http/https).
+- Reset de contraseña: prioridad alta. Si no se puede encolar → 503 y el token se invalida. El enlace
+  (con el token) se borra del trabajo al terminar (`sensible`).
+
+### Variables de entorno
+
+| Variable | Proveedor | Uso |
+|---|---|---|
+| `EMAIL_PROVIDER` | todos | `smtp` \| `ses` \| `brevo` \| `simulado` |
+| `EMAIL_SENDER_NAME`, `EMAIL_SENDER_EMAIL` | todos | Remitente (p. ej. `EducaNexo360` / `no-reply@creativebycode.com`) |
+| `EMAIL_DAILY_LIMIT` | todos | Tope diario (por defecto 250). Brevo gratis: 300. SES: según la cuota de la cuenta |
+| `EMAIL_RESERVA_ALTA` | todos | Cupo reservado para prioridad alta (por defecto 20) |
+| `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USER`, `EMAIL_PASS`, `EMAIL_SECURE`, `EMAIL_TLS_REJECT_UNAUTHORIZED` | smtp | Como antes |
+| `EMAIL_SMTP_MAX_CONNECTIONS` | smtp | Conexiones del pool (por defecto 2) |
+| `EMAIL_SMTP_RATE_LIMIT` | smtp | Mensajes por segundo (por defecto 5) |
+| `AWS_SES_REGION` (o `AWS_REGION`) | ses | Región de SES (p. ej. `us-east-1`) |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | ses | Usuario IAM con permiso `ses:SendEmail` únicamente |
+| `AWS_SES_CONFIGURATION_SET` | ses | Opcional: configuration set (rebotes/quejas) |
+| `BREVO_API_KEY` | brevo | API key v3 (Brevo → SMTP & API → API Keys) |
+
+### Configurar Brevo
+
+1. Crear la cuenta en brevo.com (plan gratis: 300 correos/día).
+2. **Senders, Domains & Dedicated IPs → Domains → Add a domain**: `creativebycode.com`.
+3. Brevo muestra los registros DNS. Crearlos en el DNS del dominio (cPanel → Zone Editor):
+   - **TXT** `brevo-code:...` en `@` (verificación del dominio).
+   - **DKIM**: los registros que Brevo indique (CNAME `brevo1._domainkey` y `brevo2._domainkey`, o un TXT
+     `mail._domainkey`, según la versión del panel).
+   - **SPF**: un solo TXT en `@`. Si ya existe uno, agregar `include:spf.brevo.com` al mismo registro, p. ej.
+     `v=spf1 +a +mx include:spf.brevo.com ~all` (nunca dos registros SPF).
+   - **DMARC**: TXT en `_dmarc`: `v=DMARC1; p=none; rua=mailto:dmarc@creativebycode.com` (empezar con
+     `p=none`, revisar los reportes y subir a `quarantine` cuando todo esté alineado).
+4. Esperar a que Brevo marque el dominio como autenticado. Crear el remitente `no-reply@creativebycode.com`.
+5. **SMTP & API → API Keys → Generate**: poner la clave en `BREVO_API_KEY` (solo en el entorno de cPanel).
+6. `EMAIL_PROVIDER=brevo`, `EMAIL_DAILY_LIMIT=300` (o el tope del plan) y reiniciar la app.
+
+### Configurar Amazon SES
+
+1. Consola AWS → **Amazon SES** en la región elegida (p. ej. `us-east-1`).
+2. **Configuration → Identities → Create identity → Domain** `creativebycode.com`, con **Easy DKIM
+   (RSA 2048)**. SES da 3 CNAME `xxxx._domainkey.creativebycode.com` → crearlos en el DNS.
+3. **Custom MAIL FROM** (recomendado para alinear SPF): p. ej. `mail.creativebycode.com`. Crear el **MX**
+   `feedback-smtp.<region>.amazonses.com` (prioridad 10) y el **TXT** `v=spf1 include:amazonses.com ~all` en
+   `mail.creativebycode.com`.
+4. **SPF del dominio raíz** (si no se usa MAIL FROM propio): agregar `include:amazonses.com` al TXT SPF existente.
+5. **DMARC**: TXT `_dmarc` → `v=DMARC1; p=none; rua=mailto:dmarc@creativebycode.com`.
+6. **Salir del sandbox** (en sandbox solo se envía a direcciones verificadas y máx. 200/día): **Account
+   dashboard → Request production access**. Tipo de correo: *Transactional*; sitio web; descripción del caso
+   (plataforma educativa: notificaciones de mensajes, alertas de asistencia, recuperación de contraseña a
+   usuarios registrados por su colegio; manejo de rebotes y quejas; los usuarios pueden elegir resumen
+   diario o ningún correo). AWS responde en ~24 h con la cuota diaria y la tasa por segundo.
+7. **IAM → Users → Create user** (sin consola) con una política que solo permita `ses:SendEmail` y
+   `ses:SendRawEmail`. Crear la access key y ponerla en `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`.
+8. `EMAIL_PROVIDER=ses`, `AWS_SES_REGION=<región>`, `EMAIL_DAILY_LIMIT=<cuota diaria de SES>` y reiniciar.
+9. Recomendado: un configuration set con destino SNS para rebotes y quejas (`AWS_SES_CONFIGURATION_SET`).
+
+> Nota: el SDK de AWS v3 avisa que sus versiones publicadas desde enero de 2027 exigirán Node ≥ 22. La versión
+> instalada funciona con Node 20; al actualizar dependencias, verificar la versión de Node del hosting.

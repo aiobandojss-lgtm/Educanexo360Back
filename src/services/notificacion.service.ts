@@ -2,7 +2,7 @@
 
 import Notificacion from '../models/notificacion.model';
 import Usuario from '../models/usuario.model';
-import emailService from './email.service';
+import { encolarCorreo } from './email.service';
 import { TipoNotificacion, EstadoNotificacion } from '../interfaces/INotificacion';
 import config from '../config/config';
 
@@ -35,18 +35,9 @@ class NotificacionService {
         metadata: data.metadata || {},
       });
 
-      // Si se solicita envío de email, enviar notificación por correo
+      // Si se solicita envío de email: por la cola (Fase 4.4), con la plantilla escapada
       if (data.enviarEmail) {
-        const usuario = await Usuario.findById(data.usuarioId);
-        if (usuario && usuario.email) {
-          await this.enviarEmailNotificacion(
-            usuario.email,
-            data.titulo,
-            data.mensaje,
-            data.tipo,
-            data.metadata,
-          );
-        }
+        await this.encolarEmailNotificacion([data.usuarioId], data);
       }
 
       return notificacion;
@@ -91,20 +82,9 @@ class NotificacionService {
         notificaciones.push(...(await Notificacion.insertMany(notificacionesDocs)));
       }
 
-      // Si se solicita envío de email, enviar emails
+      // Si se solicita envío de email: una consulta y lotes de ~50 en la cola (antes: un envío en loop)
       if (data.enviarEmail) {
-        const usuarios = await Usuario.find({ _id: { $in: data.usuarioIds } });
-        for (const usuario of usuarios) {
-          if (usuario.email) {
-            await this.enviarEmailNotificacion(
-              usuario.email,
-              data.titulo,
-              data.mensaje,
-              data.tipo,
-              data.metadata,
-            );
-          }
-        }
+        await this.encolarEmailNotificacion(data.usuarioIds, data);
       }
 
       return notificaciones;
@@ -174,25 +154,29 @@ class NotificacionService {
   }
 
   /**
-   * Enviar notificación por email
+   * Encola el correo de una notificación para los usuarios dados (Fase 4.4). Los datos se escapan en la
+   * plantilla 'notificacion'; el envío lo hace el worker con reintentos y cupo diario.
    */
-  private async enviarEmailNotificacion(
-    email: string,
-    titulo: string,
-    mensaje: string,
-    tipo: TipoNotificacion,
-    metadata?: Record<string, any>,
+  private async encolarEmailNotificacion(
+    usuarioIds: string[],
+    data: {
+      titulo: string;
+      mensaje: string;
+      tipo: TipoNotificacion;
+      escuelaId: string;
+      metadata?: Record<string, any>;
+    },
   ) {
-    // Texto simple para clientes que no soportan HTML
-    const text = `${titulo}\n\n${mensaje}`;
+    const usuarios = await Usuario.find({ _id: { $in: usuarioIds } })
+      .select('_id email nombre')
+      .lean();
 
     // Personalizar según el tipo
     let url = `${config.frontendUrl}/notificaciones`;
     let tipoTexto = 'Notificación del sistema';
-
-    switch (tipo) {
+    switch (data.tipo) {
       case TipoNotificacion.MENSAJE:
-        url = metadata?.url || `${config.frontendUrl}/mensajes/${metadata?.mensajeId || ''}`;
+        url = data.metadata?.url || `${config.frontendUrl}/mensajes/${data.metadata?.mensajeId || ''}`;
         tipoTexto = 'Nuevo mensaje';
         break;
       case TipoNotificacion.CALIFICACION:
@@ -205,29 +189,13 @@ class NotificacionService {
         break;
     }
 
-    // HTML para clientes modernos
-    const html = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <div style="background-color: #3f51b5; color: white; padding: 20px; text-align: center;">
-          <h1>${tipoTexto}</h1>
-        </div>
-        <div style="padding: 20px; border: 1px solid #ddd; border-top: none;">
-          <h2>${titulo}</h2>
-          <p>${mensaje}</p>
-          <p><a href="${url}" style="display: inline-block; background-color: #3f51b5; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-top: 20px;">Ver detalles</a></p>
-        </div>
-        <div style="margin-top: 20px; text-align: center; font-size: 12px; color: #666;">
-          <p>Este es un correo automático, por favor no responda a este mensaje.</p>
-          <p>&copy; 2024 EducaNexo360. Todos los derechos reservados.</p>
-        </div>
-      </div>
-    `;
-
-    return emailService.sendEmail({
-      to: email,
-      subject: titulo,
-      text,
-      html,
+    await encolarCorreo({
+      destinatarios: usuarios
+        .filter((u: any) => u.email)
+        .map((u: any) => ({ email: u.email, nombre: u.nombre, usuarioId: String(u._id) })),
+      plantilla: 'notificacion',
+      datos: { titulo: data.titulo, mensaje: data.mensaje, tipoTexto, url },
+      escuelaId: data.escuelaId,
     });
   }
 }

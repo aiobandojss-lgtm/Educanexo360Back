@@ -24,6 +24,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@aws-sdk/client-sesv2": "^3.1141.0",
     "@types/compression": "^1.7.5",
     "@types/express-fileupload": "^1.5.1",
     "@types/morgan": "^1.9.9",

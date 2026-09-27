@@ -112,6 +112,10 @@ let deteniendo = false;
 let ultimoTick: Date | null = null;
 let trabajosEnCurso = 0;
 
+// Trabajos con datos sensibles (p. ej. enlace de reset con token): al terminar se borra el payload
+const redactar = (trabajo: IOutbox) =>
+  trabajo.payload?.sensible ? { payload: { sensible: true, redactado: true } } : {};
+
 const retrasoBackoff = (intentos: number): number =>
   CFG.backoffBaseMs * Math.pow(2, Math.max(intentos - 1, 0));
 
@@ -134,7 +138,7 @@ const ejecutarTrabajo = async (trabajo: IOutbox): Promise<void> => {
     await Outbox.updateOne(
       { _id: trabajo._id },
       {
-        $set: { estado: 'HECHO', expireAt: new Date(Date.now() + CFG.retencionMs) },
+        $set: { estado: 'HECHO', expireAt: new Date(Date.now() + CFG.retencionMs), ...redactar(trabajo) },
         $unset: { lockedUntil: 1, error: 1 },
       },
     );
@@ -157,7 +161,12 @@ const ejecutarTrabajo = async (trabajo: IOutbox): Promise<void> => {
       await Outbox.updateOne(
         { _id: trabajo._id },
         {
-          $set: { estado: 'FALLIDO', error: mensaje, expireAt: new Date(Date.now() + CFG.retencionMs) },
+          $set: {
+            estado: 'FALLIDO',
+            error: mensaje,
+            expireAt: new Date(Date.now() + CFG.retencionMs),
+            ...redactar(trabajo),
+          },
           $unset: { lockedUntil: 1 },
         },
       );

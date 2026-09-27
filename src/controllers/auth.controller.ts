@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import authService from '../services/auth/auth.service';
 import ApiError from '../utils/ApiError';
-import emailService from '../services/email.service';
+import { encolarCorreo } from '../services/email.service';
 import crypto from 'crypto';
 import Usuario from '../models/usuario.model';
 import config from '../config/config';
@@ -154,12 +154,26 @@ export const authController = {
       const frontendUrl = config.frontendUrl || 'http://localhost:3000';
       const resetUrl = `${frontendUrl}/reset-password/${resetToken}`;
 
-      // Enviar email de recuperación
-      await emailService.sendPasswordResetEmail(user.email, {
-        nombre: user.nombre,
-        resetUrl,
-        expirationTime: '1 hora',
-      });
+      // Correo de recuperación por la cola con prioridad ALTA (usa el cupo reservado y se reintenta).
+      // El payload es sensible (enlace con token): se borra del trabajo al terminar. Si no se puede
+      // encolar, NO se ignora el fallo (Fase 4.4): se invalida el token y se responde 503.
+      try {
+        await encolarCorreo({
+          destinatarios: [{ email: user.email, nombre: user.nombre, usuarioId: String(user._id) }],
+          plantilla: 'reset',
+          datos: { nombre: user.nombre, resetUrl, expirationTime: '1 hora' },
+          prioridad: 'alta',
+          escuelaId: user.escuelaId ? String(user.escuelaId) : undefined,
+          sensible: true,
+        });
+      } catch (errorCola) {
+        logger.error('[forgotPassword] No se pudo encolar el correo de recuperación:', errorCola);
+        await Usuario.updateOne(
+          { _id: user._id },
+          { $unset: { resetPasswordToken: 1, resetPasswordExpires: 1 } },
+        ).catch(() => undefined);
+        throw new ApiError(503, 'No se pudo enviar el correo de recuperación. Intenta de nuevo en unos minutos.');
+      }
 
       // Responder al cliente
       res.json({

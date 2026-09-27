@@ -1,328 +1,135 @@
 // src/services/email.service.ts
 
-import nodemailer from 'nodemailer';
-import path from 'path';
-import config from '../config/config';
-import fs from 'fs';
 import { logger } from '../utils/logger';
-
-// Constante para deshabilitar temporalmente el envío de correos
-// Cambiar a false cuando se quiera habilitar nuevamente
-const DISABLE_EMAIL_SENDING = false;
+import { encolar } from '../queue/outbox';
+import { obtenerProveedor } from './email/proveedores';
+import { reservarCupo, liberarCupo } from './email/cupo';
+import { renderizarCorreo, DestinatarioCorreo } from './email/plantillas';
 
 // Dominio usado para correos ficticios de estudiantes sin email propio
 const DOMINIO_EMAIL_FICTICIO = '@estudiante.educanexo.com';
+
+// Destinatarios por trabajo de correo en la cola (Fase 4, ajuste del orquestador: lotes de ~50)
+export const DESTINATARIOS_POR_TRABAJO = 50;
 
 /**
  * Detecta si un email fue generado automáticamente por el sistema
  * (estudiantes sin correo real). Estos emails no deben recibir notificaciones.
  */
 export function esEmailFicticio(email: string): boolean {
-  return email.endsWith(DOMINIO_EMAIL_FICTICIO);
+  return String(email || '').toLowerCase().endsWith(DOMINIO_EMAIL_FICTICIO);
 }
 
-class EmailService {
-  private transporter: nodemailer.Transporter;
-  private dailyEmailCount = 0;
-  private lastCountReset = new Date();
-  private readonly DAILY_LIMIT = 250; // Límite diario para evitar excesos
+/**
+ * Encola correos (Fase 4.4): el envío lo hace el worker de la cola, con reintentos, cupo diario y el
+ * proveedor configurado (EMAIL_PROVIDER). Agrupa los destinatarios en trabajos de ~50.
+ * - Se descartan los correos vacíos y los ficticios de estudiantes.
+ * - `sensible`: el payload se borra del trabajo al terminar (p. ej. enlaces de reset con token).
+ * Devuelve cuántos trabajos se encolaron. Lanza si no se pudo encolar (el llamador decide).
+ */
+export const encolarCorreo = async (opciones: {
+  destinatarios: DestinatarioCorreo[];
+  plantilla: string;
+  datos: Record<string, any>;
+  prioridad?: 'alta' | 'normal';
+  escuelaId?: string;
+  sensible?: boolean;
+}): Promise<number> => {
+  const vistos = new Set<string>();
+  const validos = opciones.destinatarios.filter((d) => {
+    const email = String(d?.email || '').trim().toLowerCase();
+    if (!email || esEmailFicticio(email) || vistos.has(email)) return false;
+    vistos.add(email);
+    return true;
+  });
+  if (validos.length === 0) return 0;
 
-  constructor() {
-    logger.debug('🔧 Inicializando servicio de correo con configuración:');
-    logger.debug(`🔧 Host: ${config.email.host}`);
-    logger.debug(`🔧 Puerto: ${config.email.port}`);
-    logger.debug(`🔧 Usuario: ${config.email.user}`);
-    logger.debug(`🔧 Seguro: ${config.email.secure}`);
-    logger.debug(`🔧 Remitente: ${config.email.senderName} <${config.email.senderEmail}>`);
-
-    // En producción, usar un servicio real como Sendgrid, Mailgun, etc.
-    // Para desarrollo, utilizar servicio fake (ethereal.email)
-    this.transporter = nodemailer.createTransport({
-      host: config.email.host,
-      port: config.email.port,
-      auth: {
-        user: config.email.user,
-        pass: config.email.pass,
-      },
-      // Para entornos de desarrollo, opcional
-      secure: config.email.secure,
-      tls: {
-        rejectUnauthorized: config.email.tlsRejectUnauthorized,
+  const trabajos = [];
+  for (let i = 0; i < validos.length; i += DESTINATARIOS_POR_TRABAJO) {
+    trabajos.push({
+      tipo: 'email',
+      prioridad: opciones.prioridad || 'normal',
+      escuelaId: opciones.escuelaId,
+      payload: {
+        plantilla: opciones.plantilla,
+        datos: opciones.datos,
+        destinatarios: validos.slice(i, i + DESTINATARIOS_POR_TRABAJO).map((d) => ({
+          email: d.email,
+          ...(d.nombre && { nombre: d.nombre }),
+          ...(d.usuarioId && { usuarioId: String(d.usuarioId) }),
+        })),
+        ...(opciones.sensible && { sensible: true }),
       },
     });
-
-    // Verificar conexión al iniciar
-    this.verificarConexion();
   }
+  return encolar(trabajos as any);
+};
 
-  // Método para verificar la conexión al servidor SMTP
-  private async verificarConexion() {
-    try {
-      const verificacion = await this.transporter.verify();
-      logger.debug('✅ Conexión al servidor SMTP verificada:', verificacion);
-    } catch (error) {
-      console.error('❌ Error al verificar conexión SMTP:', error);
-      console.error('⚠️ Revisa tu configuración de email en las variables de entorno');
-
-      // Mostrar detalles específicos del error
-      const err = error as { code?: string; command?: string; response?: string };
-      if (err.code) console.error('Código de error:', err.code);
-      if (err.command) console.error('Comando fallido:', err.command);
-      if (err.response) console.error('Respuesta del servidor:', err.response);
-    }
+/**
+ * Envía UN correo ahora mismo por el proveedor, descontando del cupo diario.
+ * Devuelve false si no hay cupo (el llamador decide: la cola lo aplaza). Lanza si el proveedor falla
+ * (el cupo reservado se devuelve).
+ */
+export const enviarCorreoAhora = async (opciones: {
+  destinatario: DestinatarioCorreo;
+  plantilla: string;
+  datos: Record<string, any>;
+  prioridad: 'alta' | 'normal';
+}): Promise<boolean> => {
+  const correo = renderizarCorreo(opciones.plantilla, opciones.datos, opciones.destinatario);
+  if (!(await reservarCupo(opciones.prioridad))) return false;
+  try {
+    await obtenerProveedor().send({ to: opciones.destinatario.email, ...correo });
+    return true;
+  } catch (error) {
+    await liberarCupo(opciones.prioridad);
+    throw error;
   }
+};
 
-  async sendEmail(options: {
-    to: string | string[];
-    subject: string;
-    text?: string;
-    html?: string;
-    template?: string;
-    context?: any;
-    attachments?: any[];
-  }): Promise<boolean> {
-    try {
-      logger.debug('📧 DEPURACIÓN: Intentando enviar email a:', options.to);
-      logger.debug('📧 DEPURACIÓN: Asunto:', options.subject);
-
-      // Verificar límite diario
-      if (new Date().getDate() !== this.lastCountReset.getDate()) {
-        this.dailyEmailCount = 0;
-        this.lastCountReset = new Date();
-      }
-
-      if (this.dailyEmailCount >= this.DAILY_LIMIT) {
-        console.warn(
-          `⚠️ Límite diario de correos (${this.DAILY_LIMIT}) alcanzado. Email no enviado.`,
-        );
-        return false;
-      }
-
-      // Si el envío de correos está deshabilitado, simular envío exitoso
-      if (DISABLE_EMAIL_SENDING) {
-        logger.debug(
-          '📧 [EMAIL DESHABILITADO] No se envió el correo pero se simula respuesta exitosa',
-        );
-        logger.debug('📧 Destinatario:', options.to);
-        logger.debug('📧 Asunto:', options.subject);
-        return true; // Simular éxito
-      }
-
-      // Si se proporciona una plantilla, cargarla
-      let html = options.html;
-      if (options.template) {
-        try {
-          const templatePath = path.join(
-            __dirname,
-            '../templates/emails',
-            `${options.template}.html`,
-          );
-          logger.debug('📧 DEPURACIÓN: Buscando plantilla en:', templatePath);
-
-          if (fs.existsSync(templatePath)) {
-            html = fs.readFileSync(templatePath, 'utf8');
-            logger.debug('📧 DEPURACIÓN: Plantilla cargada correctamente');
-
-            // Reemplazar variables en la plantilla
-            if (options.context) {
-              Object.keys(options.context).forEach((key) => {
-                const regex = new RegExp(`{{\\s*${key}\\s*}}`, 'g');
-                html = html!.replace(regex, options.context[key]);
-              });
-            }
-          } else {
-            console.warn('⚠️ Plantilla no encontrada:', templatePath);
-          }
-        } catch (error) {
-          console.error('❌ Error loading email template:', error);
+/**
+ * API anterior, conservada por compatibilidad. Ya no hay tope en memoria: el cupo es el diario persistido.
+ * Nuevo código: usar encolarCorreo (con reintentos) en lugar de estos métodos.
+ */
+class EmailService {
+  /** Envío directo de un correo con asunto/texto/html ya armados. true si salió. */
+  async sendEmail(options: { to: string | string[]; subject: string; text?: string; html?: string }): Promise<boolean> {
+    const destinos = (Array.isArray(options.to) ? options.to : [options.to]).filter(Boolean);
+    let ok = true;
+    for (const to of destinos) {
+      try {
+        if (!(await reservarCupo('normal'))) {
+          logger.warn(`[Email] Cupo diario agotado: no se envió "${options.subject}" a ${to}`);
+          ok = false;
+          continue;
         }
+        try {
+          await obtenerProveedor().send({ to, subject: options.subject, text: options.text, html: options.html });
+        } catch (error) {
+          await liberarCupo('normal');
+          throw error;
+        }
+      } catch (error: any) {
+        logger.error(`[Email] Error enviando "${options.subject}" a ${to}:`, error?.message || error);
+        ok = false;
       }
-
-      // Configurar email
-      const mailOptions = {
-        from: `"${config.email.senderName}" <${config.email.senderEmail}>`,
-        to: Array.isArray(options.to) ? options.to.join(',') : options.to,
-        subject: options.subject,
-        text: options.text || '',
-        html: html || '',
-        attachments: options.attachments,
-      };
-
-      logger.debug('📧 DEPURACIÓN: Opciones finales del correo:', {
-        from: mailOptions.from,
-        to: mailOptions.to,
-        subject: mailOptions.subject,
-        textLength: mailOptions.text ? mailOptions.text.length : 0,
-        htmlLength: mailOptions.html ? mailOptions.html.length : 0,
-        attachmentsCount: mailOptions.attachments ? mailOptions.attachments.length : 0,
-      });
-
-      // Enviar email
-      logger.debug('📧 DEPURACIÓN: Enviando correo...');
-      const info = await this.transporter.sendMail(mailOptions);
-      logger.debug('✅ Email enviado exitosamente. ID:', info.messageId);
-      logger.debug('✅ Información adicional:', info);
-
-      // Incrementar contador diario
-      this.dailyEmailCount++;
-
-      return true;
-    } catch (error) {
-      console.error('❌ Error detallado al enviar email:');
-      console.error(error);
-
-      // Mostrar detalles específicos de error SMTP
-      const err = error as {
-        message?: string;
-        code?: string;
-        command?: string;
-        response?: string;
-        responseCode?: string;
-      };
-      if (err.code) console.error('Código de error:', err.code);
-      if (err.command) console.error('Comando fallido:', err.command);
-      if (err.response) console.error('Respuesta del servidor:', err.response);
-      if (err.responseCode) console.error('Código de respuesta:', err.responseCode);
-
-      if (err.message && err.message.includes('Invalid login')) {
-        console.error(
-          '❌ CAUSA PROBABLE: Usuario o contraseña incorrectos. Verifica tus credenciales.',
-        );
-      } else if (err.message && err.message.includes('certificate')) {
-        console.error(
-          '❌ CAUSA PROBABLE: Problema con certificados SSL. Intenta configurar EMAIL_TLS_REJECT_UNAUTHORIZED=false',
-        );
-      } else if ((error as { message?: string }).message?.includes('Greeting')) {
-        console.error(
-          '❌ CAUSA PROBABLE: Tiempo de espera agotado. El servidor puede estar bloqueando conexiones.',
-        );
-      } else if ((error as { message?: string }).message?.includes('sender address')) {
-        console.error(
-          '❌ CAUSA PROBABLE: La dirección del remitente no está verificada o no es válida.',
-        );
-      }
-
-      return false;
     }
+    return ok;
   }
 
+  /** Notificación de nuevo mensaje (plantilla 'mensaje', escapada). true si salió. */
   async sendMensajeNotification(
     to: string,
-    mensajeInfo: {
-      remitente: string;
-      asunto: string;
-      fecha: Date;
-      tieneAdjuntos: boolean;
-      url: string;
-    },
+    mensajeInfo: { remitente: string; asunto: string; fecha: Date; tieneAdjuntos: boolean; url: string },
   ): Promise<boolean> {
-    logger.debug(`📧 Preparando notificación de mensaje para: ${to}`);
-
-    // Texto simple para clientes que no soportan HTML
-    const text =
-      `Nuevo mensaje de ${mensajeInfo.remitente}: ${mensajeInfo.asunto}.\n\n` +
-      `Recibido: ${mensajeInfo.fecha.toLocaleString()}.\n` +
-      `${mensajeInfo.tieneAdjuntos ? 'El mensaje contiene archivos adjuntos.' : ''}\n\n` +
-      `Ver mensaje: ${mensajeInfo.url}`;
-
-    // HTML para clientes modernos
-    const html = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <div style="background-color: #3f51b5; color: white; padding: 20px; text-align: center;">
-          <h1>Nuevo Mensaje</h1>
-        </div>
-        <div style="padding: 20px; border: 1px solid #ddd; border-top: none;">
-          <p>Hola,</p>
-          <p>Has recibido un nuevo mensaje en la plataforma EducaNexo360.</p>
-          <h3>Detalles del mensaje:</h3>
-          <p><strong>De:</strong> ${mensajeInfo.remitente}</p>
-          <p><strong>Asunto:</strong> ${mensajeInfo.asunto}</p>
-          <p><strong>Fecha:</strong> ${mensajeInfo.fecha.toLocaleString()}</p>
-          ${
-            mensajeInfo.tieneAdjuntos
-              ? '<p><strong>Este mensaje contiene archivos adjuntos.</strong></p>'
-              : ''
-          }
-          <p><a href="${
-            mensajeInfo.url
-          }" style="display: inline-block; background-color: #3f51b5; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-top: 20px;">Ver Mensaje</a></p>
-        </div>
-        <div style="margin-top: 20px; text-align: center; font-size: 12px; color: #666;">
-          <p>Este es un correo automático, por favor no responda a este mensaje.</p>
-          <p>&copy; 2024 EducaNexo360. Todos los derechos reservados.</p>
-        </div>
-      </div>
-    `;
-
-    return this.sendEmail({
-      to,
-      subject: `Nuevo mensaje: ${mensajeInfo.asunto}`,
-      text,
-      html,
-    });
-  }
-
-  /**
-   * Envía un correo electrónico para recuperación de contraseña
-   * @param to Dirección de correo del destinatario
-   * @param resetInfo Información de recuperación de contraseña
-   * @returns Éxito del envío
-   */
-  async sendPasswordResetEmail(
-    to: string,
-    resetInfo: {
-      nombre: string;
-      resetUrl: string;
-      expirationTime: string;
-    },
-  ): Promise<boolean> {
-    logger.debug(`📧 Preparando correo de recuperación de contraseña para: ${to}`);
-
-    // Texto simple para clientes que no soportan HTML
-    const text =
-      `Hola ${resetInfo.nombre},\n\n` +
-      `Has solicitado restablecer tu contraseña en EducaNexo360.\n\n` +
-      `Por favor, haz clic en el siguiente enlace para establecer una nueva contraseña:\n` +
-      `${resetInfo.resetUrl}\n\n` +
-      `Este enlace expirará en ${resetInfo.expirationTime}.\n\n` +
-      `Si no has solicitado restablecer tu contraseña, puedes ignorar este correo.\n\n` +
-      `Saludos,\n` +
-      `El equipo de EducaNexo360`;
-
-    // HTML para clientes modernos
-    const html = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <div style="background-color: #4a6da7; color: white; padding: 20px; text-align: center;">
-          <h1>Recuperación de Contraseña</h1>
-        </div>
-        <div style="padding: 20px; border: 1px solid #ddd; border-top: none;">
-          <p>Hola ${resetInfo.nombre},</p>
-          <p>Has solicitado restablecer tu contraseña en la plataforma EducaNexo360.</p>
-          
-          <div style="text-align: center; margin: 30px 0;">
-            <a href="${resetInfo.resetUrl}" style="display: inline-block; background-color: #4a6da7; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold;">Restablecer Contraseña</a>
-          </div>
-          
-          <p>O copia y pega el siguiente enlace en tu navegador:</p>
-          <p style="word-break: break-all; color: #666; background-color: #f5f5f5; padding: 10px; border-radius: 4px;">${resetInfo.resetUrl}</p>
-          
-          <p><strong>Este enlace expirará en ${resetInfo.expirationTime}.</strong></p>
-          
-          <p>Si no has solicitado restablecer tu contraseña, puedes ignorar este correo.</p>
-        </div>
-        <div style="margin-top: 20px; text-align: center; font-size: 12px; color: #666;">
-          <p>Este es un correo automático, por favor no responda a este mensaje.</p>
-          <p>&copy; 2024 EducaNexo360. Todos los derechos reservados.</p>
-        </div>
-      </div>
-    `;
-
-    return this.sendEmail({
-      to,
-      subject: 'Recuperación de contraseña - EducaNexo360',
-      text,
-      html,
-    });
+    try {
+      const ok = await enviarCorreoAhora({ destinatario: { email: to }, plantilla: 'mensaje', datos: mensajeInfo, prioridad: 'normal' });
+      if (!ok) logger.warn(`[Email] Cupo diario agotado: no se envió la notificación de mensaje a ${to}`);
+      return ok;
+    } catch (error: any) {
+      logger.error(`[Email] Error enviando notificación de mensaje a ${to}:`, error?.message || error);
+      return false;
+    }
   }
 }
 

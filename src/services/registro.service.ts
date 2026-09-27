@@ -5,7 +5,7 @@ import Usuario from '../models/usuario.model';
 import Invitacion, { TipoInvitacion } from '../models/invitacion.model';
 import Curso from '../models/curso.model';
 import invitacionService from './invitacion.service';
-import emailService from '../services/email.service';
+import emailService, { encolarCorreo } from '../services/email.service';
 import { estudianteService } from './estudiante.service';
 import ApiError from '../utils/ApiError';
 import { generarPasswordAleatoria } from '../utils/passwordUtils';
@@ -18,19 +18,23 @@ class RegistroService {
    */
   private async notificarNuevaSolicitud(solicitud: any) {
     try {
-      // Enviar correo de notificación a los administradores
-      await emailService.sendEmail({
-        to: process.env.ADMIN_EMAIL || 'admin@educanexo360.com',
-        subject: 'Nueva solicitud de registro recibida',
-        text: `Se ha recibido una nueva solicitud de registro:
-          
+      // Correo de notificación a los administradores, por la cola (Fase 4.4: reintentos, sin descartes)
+      await encolarCorreo({
+        destinatarios: [{ email: process.env.ADMIN_EMAIL || 'admin@educanexo360.com' }],
+        plantilla: 'texto',
+        datos: {
+          subject: 'Nueva solicitud de registro recibida',
+          text: `Se ha recibido una nueva solicitud de registro:
+
 Nombre: ${solicitud.nombre} ${solicitud.apellidos}
 Email: ${solicitud.email}
 Teléfono: ${solicitud.telefono || 'No proporcionado'}
 Estudiantes: ${solicitud.estudiantes.length}
-          
+
 Por favor, revise la solicitud en el panel de administración.
         `,
+        },
+        escuelaId: solicitud.escuelaId ? String(solicitud.escuelaId) : undefined,
       });
 
       logger.debug(`Notificación enviada para la solicitud ${solicitud._id}`);
@@ -462,9 +466,13 @@ Por favor, revise la solicitud en el panel de administración.
 
     await solicitud.save();
 
-    // Notificar al solicitante
-    await emailService.sendEmail({
-      to: solicitud.email,
+    // Notificar al solicitante, por la cola con prioridad alta (correo de cuenta, Fase 4.4)
+    await encolarCorreo({
+      destinatarios: [{ email: solicitud.email, nombre: solicitud.nombre }],
+      plantilla: 'texto',
+      prioridad: 'alta',
+      escuelaId: solicitud.escuelaId ? String(solicitud.escuelaId) : undefined,
+      datos: {
       subject: 'Solicitud de registro - No aprobada',
       text: `Estimado/a ${solicitud.nombre} ${solicitud.apellidos},
 
@@ -476,6 +484,7 @@ Si considera que esto es un error, por favor contacte directamente con la instit
 
 Saludos cordiales,
 El equipo de EducaNexo360`,
+      },
     });
 
     return {

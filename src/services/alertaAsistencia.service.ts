@@ -8,7 +8,8 @@ import Curso from '../models/curso.model';
 import Usuario from '../models/usuario.model';
 import Notificacion from '../models/notificacion.model';
 import Mensaje from '../models/mensaje.model';
-import emailService from './email.service';
+import { encolarCorreo } from './email.service';
+import { escapeHtml } from '../utils/escapeHtml';
 import { EstadoAsistencia } from '../interfaces/IAsistencia';
 import { NivelAlertaAsistencia } from '../interfaces/IAlertaAsistencia';
 import { EstadoNotificacion, TipoNotificacion } from '../interfaces/INotificacion';
@@ -38,8 +39,9 @@ function generarCuerpoMensaje(
     CRITICO: '25%',
     INMINENTE: '30%',
   };
+  // Nombres escapados (Fase 4.4): el cuerpo es HTML que la web muestra en la bandeja
   return `
-<p>El estudiante <strong>${nombreEstudiante}</strong> del curso <strong>${nombreCurso}</strong> ${descripciones[nivel]}.</p>
+<p>El estudiante <strong>${escapeHtml(nombreEstudiante)}</strong> del curso <strong>${escapeHtml(nombreCurso)}</strong> ${descripciones[nivel]}.</p>
 
 <p>
   <strong>Porcentaje actual de ausencias:</strong> ${porcentajeAusencias.toFixed(1)}%<br>
@@ -202,23 +204,20 @@ async function enviarNotificacionesAlerta(params: {
     console.error('[AlertaAsistencia] Error en Canal 2:', errCanal2);
   }
 
-  // Canal 3: Email
-  for (const destinatario of destinatariosUnicos) {
-    if (destinatario.email) {
-      try {
-        await emailService.sendEmail({
-          to: destinatario.email,
-          subject: titulo,
-          html: `
-            <p>Estimado/a ${destinatario.nombre ?? 'usuario'},</p>
-            <p>${mensaje}</p>
-            <p>Ingrese a <strong>EducaNexo360</strong> para revisar el detalle de la alerta.</p>
-          `,
-        });
-      } catch (error) {
-        console.error('[AlertaAsistencia] Error en Canal 3:', error);
-      }
-    }
+  // Canal 3: Email por la cola con prioridad ALTA (Fase 4.4): usa el cupo reservado, se reintenta y la
+  // plantilla escapa nombres y mensaje. Antes era un envío secuencial por destinatario.
+  try {
+    await encolarCorreo({
+      destinatarios: destinatariosUnicos
+        .filter((d) => d.email)
+        .map((d) => ({ email: d.email as string, nombre: d.nombre, usuarioId: String(d._id) })),
+      plantilla: 'alerta-asistencia',
+      datos: { titulo, mensaje },
+      prioridad: 'alta',
+      escuelaId,
+    });
+  } catch (error) {
+    console.error('[AlertaAsistencia] Error en Canal 3:', error);
   }
 
   // Canal 4: FCM / push notifications — pendiente cuando Flutter integre Firebase.
