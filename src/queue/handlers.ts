@@ -142,6 +142,14 @@ registrarTareaPeriodica('resumen-diario', async () => {
   await encolarResumenSiCorresponde();
 });
 /**
+ * 'despachar-mensaje' (auditoría 4.D): campanita + correo + push de un mensaje, idempotente y con reintentos.
+ */
+registrarHandler('despachar-mensaje', async (trabajo) => {
+  const { mensajeId, remitente } = trabajo.payload || {};
+  await mensajeService.procesarDespacho(String(mensajeId), remitente || {});
+});
+
+/**
  * 'correo-cuenta' (auditoría 4.E): reset/definir contraseña con prioridad crítica. El token se crea al enviar.
  */
 registrarHandler('correo-cuenta', async (trabajo) => {

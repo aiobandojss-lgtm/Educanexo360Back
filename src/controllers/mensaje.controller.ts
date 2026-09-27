@@ -956,20 +956,12 @@ export class MensajeController {
           escuelaId: req.user.escuelaId,
           estado: 'ACTIVO',
         })
-          .select('_id email nombre tipo preferencias fcmToken fcmTokens.token')
+          .select('_id tipo')
           .lean();
         const setDest = new Set(destinatariosIds);
-        const setCc = new Set(ccIds);
 
-        await mensajeService.despacharMensaje({
-          mensajeId: String(mensajeEnviado._id),
-          asunto: mensajeEnviado.asunto,
-          prioridad: mensajeEnviado.prioridad,
-          remitente: req.user,
-          tieneAdjuntos: (mensajeEnviado.adjuntos || []).length > 0,
-          destinatarios: usuariosDestino.filter((u: any) => setDest.has(String(u._id))),
-          cc: usuariosDestino.filter((u: any) => setCc.has(String(u._id))),
-        });
+        // Auditoría 4.D: el despacho (campanita, correo, push) va en un trabajo idempotente de la cola
+        await mensajeService.encolarDespacho(String(mensajeEnviado._id), req.user, mensajeEnviado.prioridad);
 
         const estudiantesIds = usuariosDestino
           .filter((u: any) => u.tipo === 'ESTUDIANTE' && setDest.has(String(u._id)))

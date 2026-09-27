@@ -367,7 +367,7 @@ class MensajeService {
         escuelaId: user.escuelaId,
         estado: 'ACTIVO',
       })
-        .select('_id email nombre tipo preferencias fcmToken fcmTokens.token')
+        .select('_id')
         .lean();
       const idsValidos = new Set(validos.map((u: any) => String(u._id)));
       destinatariosFinales = destinatariosFinales.filter((id) => idsValidos.has(id));
@@ -409,20 +409,11 @@ class MensajeService {
           .filter((id: any) => id !== null),
       })) as mongoose.Document & { _id: mongoose.Types.ObjectId };
 
-      // Fase 4.2: sin trabajo pesado en el request. Notificaciones (1 insertMany) y correos + push
-      // (1 insertMany en la cola); el worker hace los envíos.
+      // Auditoría 4.D: en el request solo se encola UN trabajo 'despachar-mensaje' (idempotente por mensajeId).
+      // El worker inserta la campanita y encola correo y push, con reintentos: un fallo transitorio ya no
+      // cancela las notificaciones en silencio.
       if (estado !== EstadoMensaje.BORRADOR) {
-        const setDest = new Set(destinatariosFinales);
-        const setCc = new Set(destinatariosCcFinales);
-        await this.despacharMensaje({
-          mensajeId: nuevoMensaje._id.toString(),
-          asunto,
-          prioridad,
-          remitente: user,
-          tieneAdjuntos: adjuntos.length > 0,
-          destinatarios: validos.filter((u: any) => setDest.has(String(u._id))),
-          cc: validos.filter((u: any) => setCc.has(String(u._id))),
-        });
+        await this.encolarDespacho(nuevoMensaje._id.toString(), user, prioridad);
       }
 
       // ✅ POPULATE OPTIMIZADO (solo campos necesarios)
@@ -505,102 +496,151 @@ class MensajeService {
   }
 
   /**
-   * Despacho de un mensaje enviado (Fase 4.2). Sin envíos dentro del request:
-   * - Campanita: UN insertMany de notificaciones (destinatarios + CC).
-   * - Correos (destinatarios + CC con correo real) y push (destinatarios) en UN insertMany en la cola,
-   *   en lotes de ~50. El worker los envía con reintentos y cupo diario.
+   * Encola el despacho de un mensaje enviado (auditoría 4.D): UN trabajo 'despachar-mensaje' idempotente por
+   * mensajeId (claveUnica). Si no se puede encolar se reintenta una vez y, si aun así falla, se registra con el id
+   * del mensaje (el mensaje ya quedó guardado).
+   */
+  async encolarDespacho(mensajeId: string, remitente: any, prioridad?: string): Promise<void> {
+    const trabajo = {
+      tipo: 'despachar-mensaje',
+      prioridad: (prioridad === PrioridadMensaje.ALTA ? 'alta' : 'normal') as 'alta' | 'normal',
+      escuelaId: String(remitente.escuelaId),
+      claveUnica: `despacho:${mensajeId}`,
+      payload: {
+        mensajeId,
+        remitente: {
+          _id: String(remitente._id),
+          nombre: remitente.nombre,
+          apellidos: remitente.apellidos,
+          escuelaId: String(remitente.escuelaId),
+        },
+      },
+    };
+    try {
+      await encolar(trabajo);
+    } catch (error) {
+      try {
+        await encolar(trabajo);
+      } catch (error2) {
+        console.error(`[Mensajes] No se pudo encolar el despacho del mensaje ${mensajeId}:`, error2);
+      }
+    }
+  }
+
+  /**
+   * Handler de 'despachar-mensaje' (auditoría 4.D), idempotente:
+   * - Campanita: inserta SOLO las notificaciones que falten (un reintento no las duplica).
+   * - Correos (destinatarios + CC con correo real, según preferencia) y push (destinatarios con dispositivo), en
+   *   lotes de ~50 con claveUnica por lote: un reintento no encola dos veces.
    * - Push urgente (tipo 'urgente', sonido emergency) si la prioridad es ALTA o el asunto dice
    *   "urgente"/"emergencia"; si no, tipo 'mensaje' (mismos datos que antes para la app).
-   * Si algo falla se registra y NO se lanza: el mensaje ya quedó guardado.
+   * Los errores se propagan: el worker reintenta con backoff.
    */
-  async despacharMensaje(p: {
-    mensajeId: string;
-    asunto: string;
-    prioridad?: string;
-    remitente: any;
-    tieneAdjuntos: boolean;
-    destinatarios: any[]; // usuarios validados: { _id, email, nombre, tipo, preferencias }
-    cc: any[];
-  }): Promise<void> {
-    try {
-      const todos = [...new Map([...p.destinatarios, ...p.cc].map((u: any) => [String(u._id), u])).values()];
-      if (todos.length === 0) return;
+  async procesarDespacho(mensajeId: string, remitente: any): Promise<void> {
+    const mensaje: any = await Mensaje.findById(mensajeId)
+      .select('destinatarios destinatariosCc asunto prioridad adjuntos escuelaId')
+      .lean();
+    if (!mensaje) return; // el mensaje ya no existe: nada que avisar
 
-      const nombreRemitente = `${p.remitente.nombre ?? ''} ${p.remitente.apellidos ?? ''}`.trim();
-      const url = `${config.frontendUrl}/mensajes/${p.mensajeId}`;
-      const escuelaId = String(p.remitente.escuelaId);
+    const escuelaId = String(mensaje.escuelaId || remitente.escuelaId);
+    const idsDest = (mensaje.destinatarios || []).map(String);
+    const idsCc = (mensaje.destinatariosCc || []).map(String);
+    const usuarios: any[] = await Usuario.find({
+      _id: { $in: [...new Set([...idsDest, ...idsCc])] },
+      escuelaId,
+      estado: 'ACTIVO',
+    })
+      .select('_id email nombre tipo preferencias fcmToken fcmTokens.token')
+      .lean();
+    if (usuarios.length === 0) return;
+    const setDest = new Set(idsDest);
 
-      // 1. Campanita: un solo insertMany. lean: sin hidratar miles de documentos de Mongoose (en un mensaje a
-      //    todo el colegio era la mitad del tiempo de respuesta); por eso tipos y timestamps van explícitos.
+    const nombreRemitente = `${remitente.nombre ?? ''} ${remitente.apellidos ?? ''}`.trim();
+    const url = `${config.frontendUrl}/mensajes/${mensajeId}`;
+    const prioridad = mensaje.prioridad;
+    const asunto = mensaje.asunto;
+    const tieneAdjuntos = (mensaje.adjuntos || []).length > 0;
+
+    // 1. Campanita: solo las que falten. lean: sin hidratar miles de documentos (tipos y timestamps explícitos).
+    const mensajeObjId = new mongoose.Types.ObjectId(mensajeId);
+    const yaNotificados = new Set(
+      (
+        await Notificacion.find({ entidadId: mensajeObjId, usuarioId: { $in: usuarios.map((u) => u._id) } })
+          .select('usuarioId')
+          .lean()
+      ).map((n: any) => String(n.usuarioId)),
+    );
+    const faltan = usuarios.filter((u) => !yaNotificados.has(String(u._id)));
+    if (faltan.length > 0) {
       const ahora = new Date();
       const escuelaObjId = new mongoose.Types.ObjectId(escuelaId);
-      // Fase 4.5: a quienes prefieren 'resumen' NO se les manda el correo inmediato; su notificación queda
-      // marcada (metadata.resumen) y el resumen diario incluye SOLO esos mensajes (si siguen sin leer).
-      const alResumen = new Set(
-        todos
-          .filter((u: any) => this.correoAlResumen(u, p.prioridad))
-          .map((u: any) => String(u._id)),
-      );
       await Notificacion.insertMany(
-        todos.map((u: any) => ({
+        faltan.map((u: any) => ({
           usuarioId: new mongoose.Types.ObjectId(String(u._id)),
-          titulo: `Nuevo mensaje: ${p.asunto}`,
+          titulo: `Nuevo mensaje: ${asunto}`,
           mensaje: `Has recibido un nuevo mensaje de ${nombreRemitente}`,
           tipo: TipoNotificacion.MENSAJE,
           estado: EstadoNotificacion.PENDIENTE,
           escuelaId: escuelaObjId,
-          entidadId: new mongoose.Types.ObjectId(p.mensajeId),
+          entidadId: mensajeObjId,
           entidadTipo: 'Mensaje',
           metadata: {
             remitente: nombreRemitente,
-            tieneAdjuntos: p.tieneAdjuntos,
-            mensajeId: p.mensajeId,
+            tieneAdjuntos,
+            mensajeId,
             url,
-            ...(alResumen.has(String(u._id)) && { resumen: true }),
+            // Fase 4.5: con preferencia 'resumen' no hay correo inmediato; el resumen diario incluye SOLO estas
+            ...(this.correoAlResumen(u, prioridad) && { resumen: true }),
           },
           createdAt: ahora,
           updatedAt: ahora,
         })),
         { ordered: false, lean: true },
       );
+    }
 
-      // 2. Correos + push en un solo insertMany en la cola
-      const correoInmediato = todos.filter((u: any) => this.correoInmediato(u, p.prioridad));
-      const urgente =
-        p.prioridad === PrioridadMensaje.ALTA || /urgente|emergencia/i.test(String(p.asunto || ''));
-      const trabajos: NuevoTrabajo[] = [
-        ...construirTrabajosCorreo({
-          destinatarios: correoInmediato.map((u: any) => ({ email: u.email, nombre: u.nombre, usuarioId: String(u._id) })),
+    // 2. Correos + push en un solo insertMany, con claveUnica por lote (idempotente ante reintentos)
+    const urgente = prioridad === PrioridadMensaje.ALTA || /urgente|emergencia/i.test(String(asunto || ''));
+    const conClave = (trabajos: NuevoTrabajo[], canal: string) =>
+      trabajos.map((t, i) => ({ ...t, claveUnica: `despacho:${mensajeId}:${canal}:${i}` }));
+    const trabajos: NuevoTrabajo[] = [
+      ...conClave(
+        construirTrabajosCorreo({
+          destinatarios: usuarios
+            .filter((u: any) => this.correoInmediato(u, prioridad))
+            .map((u: any) => ({ email: u.email, nombre: u.nombre, usuarioId: String(u._id) })),
           plantilla: 'mensaje',
-          datos: { remitente: nombreRemitente, asunto: p.asunto, fecha: new Date(), tieneAdjuntos: p.tieneAdjuntos, url },
-          prioridad: p.prioridad === PrioridadMensaje.ALTA ? 'alta' : 'normal',
+          datos: { remitente: nombreRemitente, asunto, fecha: new Date(), tieneAdjuntos, url },
+          prioridad: prioridad === PrioridadMensaje.ALTA ? 'alta' : 'normal',
           escuelaId,
         }),
-        ...pushNotificationService.construirTrabajosPush({
-          // Solo quienes tienen algún dispositivo (si no se trae el dato, se encola igual: el worker filtra)
-          usuarioIds: p.destinatarios
-            .filter((u: any) => !('fcmToken' in u || 'fcmTokens' in u) || u.fcmToken || (u.fcmTokens || []).length > 0)
+        'email',
+      ),
+      ...conClave(
+        pushNotificationService.construirTrabajosPush({
+          // Solo destinatarios directos con algún dispositivo
+          usuarioIds: usuarios
+            .filter((u: any) => setDest.has(String(u._id)) && (u.fcmToken || (u.fcmTokens || []).length > 0))
             .map((u: any) => String(u._id)),
           contenido: urgente
             ? {
                 titulo: `🚨 URGENTE: ${nombreRemitente}`,
-                mensaje: p.asunto,
-                data: { tipo: 'urgente', mensajeId: p.mensajeId, prioridad: 'ALTA', remitente: nombreRemitente },
+                mensaje: asunto,
+                data: { tipo: 'urgente', mensajeId, prioridad: 'ALTA', remitente: nombreRemitente },
                 sound: 'emergency',
               }
             : {
                 titulo: `💬 Nuevo mensaje de ${nombreRemitente}`,
-                mensaje: p.asunto,
-                data: { tipo: 'mensaje', mensajeId: p.mensajeId, prioridad: p.prioridad || 'NORMAL', remitente: nombreRemitente },
+                mensaje: asunto,
+                data: { tipo: 'mensaje', mensajeId, prioridad: prioridad || 'NORMAL', remitente: nombreRemitente },
               },
           prioridad: urgente ? 'alta' : 'normal',
           escuelaId,
         }),
-      ];
-      if (trabajos.length > 0) await encolar(trabajos);
-    } catch (error) {
-      console.error('[Mensajes] Error despachando notificaciones del mensaje', p.mensajeId, error);
-    }
+        'push',
+      ),
+    ];
+    if (trabajos.length > 0) await encolar(trabajos);
   }
 
   /**
