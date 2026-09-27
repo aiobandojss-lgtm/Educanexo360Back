@@ -156,10 +156,10 @@ async function enviarNotificacionesAlerta(params: {
     return;
   }
 
-  // Canal 1: Notificación interna (campanita)
-  for (const destinatario of destinatariosUnicos) {
-    try {
-      await Notificacion.create({
+  // Canal 1: Notificación interna (campanita) — un solo insertMany (Fase 4.6; antes create en loop)
+  try {
+    await Notificacion.insertMany(
+      destinatariosUnicos.map((destinatario) => ({
         usuarioId: destinatario._id,
         titulo,
         mensaje,
@@ -173,10 +173,11 @@ async function enviarNotificacionesAlerta(params: {
           cursoId,
           periodoId,
         },
-      });
-    } catch (error) {
-      console.error('[AlertaAsistencia] Error en Canal 1:', error);
-    }
+      })),
+      { ordered: false },
+    );
+  } catch (error) {
+    console.error('[AlertaAsistencia] Error en Canal 1:', error);
   }
 
   // Canal 2: Mensaje en bandeja de recibidos

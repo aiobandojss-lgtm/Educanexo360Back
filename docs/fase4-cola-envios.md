@@ -155,3 +155,12 @@ declarado en el schema con `_autoIndex: false`: **no** se crea al arrancar. Paso
 4. `MONGODB_URI="..." node src/scripts/migrar-fcm-tokens.js --aplicar`: deduplica (gana el registro más
    reciente), copia `fcmToken → fcmTokens` y **al final** crea el índice único. Se puede volver a correr (es
    idempotente).
+
+## 4.6 Notificaciones
+
+- Se crean siempre con `insertMany` (las alertas de asistencia creaban una por destinatario; los mensajes pasan
+  a `insertMany` en 4.2). Se eliminó `sendMessageNotification` (sin ruta; enviaba y creaba en loop).
+- **TTL de 180 días** sobre `createdAt` (índice `ttl_180_dias`): las notificaciones de más de 6 meses se
+  borran solas, leídas o no. El índice `{ usuarioId, createdAt: -1 }` no es redundante y se queda.
+- En el deploy Mongoose crea el índice al arrancar. La **primera pasada** del monitor TTL borra de golpe todas
+  las notificaciones de más de 180 días (en lotes, cada 60 s).

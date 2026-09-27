@@ -249,22 +249,26 @@ export class NotificacionController {
         // Solo usuarios del mismo colegio (SUPER_ADMIN no tiene colegio: puede elegir cualquiera)
         const filtroDestino: Record<string, unknown> = { _id: usuarioId };
         if (req.user.tipo !== 'SUPER_ADMIN') filtroDestino.escuelaId = req.user.escuelaId;
-        targetUser = await Usuario.findOne(filtroDestino).select('_id nombre apellidos fcmToken');
+        targetUser = await Usuario.findOne(filtroDestino).select('_id nombre apellidos fcmToken fcmTokens');
         if (!targetUser) {
           throw new ApiError(404, 'Usuario objetivo no encontrado');
         }
       } else {
-        targetUser = await Usuario.findById(req.user._id).select('_id nombre apellidos fcmToken');
+        targetUser = await Usuario.findById(req.user._id).select('_id nombre apellidos fcmToken fcmTokens');
       }
 
-      if (!targetUser?.fcmToken) {
+      // Fase 4.3: el dispositivo más reciente del arreglo (o el campo antiguo si aún no migró)
+      const dispositivos = (targetUser as any)?.fcmTokens || [];
+      const tokenDestino: string | undefined =
+        dispositivos.length > 0 ? dispositivos[dispositivos.length - 1].token : targetUser?.fcmToken || undefined;
+      if (!targetUser || !tokenDestino) {
         throw new ApiError(400, 'El usuario no tiene token FCM registrado');
       }
 
       logger.debug(`🧪 Enviando notificación de prueba a: ${targetUser.nombre} ${targetUser.apellidos}`);
 
       const resultado = await pushNotificationService.enviarNotificacion({
-        token: targetUser.fcmToken,
+        token: tokenDestino,
         titulo,
         mensaje,
         data: {
@@ -299,108 +303,6 @@ export class NotificacionController {
       });
     } catch (error) {
       console.error('❌ Error enviando notificación de prueba:', error);
-      next(error);
-    }
-  }
-
-  // MÉTODO CORREGIDO: Enviar notificación de mensaje
-  async sendMessageNotification(req: RequestWithUser, res: Response, next: NextFunction): Promise<void> {
-    try {
-      if (!req.user) {
-        throw new ApiError(401, 'No autorizado');
-      }
-
-      const {
-        recipientIds,
-        messageId,
-        title,
-        body,
-        priority = 'NORMAL',
-        hasAttachments = false,
-      } = req.body;
-
-      logger.debug('📤 Enviando notificaciones de mensaje:', {
-        recipientIds: recipientIds?.length,
-        messageId,
-        priority,
-      });
-
-      const recipients = await Usuario.find({
-        _id: { $in: recipientIds },
-        fcmToken: { $exists: true, $ne: null },
-        estado: 'ACTIVO',
-      }).select('_id fcmToken tipo nombre apellidos');
-
-      if (recipients.length === 0) {
-        res.json({
-          success: true,
-          message: 'No hay destinatarios con tokens válidos',
-          sent: 0,
-        });
-        return;
-      }
-
-      let successCount = 0;
-      let failureCount = 0;
-
-      for (const recipient of recipients) {
-        try {
-          const resultado = await pushNotificationService.enviarNotificacion({
-            token: recipient.fcmToken!,
-            titulo: title,
-            mensaje: body,
-            data: {
-              type: 'message',
-              messageId,
-              senderId: req.user._id,
-              senderName: `${req.user.nombre} ${req.user.apellidos}`,
-              senderRole: req.user.tipo,
-              recipientRole: recipient.tipo,
-              priority,
-              hasAttachments: hasAttachments.toString(),
-              timestamp: Date.now().toString(),
-            },
-          });
-
-          if (resultado.success) {
-            successCount++;
-          } else {
-            failureCount++;
-          }
-
-          // Crear notificación en base de datos
-          await notificacionService.crearNotificacion({
-            usuarioId: String(recipient._id),
-            titulo: title,
-            mensaje: body,
-            tipo: TipoNotificacion.MENSAJE,
-            escuelaId: req.user.escuelaId,
-            entidadId: messageId,
-            entidadTipo: 'Mensaje',
-            metadata: {
-              senderName: `${req.user.nombre} ${req.user.apellidos}`,
-              senderRole: req.user.tipo,
-              priority,
-              hasAttachments,
-            },
-            enviarEmail: false,
-          });
-
-        } catch (error) {
-          console.error(`Error enviando a ${recipient.nombre}:`, error);
-          failureCount++;
-        }
-      }
-
-      res.json({
-        success: true,
-        sent: successCount,
-        failed: failureCount,
-        total: recipients.length,
-      });
-
-    } catch (error) {
-      console.error('❌ Error enviando notificaciones de mensaje:', error);
       next(error);
     }
   }

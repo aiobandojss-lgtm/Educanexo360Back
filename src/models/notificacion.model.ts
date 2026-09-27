@@ -68,5 +68,11 @@ const NotificacionSchema = new Schema(
 NotificacionSchema.index({ usuarioId: 1, createdAt: -1 });
 NotificacionSchema.index({ usuarioId: 1, estado: 1 });
 NotificacionSchema.index({ escuelaId: 1 });
+// Fase 4.6 (decisión de Aymer): las notificaciones se borran solas a los 180 días (leídas o no) para no llenar
+// el M0. {usuarioId, createdAt:-1} NO es redundante (sirve la campanita por usuario) y se queda.
+NotificacionSchema.index(
+  { createdAt: 1 },
+  { name: 'ttl_180_dias', expireAfterSeconds: 180 * 24 * 60 * 60 },
+);
 
 export default mongoose.model<INotificacion>('Notificacion', NotificacionSchema);
