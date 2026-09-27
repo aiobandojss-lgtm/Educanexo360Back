@@ -63,16 +63,21 @@ const crearAsistencia = async (req, res, next) => {
         const idsCurso = new Set((curso.estudiantes || []).map((e) => String(e)));
         const ahora = new Date();
         const estudiantesRegistro = Array.isArray(estudiantes) && estudiantes.length > 0
-            ? estudiantes
-                .filter((est) => est && est.estudianteId && idsCurso.has(idDe(est.estudianteId)))
-                .map((est) => ({
-                estudianteId: idDe(est.estudianteId),
-                estado: est.estado || IAsistencia_1.EstadoAsistencia.PRESENTE,
-                justificacion: est.justificacion,
-                observaciones: est.observaciones,
-                registradoPor: req.user._id,
-                fechaRegistro: ahora,
-            }))
+            ? [
+                ...new Map(estudiantes
+                    .filter((est) => est && est.estudianteId && idsCurso.has(idDe(est.estudianteId)))
+                    .map((est) => [
+                    idDe(est.estudianteId),
+                    {
+                        estudianteId: idDe(est.estudianteId),
+                        estado: est.estado || IAsistencia_1.EstadoAsistencia.PRESENTE,
+                        justificacion: est.justificacion,
+                        observaciones: est.observaciones,
+                        registradoPor: req.user._id,
+                        fechaRegistro: ahora,
+                    },
+                ])).values(),
+            ]
             : [...idsCurso].map((estudianteId) => ({
                 estudianteId,
                 estado: IAsistencia_1.EstadoAsistencia.PRESENTE,
@@ -248,6 +253,7 @@ const actualizarAsistencia = async (req, res, next) => {
                 .filter((est) => est && est.estudianteId && idsPermitidos.has(idDe(est.estudianteId)))
                 .map((est) => ({ ...est, estudianteId: idDe(est.estudianteId) }));
             const enviados = new Map(estudiantes.map((est) => [est.estudianteId, est]));
+            estudiantes = [...enviados.values()];
             const ahora = new Date();
             const actualizar = (est) => ({
                 estado: est.estado,

@@ -137,6 +137,7 @@ const EventoCalendarioSchema = new mongoose_1.Schema({
     invitados: [InvitadoSchema],
     recordatorios: [RecordatorioSchema],
     archivoAdjunto: ArchivoAdjuntoSchema,
+    notificadoEn: { type: Date },
 }, {
     timestamps: true,
 });

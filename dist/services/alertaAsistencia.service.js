@@ -76,10 +76,11 @@ async function obtenerPeriodoVigente(escuelaId, periodoId) {
             periodos.find((p) => new Date(p.fecha_inicio) <= hoy && hoy <= (0, fechas_1.finDelDiaColombia)(new Date(p.fecha_fin)));
     if (!periodo)
         return { id: periodoId || 'sin-periodo' };
+    const inicio = new Date(periodo.fecha_inicio);
     const fin = new Date(periodo.fecha_fin);
     return {
         id: String(periodo._id),
-        desde: new Date(periodo.fecha_inicio),
+        desde: new Date(Date.UTC(inicio.getUTCFullYear(), inicio.getUTCMonth(), inicio.getUTCDate())),
         hastaExclusivo: new Date(Date.UTC(fin.getUTCFullYear(), fin.getUTCMonth(), fin.getUTCDate() + 1)),
     };
 }

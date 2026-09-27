@@ -41,7 +41,12 @@ const archivoSubido = (req) => req.file || (Array.isArray(req.files) && req.file
 const notificarEventoPublicado = (evento, escuelaId) => {
     const titulo = evento.titulo || 'Nuevo evento';
     const fechaStr = evento.fechaInicio ? new Date(evento.fechaInicio).toLocaleDateString('es-CO') : '';
-    usuario_model_1.default.find({ escuelaId, fcmToken: { $exists: true, $ne: null } }, { fcmToken: 1 })
+    calendario_model_1.default.findOneAndUpdate({ _id: evento._id, escuelaId, notificadoEn: null }, { $set: { notificadoEn: new Date() } })
+        .then((reclamado) => {
+        if (!reclamado)
+            return [];
+        return usuario_model_1.default.find({ escuelaId, fcmToken: { $exists: true, $ne: null } }, { fcmToken: 1 });
+    })
         .then((usuarios) => {
         const tokens = usuarios.map((u) => u.fcmToken).filter(Boolean);
         if (tokens.length > 0) {

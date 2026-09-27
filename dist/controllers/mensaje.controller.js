@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.idsDestinatariosValidos = exports.ROLES_CON_BORRADORES = void 0;
+exports.MensajeController = exports.ROLES_CON_BORRADORES = void 0;
 const mongoose_1 = __importDefault(require("mongoose"));
 const mensaje_model_1 = __importDefault(require("../models/mensaje.model"));
 const usuario_model_1 = __importDefault(require("../models/usuario.model"));
@@ -27,7 +27,14 @@ const idsDestinatariosValidos = async (ids, escuelaId) => {
         .lean();
     return new Set(validos.map((u) => String(u._id)));
 };
-exports.idsDestinatariosValidos = idsDestinatariosValidos;
+const revertirAdjuntosSinMensaje = async (ids) => {
+    if (ids.length === 0)
+        return;
+    const referenciado = await mensaje_model_1.default.exists({ 'adjuntos.fileId': { $in: ids } }).catch(() => true);
+    if (referenciado)
+        return;
+    await (0, adjuntosGridFS_1.eliminarArchivosGridFS)(gridfs_1.default.getBucket(), ids);
+};
 class MensajeController {
     async getPosiblesDestinatarios(req, res, next) {
         try {
@@ -416,7 +423,7 @@ class MensajeController {
                     }
                 }
             }
-            const validosBorrador = await (0, exports.idsDestinatariosValidos)([...destinatariosObjectIds, ...destinatariosCcObjectIds], String(req.user.escuelaId));
+            const validosBorrador = await idsDestinatariosValidos([...destinatariosObjectIds, ...destinatariosCcObjectIds], String(req.user.escuelaId));
             const filtrarValidos = (lista) => {
                 const filtrados = lista.filter((id) => validosBorrador.has(String(id)));
                 lista.splice(0, lista.length, ...filtrados);
@@ -475,7 +482,7 @@ class MensajeController {
                     await borrador.save();
                 }
                 catch (saveError) {
-                    await (0, adjuntosGridFS_1.eliminarArchivosGridFS)(gridfs_1.default.getBucket(), idsNuevos);
+                    await revertirAdjuntosSinMensaje(idsNuevos);
                     throw saveError;
                 }
                 if (adjuntosAnteriores.length > 0) {
@@ -590,7 +597,7 @@ class MensajeController {
             if (!borrador) {
                 throw new ApiError_1.default(404, 'Borrador no encontrado');
             }
-            const validosEnvio = await (0, exports.idsDestinatariosValidos)([...(borrador.destinatarios || []), ...(borrador.destinatariosCc || [])], String(req.user.escuelaId));
+            const validosEnvio = await idsDestinatariosValidos([...(borrador.destinatarios || []), ...(borrador.destinatariosCc || [])], String(req.user.escuelaId));
             borrador.destinatarios = (borrador.destinatarios || []).filter((d) => validosEnvio.has(String(d?._id ?? d)));
             borrador.destinatariosCc = (borrador.destinatariosCc || []).filter((d) => validosEnvio.has(String(d?._id ?? d)));
             if (!borrador.destinatarios || borrador.destinatarios.length === 0) {
@@ -1400,7 +1407,7 @@ class MensajeController {
                 nuevoMensaje = await mensaje_service_1.default.crearMensaje(datosMensaje, req.user);
             }
             catch (crearError) {
-                await (0, adjuntosGridFS_1.eliminarArchivosGridFS)(gridfs_1.default.getBucket(), adjuntos.map((a) => a.fileId));
+                await revertirAdjuntosSinMensaje(adjuntos.map((a) => a.fileId));
                 throw crearError;
             }
             if (estado !== IMensaje_1.EstadoMensaje.BORRADOR) {
@@ -1721,6 +1728,9 @@ class MensajeController {
                 : null;
             if (!userObjId) {
                 throw new ApiError_1.default(400, 'ID de usuario inválido');
+            }
+            if (!mongoose_1.default.isValidObjectId(req.user.escuelaId)) {
+                throw new ApiError_1.default(403, 'El usuario no tiene un colegio asociado');
             }
             const matchQuery = {
                 _id: new mongoose_1.default.Types.ObjectId(id),
@@ -2333,7 +2343,7 @@ class MensajeController {
                 respuesta = await mensaje_service_1.default.crearMensaje(datosRespuesta, req.user);
             }
             catch (crearError) {
-                await (0, adjuntosGridFS_1.eliminarArchivosGridFS)(gridfs_1.default.getBucket(), adjuntos.map((a) => a.fileId));
+                await revertirAdjuntosSinMensaje(adjuntos.map((a) => a.fileId));
                 throw crearError;
             }
             try {
@@ -2415,6 +2425,7 @@ class MensajeController {
         }
     }
 }
+exports.MensajeController = MensajeController;
 const mensajeController = new MensajeController();
 exports.default = mensajeController;
 //# sourceMappingURL=mensaje.controller.js.map

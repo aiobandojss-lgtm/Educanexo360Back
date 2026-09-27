@@ -140,6 +140,9 @@ class UsuarioController {
             if (!actualizandoPropioUsuario && !tieneRolAdministrativo) {
                 throw new ApiError_1.default(403, 'No tienes permiso para modificar este perfil');
             }
+            if (!mongoose_1.default.isValidObjectId(req.user.escuelaId)) {
+                throw new ApiError_1.default(403, 'El usuario no tiene un colegio asociado');
+            }
             if (!tieneRolAdministrativo && req.body.email !== req.user.email) {
                 delete req.body.email;
             }
@@ -183,7 +186,8 @@ class UsuarioController {
                 datosPermitidos = { nombre, apellidos, email, estado };
                 Object.assign(datosPermitidos, perfilPorRutas(perfil));
                 if (tipo !== undefined && tipo !== usuarioObjetivo.tipo) {
-                    if (!(0, accesoAcademico_1.puedeGestionarRol)(req.user.tipo, tipo)) {
+                    const puedeCambiarTipo = req.user.tipo === 'ADMIN' || req.user.tipo === 'SUPER_ADMIN';
+                    if (!puedeCambiarTipo || !(0, accesoAcademico_1.puedeGestionarRol)(req.user.tipo, tipo)) {
                         throw new ApiError_1.default(403, 'No tienes permiso para cambiar el tipo de usuario');
                     }
                     datosPermitidos.tipo = tipo;
@@ -355,9 +359,23 @@ class UsuarioController {
             if (!req.user) {
                 throw new ApiError_1.default(401, 'No autorizado');
             }
-            const tieneRolAdministrativo = ['ADMIN', 'RECTOR', 'COORDINADOR'].includes(req.user.tipo);
-            if (!tieneRolAdministrativo) {
+            if (!(0, accesoAcademico_1.esRolAdministrativo)(req.user.tipo)) {
                 throw new ApiError_1.default(403, 'No tienes permiso para eliminar usuarios');
+            }
+            if (!mongoose_1.default.isValidObjectId(req.params.id)) {
+                throw new ApiError_1.default(400, 'ID de usuario inválido');
+            }
+            if (String(req.params.id) === String(req.user._id)) {
+                throw new ApiError_1.default(403, 'No puedes desactivar tu propia cuenta');
+            }
+            const objetivo = await usuario_model_1.default.findOne({ _id: req.params.id, escuelaId: req.user.escuelaId })
+                .select('tipo')
+                .lean();
+            if (!objetivo) {
+                throw new ApiError_1.default(404, 'Usuario no encontrado');
+            }
+            if (!(0, accesoAcademico_1.puedeGestionarRol)(req.user.tipo, objetivo.tipo)) {
+                throw new ApiError_1.default(403, 'No tienes permiso para desactivar este usuario');
             }
             const usuario = await usuario_model_1.default.findOneAndUpdate({
                 _id: req.params.id,
