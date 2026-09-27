@@ -35,7 +35,8 @@ registrarHandler('email', async (trabajo, ctx) => {
       continue;
     }
 
-    if (!(await reservarCupo(prioridad))) {
+    const diaCupo = await reservarCupo(prioridad);
+    if (!diaCupo) {
       const cupo = await cupoDeHoy();
       const pendientes = destinatarios.length - ctx.enviados.size;
       throw new ReprogramarTrabajo(
@@ -50,7 +51,7 @@ registrarHandler('email', async (trabajo, ctx) => {
       await obtenerProveedor().send({ to: dest.email, ...correo });
       await ctx.marcarEnviados([clave]);
     } catch (error: any) {
-      await liberarCupo(prioridad);
+      await liberarCupo(prioridad, 1, diaCupo);
       errores.push(`${clave}: ${String(error?.message || error).slice(0, 150)}`);
     }
   }

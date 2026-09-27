@@ -27,12 +27,13 @@ export const limitesCupo = () => {
 };
 
 /**
- * Reserva `cantidad` correos del cupo de hoy. Devuelve false si no hay cupo para esa prioridad.
+ * Reserva `cantidad` correos del cupo de hoy. Devuelve el DÍA de la reserva ('YYYY-MM-DD') o null si no hay
+ * cupo para esa prioridad. Ese día es el que hay que pasar a liberarCupo (auditoría 4.K).
  */
-export const reservarCupo = async (prioridad: 'alta' | 'normal', cantidad = 1): Promise<boolean> => {
+export const reservarCupo = async (prioridad: 'alta' | 'normal', cantidad = 1): Promise<string | null> => {
   const { limite, reservaAlta } = limitesCupo();
   const tope = prioridad === 'alta' ? limite : limite - reservaAlta;
-  if (cantidad > tope) return false;
+  if (cantidad > tope) return null;
   const dia = fechaColombiaISO();
   const filtro = { _id: dia, enviados: { $lte: tope - cantidad } };
   const inc = { $inc: { enviados: cantidad, ...(prioridad === 'alta' && { altaEnviados: cantidad }) } };
@@ -42,20 +43,23 @@ export const reservarCupo = async (prioridad: 'alta' | 'normal', cantidad = 1): 
       { ...inc, $setOnInsert: { expireAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000) } },
       { upsert: true, new: true },
     );
-    return true;
+    return dia;
   } catch (error: any) {
     if (error?.code !== 11000) throw error;
     // 11000 = el documento del día YA existe: o no hay cupo, o dos trabajos crearon el día a la vez (la primera
     // reserva del día en paralelo). Se reintenta SIN upsert: solo es "sin cupo" si de verdad no cabe.
     const r = await CupoCorreo.findOneAndUpdate(filtro, inc, { new: true });
-    return !!r;
+    return r ? dia : null;
   }
 };
 
-/** Devuelve cupo reservado si el envío falló (el proveedor no lo aceptó). */
-export const liberarCupo = async (prioridad: 'alta' | 'normal', cantidad = 1): Promise<void> => {
+/**
+ * Devuelve cupo reservado si el envío falló. Se libera en el día DE LA RESERVA (auditoría 4.K): reservar a las
+ * 23:59:59 y fallar a las 00:00 descontaba del día siguiente.
+ */
+export const liberarCupo = async (prioridad: 'alta' | 'normal', cantidad: number, dia: string): Promise<void> => {
   await CupoCorreo.updateOne(
-    { _id: fechaColombiaISO() },
+    { _id: dia },
     { $inc: { enviados: -cantidad, ...(prioridad === 'alta' && { altaEnviados: -cantidad }) } },
   );
 };

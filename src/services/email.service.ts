@@ -88,12 +88,13 @@ export const enviarCorreoAhora = async (opciones: {
   prioridad: 'alta' | 'normal';
 }): Promise<boolean> => {
   const correo = renderizarCorreo(opciones.plantilla, opciones.datos, opciones.destinatario);
-  if (!(await reservarCupo(opciones.prioridad))) return false;
+  const diaCupo = await reservarCupo(opciones.prioridad);
+  if (!diaCupo) return false;
   try {
     await obtenerProveedor().send({ to: opciones.destinatario.email, ...correo });
     return true;
   } catch (error) {
-    await liberarCupo(opciones.prioridad);
+    await liberarCupo(opciones.prioridad, 1, diaCupo);
     throw error;
   }
 };
@@ -109,7 +110,8 @@ class EmailService {
     let ok = true;
     for (const to of destinos) {
       try {
-        if (!(await reservarCupo('normal'))) {
+        const diaCupo = await reservarCupo('normal');
+        if (!diaCupo) {
           logger.warn(`[Email] Cupo diario agotado: no se envió "${options.subject}" a ${to}`);
           ok = false;
           continue;
@@ -117,7 +119,7 @@ class EmailService {
         try {
           await obtenerProveedor().send({ to, subject: options.subject, text: options.text, html: options.html });
         } catch (error) {
-          await liberarCupo('normal');
+          await liberarCupo('normal', 1, diaCupo);
           throw error;
         }
       } catch (error: any) {
