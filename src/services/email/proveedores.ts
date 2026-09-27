@@ -37,8 +37,12 @@ const timeoutCorreoMs = (): number => {
 export const esErrorPermanente = (proveedor: string, error: any): boolean => {
   if (!error) return false;
   if (proveedor === 'smtp') {
-    const rcpt = /RCPT/i.test(String(error.command || ''));
-    return error.code === 'EENVELOPE' || (rcpt && error.responseCode >= 550 && error.responseCode <= 554);
+    // Auditoría 4.R: nodemailer pone code 'EENVELOPE' también en rechazos de MAIL FROM, en RCPT con 4xx y en DATA.
+    // Greylisting (451), "exceeded max emails per hour" de cPanel o el remitente rechazado son TEMPORALES o de
+    // configuración: se reintentan. Permanente SOLO el RCPT TO rechazado con 550-554.
+    const rcpt = /^RCPT TO$/i.test(String(error.command || '').trim());
+    const codigo = Number(error.responseCode);
+    return rcpt && codigo >= 550 && codigo <= 554;
   }
   if (proveedor === 'brevo') return error.status === 400 || error.status === 422; // dirección inválida
   if (proveedor === 'ses') return ['MessageRejected', 'InvalidParameterValue', 'MailFromDomainNotVerifiedException'].includes(error.name);
