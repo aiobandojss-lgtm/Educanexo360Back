@@ -237,7 +237,7 @@ de inmediato con la misma forma de siempre.
 | 4.D | Crear/enviar mensaje encola UN trabajo `despachar-mensaje` idempotente (campanita + correo + push con reintentos). La campanita llega a los pocos segundos, no dentro del request. |
 | 4.E | Correos de cuenta con prioridad crítica, reserva propia y token creado al enviar (ver 4.7). |
 | 4.F | Cerrar un trabajo (HECHO/reintento) se reintenta 3 veces con filtro por lock; un error al marcarlo no reenvía. |
-| 4.G | Timeouts: proveedor de correo (`EMAIL_TIMEOUT_MS`) y por trabajo (`OUTBOX_TIMEOUT_TRABAJO_MS`, menor que el lock). |
+| 4.G | Timeouts: proveedor de correo (`EMAIL_TIMEOUT_MS`) y por trabajo (`OUTBOX_TIMEOUT_TRABAJO_MS`; ver 4.S para el cálculo actual). |
 | 4.H | Rechazos permanentes (dirección inexistente) no se reintentan; correos enmascarados (`j***@x.com`) en logs y en `outbox.error`. |
 | 4.I | Push: los dispositivos con error transitorio de FCM se reintentan solos (máx. 3, backoff `PUSH_REINTENTO_BASE_MS`). |
 | 4.J | Si falla marcar un correo ya enviado no se reenvía ni se libera cupo. |
@@ -248,6 +248,37 @@ de inmediato con la misma forma de siempre.
 | 4.O | Enviar un borrador masivo por curso no genera copias a acudientes (igual que al crearlo). |
 | 4.P | `POST /api/usuarios/:id/reenviar-enlace-password` (ver 4.7). |
 | 4.Q | Documentado: desvincular sin token (`unregister-token` sin `fcmToken`, `fcmToken: null`) quita **todos** los dispositivos del usuario, a propósito (APK 1.0.0). |
+
+## Correcciones de la segunda auditoría (4.R–4.AE)
+
+| Ítem | Qué cambió |
+|---|---|
+| 4.R | SMTP: permanente **solo** RCPT TO con 550–554. MAIL FROM rechazado, DATA, 4xx (greylisting 451, "exceeded max emails per hour" de cPanel) se reintentan. |
+| 4.T | SES (SESv2) y Brevo: permanente solo el rechazo de la **dirección** del destinatario. Remitente/dominio sin verificar, sandbox, remitente inactivo = configuración: se reintenta y termina `FALLIDO` registrado. |
+| 4.W | Todo error que el worker guarda en `outbox.error` o registra en el log pasa por `enmascararEmailsEnTexto`. |
+| 4.S | Timeout de trabajo con **cancelación cooperativa** (`ctx.signal`, revisado antes de cada envío). Al vencer, el trabajo queda `PROCESANDO` hasta que vence su lock y se retoma desde `enviados`: sin duplicados ni doble cupo. Timeout por defecto = `OUTBOX_LOCK_MS − EMAIL_TIMEOUT_MS − margen` (85 s con los valores por defecto); si la configuración lo excede, se registra error y se usa el seguro. |
+| 4.AA | Los trabajos previos al deploy sin `orden` se completan en el primer tick (no se adelantan a los críticos). |
+| 4.Z | Si falta cupo para un destinatario del reenvío, las reservas previas se devuelven. |
+| 4.V | Reenvío y reset: el enlace vigente **no se invalida** hasta entregar el nuevo; un rebote de un destinatario no corta a los demás (FALLIDO solo si no se llegó a nadie). |
+| 4.U | Un correo de cuenta por usuario y ventana (reset 10 min, definir 5 min, `claveUnica`); reenviar-enlace → 429 "Ya se envió un enlace hace menos de 5 minutos" y máx. 20 por hora por actor. `encolar` espera a que exista el índice único de `claveUnica` (primer arranque). |
+| 4.X | `migrar-fcm-tokens`: el paso 0 encuentra con `$elemMatch` a quien tiene tokens válidos e inválidos; con `--aplicar` el `$pull` corre siempre. |
+| 4.Y | Índice único parcial `mensaje_usuario_unico` `{ entidadId, usuarioId }` (`entidadTipo: 'Mensaje'`): campanita idempotente en la base. Ver el paso de duplicados del deploy. |
+| 4.AB | El reintento de push re-verifica que cada token siga siendo de los usuarios originales (teléfono compartido). |
+| 4.AC | Claves de lote = hash de los ids del lote (despacho y resumen), usuarios ordenados por `_id`. |
+| 4.AD | `despachar-mensaje` siempre con prioridad `alta`. |
+
+### Brechas conocidas (documentadas, auditorías 4.S y 4.AE)
+
+- **Despacho sin encolar (4.AE):** si `encolarDespacho` falla dos veces fuera de un trabajo (al crear o enviar un
+  mensaje, p. ej. Atlas caído en ese instante), el mensaje queda guardado **sin campanita, correo ni push**; solo
+  queda un `console.error` con el id del mensaje. No hay reconciliación automática. Dentro de un trabajo
+  (copias a acudientes) el error sí se propaga y el trabajo se reintenta.
+- **Duplicado residual del timeout (4.S):** si el proveedor ya aceptó un correo pero su respuesta llega después de
+  `EMAIL_TIMEOUT_MS`, el envío cuenta como error, no queda en `enviados` y el reintento lo manda otra vez.
+- **Reenvío con fallo temporal (4.V):** si un envío del reenvío falla de forma temporal después de haber entregado
+  a otro destinatario, el reintento genera un token nuevo y reenvía a todos (el último enlace es el que vale).
+- **Límite por actor en memoria (4.U):** el tope de 20 reenvíos por hora vive en el proceso; un reinicio lo pone en
+  cero (la ventana de 5 minutos por usuario sí está en la base).
 
 ## 4.8 Pruebas y medición (seed de escala, MongoDB local, proveedores simulados)
 
@@ -276,7 +307,7 @@ mensaje masivo**, dentro de la semana de retención.
 | `EMAIL_RESERVA_ALTA` | 20 | Cupo reservado para prioridad alta |
 | `EMAIL_RESERVA_CRITICA` | 20 | Cupo reservado para correos de cuenta (reset, bienvenida, reenvío de enlace) |
 | `EMAIL_TIMEOUT_MS` | 30000 | Tiempo máximo por envío al proveedor de correo |
-| `OUTBOX_TIMEOUT_TRABAJO_MS` | 90000 | Tiempo máximo por trabajo (siempre menor que `OUTBOX_LOCK_MS`) |
+| `OUTBOX_TIMEOUT_TRABAJO_MS` | lock − EMAIL_TIMEOUT − margen (85000) | Tiempo máximo por trabajo. Si se define mayor que ese máximo seguro, se registra error y se usa el seguro (4.S) |
 | `PUSH_REINTENTO_BASE_MS` | 60000 | Base del backoff para reintentar dispositivos con error transitorio de FCM (x2, máx. 3) |
 | `EMAIL_SMTP_MAX_CONNECTIONS` / `EMAIL_SMTP_RATE_LIMIT` | 2 / 5 | Pool SMTP |
 | `AWS_SES_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SES_CONFIGURATION_SET` | — | Amazon SES |
@@ -295,20 +326,26 @@ servidor local en las pruebas).
 1. `mongodump` de Atlas (M0 sin backups). **Obligatorio**: al arrancar, Mongoose crea el índice TTL de 180 días de
    `notificacions` y MongoDB **borra de inmediato y sin vuelta atrás** todas las notificaciones con más de 180 días.
    El dump es la única forma de recuperarlas.
-2. En cPanel, agregar las variables nuevas. Mientras no se elija proveedor, basta con dejar el SMTP actual
+2. **Duplicados de campanitas (4.Y), ANTES de arrancar la versión nueva:**
+   `MONGODB_URI="..." node src/scripts/verificar-notificaciones-duplicadas.js` (simulación). Si reporta
+   duplicados: con el mongodump del paso 1 hecho, correr con `--aplicar` (conserva una por mensaje y usuario, la
+   LEIDA si hay). Sin esto, el índice único `mensaje_usuario_unico` no se crea al arrancar (queda en el log).
+3. En cPanel, agregar las variables nuevas. Mientras no se elija proveedor, basta con dejar el SMTP actual
    (`EMAIL_PROVIDER=smtp` o sin definir) y ajustar `EMAIL_DAILY_LIMIT` al límite del hosting.
-3. Configurar **PassengerMinInstances 1** o el **cron de ping** cada 5 minutos a `/api/health` (sin esto la cola y el
+4. Configurar **PassengerMinInstances 1** o el **cron de ping** cada 5 minutos a `/api/health` (sin esto la cola y el
    resumen de las 18:00 se detienen cuando la app duerme).
-4. FTP de `dist/` y reinicio. En el log: `[Outbox] Worker iniciado ...`.
-5. Verificar `GET /api/system/outbox` (SUPER_ADMIN): `worker.activo = true` y `ultimoTick` reciente.
-6. Migración de tokens, en este orden: `node src/scripts/migrar-fcm-tokens.js` (simulación) → **revisar la salida**
+5. FTP de `dist/` y reinicio. En el log: `[Outbox] Worker iniciado ...` y **ningún** error de
+   `OUTBOX_TIMEOUT_TRABAJO_MS` ni de índices de `outbox`/`notificacions`.
+6. Verificar `GET /api/system/outbox` (SUPER_ADMIN): `worker.activo = true` y `ultimoTick` reciente.
+7. Migración de tokens, en este orden: `node src/scripts/migrar-fcm-tokens.js` (simulación) → **revisar la salida**
    (tokens no string, conflictos entre cuentas) → `--aplicar` (crea el índice único al final).
-7. Índices: `MONGODB_URI="..." node src/scripts/sync-indexes.js` (simulación) y **pasarle la salida al orquestador**
+8. Índices: `MONGODB_URI="..." node src/scripts/sync-indexes.js` (simulación) y **pasarle la salida al orquestador**
    antes de cualquier `--aplicar`. Esperado: los de `outbox` (`estado_1_orden_1_nextRunAt_1` reemplaza al de
-   prioridad), `email_cupo`, `notificacions` (TTL 180 días y `resumen_diario`) y `mensajes` (`copiaDe`,
+   prioridad), `email_cupo`, `notificacions` (TTL 180 días, `resumen_diario` y `mensaje_usuario_unico`) y `mensajes` (`copiaDe`,
    `adjuntos.fileId`) los crea Mongoose al arrancar; el de `outbox` por prioridad puede aparecer como sobrante.
-8. Pruebas de humo: enviar un mensaje a un curso (respuesta inmediata; campanita, correos y push en segundos),
+9. Pruebas de humo: enviar un mensaje a un curso (respuesta inmediata; campanita, correos y push en segundos),
    recuperar contraseña, registrar un token desde la app, aprobar una solicitud de prueba y abrir su enlace de
-   contraseña, y reenviar el enlace de un estudiante (`POST /api/usuarios/:id/reenviar-enlace-password`).
-9. Opcional, con aprobación de Aymer: `node src/scripts/marcar-eventos-notificados.js --aplicar`.
-10. Cuando se elija proveedor: seguir "Configurar Brevo" o "Configurar Amazon SES", cambiar `EMAIL_PROVIDER` y reiniciar.
+   contraseña, y reenviar el enlace de un estudiante (`POST /api/usuarios/:id/reenviar-enlace-password`; un segundo
+   reenvío inmediato debe responder 429).
+10. Opcional, con aprobación de Aymer: `node src/scripts/marcar-eventos-notificados.js --aplicar`.
+11. Cuando se elija proveedor: seguir "Configurar Brevo" o "Configurar Amazon SES", cambiar `EMAIL_PROVIDER` y reiniciar.
