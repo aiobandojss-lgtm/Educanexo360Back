@@ -50,6 +50,19 @@ const ERRORES_TOKEN_INVALIDO = [
   'messaging/invalid-registration-token',
 ];
 
+// Errores de FCM por token que son temporales (auditoría 4.I): ese token se reintenta en un trabajo aparte
+const ERRORES_TOKEN_TRANSITORIO = [
+  'messaging/server-unavailable',
+  'messaging/internal-error',
+  'messaging/unknown-error',
+  'messaging/message-rate-exceeded',
+  'messaging/device-message-rate-exceeded',
+  'messaging/quota-exceeded',
+  'messaging/unavailable',
+];
+/** Máximo de reintentos de los tokens con error transitorio (cada uno es un trabajo 'push' nuevo). */
+export const MAX_REINTENTOS_TOKENS = 3;
+
 // FCM exige que todos los valores de data sean string
 const dataComoTexto = (data?: Record<string, unknown>): Record<string, string> => {
   const salida: Record<string, string> = {};
@@ -77,14 +90,17 @@ const construirMensaje = (c: ContenidoPush) => {
 };
 
 // Simulador de FCM para pruebas (nada sale a internet)
-export const simuladoPush = { fallar: false };
+// transitorio: los tokens que empiezan por 'transitorio' fallan con server-unavailable mientras esté activo
+export const simuladoPush = { fallar: false, transitorio: false };
 const messagingSimulado = {
   async sendEachForMulticast(msg: any) {
     if (simuladoPush.fallar) throw new Error('FCM simulado: fallo forzado');
     const responses = msg.tokens.map((t: string) =>
       t.startsWith('invalido')
         ? { success: false, error: { code: 'messaging/registration-token-not-registered', message: 'no registrado' } }
-        : { success: true, messageId: `sim-${t}` },
+        : simuladoPush.transitorio && t.startsWith('transitorio')
+          ? { success: false, error: { code: 'messaging/server-unavailable', message: 'no disponible' } }
+          : { success: true, messageId: `sim-${t}` },
     );
     await mongoose.connection.collection('push_simulado').insertOne({
       tokens: msg.tokens,
@@ -255,12 +271,17 @@ class PushNotificationService {
 
   /**
    * Envía el mismo push a muchos tokens: bloques de 500 con sendEachForMulticast y limpieza de inválidos.
-   * Lanza si FCM falla por completo (la cola reintenta el trabajo).
+   * Lanza si FCM falla por completo (la cola reintenta el trabajo). Devuelve en 'transitorios' los tokens que
+   * fallaron por un error temporal de FCM (auditoría 4.I) para reintentarlos aparte.
    */
-  async enviarMulticast(tokens: string[], contenido: ContenidoPush): Promise<{ exitos: number; fallos: number; invalidos: number }> {
-    if (!this.firebaseInitialized || tokens.length === 0) return { exitos: 0, fallos: 0, invalidos: 0 };
+  async enviarMulticast(
+    tokens: string[],
+    contenido: ContenidoPush,
+  ): Promise<{ exitos: number; fallos: number; invalidos: number; transitorios: string[] }> {
+    if (!this.firebaseInitialized || tokens.length === 0) return { exitos: 0, fallos: 0, invalidos: 0, transitorios: [] };
     const mensaje = construirMensaje(contenido);
     const invalidos: string[] = [];
+    const transitorios: string[] = [];
     let exitos = 0;
     let fallos = 0;
     for (let i = 0; i < tokens.length; i += TOKENS_POR_MULTICAST) {
@@ -270,10 +291,11 @@ class PushNotificationService {
       fallos += respuesta.failureCount || 0;
       (respuesta.responses || []).forEach((r: any, idx: number) => {
         if (!r.success && ERRORES_TOKEN_INVALIDO.includes(r.error?.code)) invalidos.push(bloque[idx]);
+        if (!r.success && ERRORES_TOKEN_TRANSITORIO.includes(r.error?.code)) transitorios.push(bloque[idx]);
       });
     }
     if (invalidos.length > 0) await this.limpiarTokensInvalidos(invalidos);
-    return { exitos, fallos, invalidos: invalidos.length };
+    return { exitos, fallos, invalidos: invalidos.length, transitorios };
   }
 
   /** Quita tokens inválidos de TODOS los usuarios con un solo $pull (y del campo antiguo). */

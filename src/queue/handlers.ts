@@ -2,14 +2,14 @@
  * Registro de los handlers de la cola de envíos (Fase 4). Se importa una vez desde app.ts.
  * Cada tipo de trabajo registra aquí su handler con registrarHandler(tipo, fn) de ./outbox.
  */
-import { registrarHandler, registrarTareaPeriodica, ReprogramarTrabajo } from './outbox';
+import { registrarHandler, registrarTareaPeriodica, ReprogramarTrabajo, encolar } from './outbox';
 import { encolarResumenSiCorresponde, procesarResumenDiario } from '../services/resumenDiario.service';
 import { esEmailFicticio } from '../services/email.service';
 import { obtenerProveedor } from '../services/email/proveedores';
 import { reservarCupo, liberarCupo, cupoDeHoy } from '../services/email/cupo';
 import { renderizarCorreo } from '../services/email/plantillas';
 import { inicioDiaSiguienteColombia } from '../utils/fechas';
-import pushNotificationService from '../services/pushNotification.service';
+import pushNotificationService, { MAX_REINTENTOS_TOKENS } from '../services/pushNotification.service';
 import mensajeService from '../services/mensaje.service';
 import Mensaje from '../models/mensaje.model';
 import { logger } from '../utils/logger';
@@ -93,15 +93,44 @@ registrarHandler('email', async (trabajo, ctx) => {
  * - Todo o nada por lote: si FCM falla, el trabajo se reintenta; los usuarios ya atendidos quedan en
  *   `enviados` y no se repiten.
  * - Sin Firebase configurado el trabajo termina sin enviar (push desactivado, como antes).
+ * - Auditoría 4.I: los tokens con error TRANSITORIO de FCM (no disponible, límite de tasa) se reintentan en un
+ *   trabajo 'push' nuevo solo con esos tokens (payload.tokens), con backoff y máximo MAX_REINTENTOS_TOKENS veces.
+ *   La claveUnica '<trabajo>:tokens' evita encolarlo dos veces si este trabajo se reintenta.
  */
 registrarHandler('push', async (trabajo, ctx) => {
-  const { usuarioIds = [], titulo, mensaje, data, sound } = trabajo.payload || {};
-  const pendientes = (usuarioIds as string[]).map(String).filter((id) => !ctx.enviados.has(id));
-  if (pendientes.length === 0 || !pushNotificationService.disponible) return;
+  const { usuarioIds = [], tokens: tokensDirectos, titulo, mensaje, data, sound, reintentoTokens = 0 } = trabajo.payload || {};
+  if (!pushNotificationService.disponible) return;
+  const contenido = { titulo, mensaje, data, sound };
 
-  const tokens = await pushNotificationService.obtenerTokens(pendientes);
-  await pushNotificationService.enviarMulticast(tokens, { titulo, mensaje, data, sound });
-  await ctx.marcarEnviados(pendientes);
+  let tokens: string[];
+  let pendientes: string[] = [];
+  if (Array.isArray(tokensDirectos)) {
+    // Reintento de tokens transitorios: ya se sabe a qué dispositivos va
+    if (ctx.enviados.has('tokens')) return;
+    tokens = tokensDirectos.filter((t: any) => typeof t === 'string' && t);
+  } else {
+    pendientes = (usuarioIds as string[]).map(String).filter((id) => !ctx.enviados.has(id));
+    if (pendientes.length === 0) return;
+    tokens = await pushNotificationService.obtenerTokens(pendientes);
+  }
+
+  const { transitorios } = await pushNotificationService.enviarMulticast(tokens, contenido);
+  if (transitorios.length > 0) {
+    if (reintentoTokens < MAX_REINTENTOS_TOKENS) {
+      const base = parseInt(process.env.PUSH_REINTENTO_BASE_MS || '', 10) || 60000;
+      await encolar({
+        tipo: 'push',
+        prioridad: trabajo.prioridad,
+        escuelaId: trabajo.escuelaId ? String(trabajo.escuelaId) : undefined,
+        claveUnica: `${trabajo._id}:tokens`,
+        nextRunAt: new Date(Date.now() + base * 2 ** reintentoTokens),
+        payload: { ...contenido, tokens: transitorios, reintentoTokens: reintentoTokens + 1 },
+      });
+    } else {
+      logger.warn(`[Push] ${transitorios.length} dispositivo(s) sin entregar tras ${MAX_REINTENTOS_TOKENS} reintentos (error temporal de FCM)`);
+    }
+  }
+  await ctx.marcarEnviados(pendientes.length > 0 ? pendientes : ['tokens']);
 });
 
 /**
