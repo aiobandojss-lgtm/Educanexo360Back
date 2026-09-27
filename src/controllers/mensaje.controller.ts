@@ -59,6 +59,19 @@ const idsDestinatariosValidos = async (ids: unknown[], escuelaId: string): Promi
   return new Set(validos.map((u: any) => String(u._id)));
 };
 
+/**
+ * Rollback de adjuntos ya subidos cuando el guardado falla (auditoría 3.O), SOLO si ningún mensaje quedó
+ * guardado apuntando a esos archivos (auditoría 3.X): crearMensaje hace Mensaje.create y después populate;
+ * si falla lo posterior, el mensaje existe y sus adjuntos deben quedarse. Ante duda (error al consultar),
+ * no se borra: un archivo huérfano es preferible a un adjunto roto.
+ */
+const revertirAdjuntosSinMensaje = async (ids: any[]): Promise<void> => {
+  if (ids.length === 0) return;
+  const referenciado = await Mensaje.exists({ 'adjuntos.fileId': { $in: ids } }).catch(() => true);
+  if (referenciado) return;
+  await eliminarArchivosGridFS(gridfsManager.getBucket(), ids);
+};
+
 export class MensajeController {
   // Método para obtener posibles destinatarios según el rol del usuario
   async getPosiblesDestinatarios(
@@ -690,7 +703,7 @@ export class MensajeController {
           await borrador.save();
         } catch (saveError) {
           // No se guardó: los nuevos quedarían huérfanos; los anteriores siguen referenciados (auditoría 3.O)
-          await eliminarArchivosGridFS(gridfsManager.getBucket(), idsNuevos);
+          await revertirAdjuntosSinMensaje(idsNuevos);
           throw saveError;
         }
 
@@ -2019,7 +2032,7 @@ export class MensajeController {
       try {
         nuevoMensaje = await mensajeService.crearMensaje(datosMensaje, req.user);
       } catch (crearError) {
-        await eliminarArchivosGridFS(gridfsManager.getBucket(), adjuntos.map((a) => a.fileId));
+        await revertirAdjuntosSinMensaje(adjuntos.map((a) => a.fileId));
         throw crearError;
       }
 
@@ -3246,7 +3259,7 @@ export class MensajeController {
       try {
         respuesta = await mensajeService.crearMensaje(datosRespuesta, req.user);
       } catch (crearError) {
-        await eliminarArchivosGridFS(gridfsManager.getBucket(), adjuntos.map((a) => a.fileId));
+        await revertirAdjuntosSinMensaje(adjuntos.map((a) => a.fileId));
         throw crearError;
       }
       
