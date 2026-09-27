@@ -580,18 +580,18 @@ class MensajeService {
 
     // 1. Campanita: solo las que falten. lean: sin hidratar miles de documentos (tipos y timestamps explícitos).
     const mensajeObjId = new mongoose.Types.ObjectId(mensajeId);
-    const yaNotificados = new Set(
-      (
-        // entidadTipo: sin él MongoDB no puede usar el índice PARCIAL mensaje_usuario_unico (auditoría 4.Y)
-        await Notificacion.find({
-          entidadTipo: 'Mensaje',
-          entidadId: mensajeObjId,
-          usuarioId: { $in: usuarios.map((u) => u._id) },
-        })
-          .select('usuarioId')
-          .lean()
-      ).map((n: any) => String(n.usuarioId)),
-    );
+    // entidadTipo: sin él MongoDB no puede usar el índice PARCIAL mensaje_usuario_unico (auditoría 4.Y)
+    const existentes: any[] = await Notificacion.find({
+      entidadTipo: 'Mensaje',
+      entidadId: mensajeObjId,
+      usuarioId: { $in: usuarios.map((u) => u._id) },
+    })
+      .select('usuarioId metadata.emailEncolado metadata.pushEncolado')
+      .lean();
+    const yaNotificados = new Set(existentes.map((n: any) => String(n.usuarioId)));
+    // Auditoría 4.AK: quién ya tiene su correo / push encolado (marca en su campanita) → el reintento lo excluye
+    const conEmail = new Set(existentes.filter((n: any) => n.metadata?.emailEncolado).map((n: any) => String(n.usuarioId)));
+    const conPush = new Set(existentes.filter((n: any) => n.metadata?.pushEncolado).map((n: any) => String(n.usuarioId)));
     const faltan = usuarios.filter((u) => !yaNotificados.has(String(u._id)));
     comprobar();
     if (faltan.length > 0) {
@@ -628,18 +628,30 @@ class MensajeService {
       });
     }
 
-    // 2. Correos + push en un solo insertMany, con claveUnica por lote (idempotente ante reintentos)
+    // 2. Correos + push en un solo insertMany, con claveUnica por lote, SOLO para quienes aún no los tienen
+    //    encolados (auditoría 4.AK: si entre reintentos cambia quién recibe —preferencia, desactivación,
+    //    dispositivo— los lotes se recortan distinto y el hash no basta; la marca por usuario sí).
     const urgente = prioridad === PrioridadMensaje.ALTA || /urgente|emergencia/i.test(String(asunto || ''));
     // Auditoría 4.AC: la clave del lote sale de QUIÉNES contiene (hash), no de su posición
     const idsDelLote = (t: NuevoTrabajo): string[] =>
       t.payload.usuarioIds || (t.payload.destinatarios || []).map((d: any) => d.usuarioId || d.email);
     const conClave = (trabajos: NuevoTrabajo[], canal: string) =>
       trabajos.map((t) => ({ ...t, claveUnica: claveDeLote(`despacho:${mensajeId}:${canal}`, idsDelLote(t)) }));
+    const paraEmail = usuarios
+      .filter((u: any) => this.correoInmediato(u, prioridad) && !conEmail.has(String(u._id)))
+      .map((u: any) => String(u._id));
+    const setEmail = new Set(paraEmail);
+    const paraPush = usuarios
+      .filter(
+        (u: any) =>
+          setDest.has(String(u._id)) && (u.fcmToken || (u.fcmTokens || []).length > 0) && !conPush.has(String(u._id)),
+      )
+      .map((u: any) => String(u._id));
     const trabajos: NuevoTrabajo[] = [
       ...conClave(
         construirTrabajosCorreo({
           destinatarios: usuarios
-            .filter((u: any) => this.correoInmediato(u, prioridad))
+            .filter((u: any) => setEmail.has(String(u._id)))
             .map((u: any) => ({ email: u.email, nombre: u.nombre, usuarioId: String(u._id) })),
           plantilla: 'mensaje',
           datos: { remitente: nombreRemitente, asunto, fecha: new Date(), tieneAdjuntos, url },
@@ -650,10 +662,8 @@ class MensajeService {
       ),
       ...conClave(
         pushNotificationService.construirTrabajosPush({
-          // Solo destinatarios directos con algún dispositivo
-          usuarioIds: usuarios
-            .filter((u: any) => setDest.has(String(u._id)) && (u.fcmToken || (u.fcmTokens || []).length > 0))
-            .map((u: any) => String(u._id)),
+          // Solo destinatarios directos con algún dispositivo (y sin push ya encolado)
+          usuarioIds: paraPush,
           contenido: urgente
             ? {
                 titulo: `🚨 URGENTE: ${nombreRemitente}`,
@@ -674,6 +684,18 @@ class MensajeService {
     ];
     comprobar();
     if (trabajos.length > 0) await encolar(trabajos);
+
+    // 3. Marcas por usuario DESPUÉS de encolar (4.AK). Si este paso falla, el reintento arma los mismos lotes
+    //    (mismos hashes → se ignoran); solo si ADEMÁS cambió la membresía puede repetirse el envío a esos usuarios.
+    const marcar = async (ids: string[], campo: string) => {
+      if (ids.length === 0) return;
+      await Notificacion.updateMany(
+        { entidadTipo: 'Mensaje', entidadId: mensajeObjId, usuarioId: { $in: ids.map((id) => new mongoose.Types.ObjectId(id)) } },
+        { $set: { [`metadata.${campo}`]: true } },
+      );
+    };
+    await marcar(paraEmail, 'emailEncolado');
+    await marcar(paraPush, 'pushEncolado');
   }
 
   /**

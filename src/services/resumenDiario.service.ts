@@ -167,8 +167,9 @@ export const procesarResumenDiario = async (
   comprobar();
   if (trabajos.length > 0) await encolar(trabajos);
 
-  // 5. Quitar las marcas SOLO después de encolar (si esto falla, el reintento encuentra las mismas marcas y los
-  //    mismos lotes: la claveUnica evita correos repetidos)
+  // 5. Quitar las marcas SOLO después de encolar: es la marca por usuario (auditoría 4.AK) que excluye del
+  //    siguiente intento a quien ya tiene su resumen encolado. Si este paso falla, el reintento arma los mismos
+  //    lotes (mismos hashes → se ignoran); solo si además cambió la membresía puede repetirse un correo.
   const idsEnviados = atendidas.filter((a) => a.enviado).flatMap((a) => a.ids);
   const idsLeidos = atendidas.filter((a) => !a.enviado).flatMap((a) => a.ids);
   if (idsEnviados.length > 0) {
