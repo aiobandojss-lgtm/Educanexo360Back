@@ -105,14 +105,25 @@ registrarHandler('push', async (trabajo, ctx) => {
 
   let tokens: string[];
   let pendientes: string[] = [];
+  // Usuarios destino del push: en el reintento de tokens viajan en payload.usuarioIds (auditoría 4.AB)
+  let destinatarios: string[] = (usuarioIds as string[]).map(String);
   if (Array.isArray(tokensDirectos)) {
-    // Reintento de tokens transitorios: ya se sabe a qué dispositivos va
+    // Reintento de tokens transitorios. Auditoría 4.AB: se re-verifica que cada token SIGA siendo de alguno de los
+    // usuarios originales (un teléfono compartido pudo cambiar de cuenta entre intentos: el nuevo usuario no debe
+    // recibir el push del anterior). Sin usuarios de referencia no se envía.
     if (ctx.enviados.has('tokens')) return;
-    tokens = tokensDirectos.filter((t: any) => typeof t === 'string' && t);
+    const vigentes = new Set(destinatarios.length > 0 ? await pushNotificationService.obtenerTokens(destinatarios) : []);
+    tokens = tokensDirectos.filter((t: any) => typeof t === 'string' && t && vigentes.has(t));
+    if (tokens.length === 0) {
+      await ctx.marcarEnviados(['tokens']);
+      return;
+    }
   } else {
+    destinatarios = [];
     pendientes = (usuarioIds as string[]).map(String).filter((id) => !ctx.enviados.has(id));
     if (pendientes.length === 0) return;
     tokens = await pushNotificationService.obtenerTokens(pendientes);
+    destinatarios = pendientes;
   }
 
   ctx.comprobarCancelacion(); // auditoría 4.S
@@ -126,7 +137,7 @@ registrarHandler('push', async (trabajo, ctx) => {
         escuelaId: trabajo.escuelaId ? String(trabajo.escuelaId) : undefined,
         claveUnica: `${trabajo._id}:tokens`,
         nextRunAt: new Date(Date.now() + base * 2 ** reintentoTokens),
-        payload: { ...contenido, tokens: transitorios, reintentoTokens: reintentoTokens + 1 },
+        payload: { ...contenido, tokens: transitorios, usuarioIds: destinatarios, reintentoTokens: reintentoTokens + 1 },
       });
     } else {
       logger.warn(`[Push] ${transitorios.length} dispositivo(s) sin entregar tras ${MAX_REINTENTOS_TOKENS} reintentos (error temporal de FCM)`);
