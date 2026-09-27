@@ -44,8 +44,20 @@ export const esErrorPermanente = (proveedor: string, error: any): boolean => {
     const codigo = Number(error.responseCode);
     return rcpt && codigo >= 550 && codigo <= 554;
   }
-  if (proveedor === 'brevo') return error.status === 400 || error.status === 422; // dirección inválida
-  if (proveedor === 'ses') return ['MessageRejected', 'InvalidParameterValue', 'MailFromDomainNotVerifiedException'].includes(error.name);
+  // Auditoría 4.T: solo el rechazo de la DIRECCIÓN del destinatario es permanente. Remitente inválido o inactivo,
+  // dominio sin verificar o sandbox son errores de CONFIGURACIÓN: se reintentan y terminan en FALLIDO registrado.
+  const texto = String(error.detalle ?? error.message ?? '');
+  if (proveedor === 'brevo') {
+    if (error.status !== 400 && error.status !== 422) return false;
+    if (/sender|remitente/i.test(texto)) return false;
+    return /(invalid|not valid).{0,40}(\bto\b|recipient|email)|(\bto\b|recipient|email).{0,40}(invalid|not valid)/i.test(texto);
+  }
+  if (proveedor === 'ses') {
+    // SESv2: BadRequestException / MessageRejected con dirección mal formada. "not verified" = configuración.
+    if (!['BadRequestException', 'MessageRejected'].includes(error.name)) return false;
+    if (/not verified|sender|from/i.test(texto)) return false;
+    return /illegal address|invalid (email )?address|missing final '@|domain contains illegal|local address contains/i.test(texto);
+  }
   return false;
 };
 
@@ -176,6 +188,7 @@ const crearBrevo = (): EmailProvider => {
         const detalle = (await resp.text().catch(() => '')).slice(0, 300);
         const error: any = new Error(`Brevo respondió ${resp.status}: ${detalle}`);
         error.status = resp.status;
+        error.detalle = detalle;
         throw marcarPermanente('brevo', error);
       }
       const json: any = await resp.json().catch(() => ({}));
