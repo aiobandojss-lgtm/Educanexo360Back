@@ -453,6 +453,7 @@ class UsuarioController {
       // y registrar la solicitud de eliminación
       usuario.estado = 'INACTIVO';
       usuario.set('fcmToken', null);
+      usuario.set('fcmTokens', []); // Fase 4.3: todos los dispositivos
       usuario.set('eliminacionCuenta', {
         solicitada: true,
         fecha: new Date(),

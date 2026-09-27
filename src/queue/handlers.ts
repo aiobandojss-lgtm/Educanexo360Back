@@ -8,6 +8,7 @@ import { obtenerProveedor } from '../services/email/proveedores';
 import { reservarCupo, liberarCupo, cupoDeHoy } from '../services/email/cupo';
 import { renderizarCorreo } from '../services/email/plantillas';
 import { inicioDiaSiguienteColombia } from '../utils/fechas';
+import pushNotificationService from '../services/pushNotification.service';
 
 /**
  * 'email': un lote de hasta ~50 destinatarios con la misma plantilla.
@@ -53,4 +54,22 @@ registrarHandler('email', async (trabajo, ctx) => {
   if (errores.length > 0) {
     throw new Error(`${errores.length} correo(s) no salieron: ${errores.slice(0, 3).join(' | ')}`);
   }
+});
+
+/**
+ * 'push': un lote de hasta ~50 usuarios con el mismo contenido (Fase 4.3).
+ * - Los tokens de esos usuarios se leen en UNA consulta; se envía con sendEachForMulticast en bloques de 500
+ *   (con ≤50 usuarios × ≤5 dispositivos es una sola llamada) y los inválidos se limpian con un $pull.
+ * - Todo o nada por lote: si FCM falla, el trabajo se reintenta; los usuarios ya atendidos quedan en
+ *   `enviados` y no se repiten.
+ * - Sin Firebase configurado el trabajo termina sin enviar (push desactivado, como antes).
+ */
+registrarHandler('push', async (trabajo, ctx) => {
+  const { usuarioIds = [], titulo, mensaje, data, sound } = trabajo.payload || {};
+  const pendientes = (usuarioIds as string[]).map(String).filter((id) => !ctx.enviados.has(id));
+  if (pendientes.length === 0 || !pushNotificationService.disponible) return;
+
+  const tokens = await pushNotificationService.obtenerTokens(pendientes);
+  await pushNotificationService.enviarMulticast(tokens, { titulo, mensaje, data, sound });
+  await ctx.marcarEnviados(pendientes);
 });

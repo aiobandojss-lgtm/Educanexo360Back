@@ -20,6 +20,32 @@ const registrarToken = [
   },
 ];
 
+/**
+ * @swagger
+ * /api/notificaciones/register-token:
+ *   post:
+ *     summary: Registra el dispositivo (token FCM) del usuario
+ *     description: >
+ *       Fase 4.3: AGREGA el token al arreglo de dispositivos del usuario (máx. 5; al pasar de 5 sale el más
+ *       viejo). Un token pertenece a un solo usuario: se quita de cualquier otra cuenta. fcmToken null
+ *       desvincula TODOS los dispositivos (así cierran sesión las APK 1.0.0). platform opcional (android).
+ *     tags: [Notificaciones]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               fcmToken: { type: string, nullable: true }
+ *               platform: { type: string, enum: [ios, android] }
+ *               deviceInfo: { type: object }
+ *     responses:
+ *       200:
+ *         description: '{ success: true, data: { userId, platform, tokenRegistered: true } }'
+ */
 router.post('/register-token', ...registrarToken);
 
 /**
@@ -27,7 +53,7 @@ router.post('/register-token', ...registrarToken);
  * /api/notificaciones/fcm-token:
  *   post:
  *     summary: Alias de /api/notificaciones/register-token (APKs anteriores al 2026-06-10)
- *     description: Mismo handler, autenticación y validaciones que register-token.
+ *     description: Mismo handler, autenticación y validaciones que register-token (agrega el dispositivo).
  *     tags: [Notificaciones]
  *     security:
  *       - bearerAuth: []
@@ -53,17 +79,18 @@ router.post('/fcm-token', ...registrarToken);
  * /api/notificaciones/unregister-token:
  *   post:
  *     summary: Desvincula el token FCM del usuario al cerrar sesión
- *     description: Idempotente. Si el token coincide con el del usuario lo pone en null; responde 200 aunque no coincida.
+ *     description: >
+ *       Idempotente (responde 200 aunque no coincida). Con fcmToken quita SOLO ese dispositivo; sin
+ *       fcmToken (Fase 4.3) desvincula todos los dispositivos del usuario.
  *     tags: [Notificaciones]
  *     security:
  *       - bearerAuth: []
  *     requestBody:
- *       required: true
+ *       required: false
  *       content:
  *         application/json:
  *           schema:
  *             type: object
- *             required: [fcmToken]
  *             properties:
  *               fcmToken: { type: string }
  *     responses:

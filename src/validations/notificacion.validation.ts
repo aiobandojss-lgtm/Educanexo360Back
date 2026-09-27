@@ -13,9 +13,11 @@ export const registrarTokenValidation = [
   body('platform').optional().isIn(['ios', 'android']).withMessage('Platform debe ser "ios" o "android"'),
 ];
 
-// Desvinculación del token FCM al cerrar sesión (Flutter)
+// Desvinculación del token FCM al cerrar sesión (Flutter). Con token: solo ese dispositivo.
+// Sin token (Fase 4.3): se desvinculan todos los dispositivos del usuario.
 export const desregistrarTokenValidation = [
   body('fcmToken')
+    .optional({ values: 'null' })
     .isString()
     .withMessage('Token FCM es requerido')
     .trim()

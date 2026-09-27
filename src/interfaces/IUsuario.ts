@@ -62,6 +62,13 @@ export interface IUsuarioBase {
     appVersion?: string;
   };
   fcmTokenUpdatedAt?: Date;
+  // Fase 4.3: varios dispositivos (máx. 5)
+  fcmTokens?: {
+    token: string;
+    platform?: 'ios' | 'android';
+    deviceInfo?: Record<string, unknown>;
+    updatedAt?: Date;
+  }[];
 }
 
 export interface IUsuario extends IUsuarioBase, Document {

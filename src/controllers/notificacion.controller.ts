@@ -23,8 +23,113 @@ interface RequestWithUser extends Request {
   };
 }
 
+/**
+ * Actualizaciones atómicas (pipeline) de los dispositivos FCM (Fase 4.3). fcmToken/platform (campos
+ * antiguos) quedan siempre con el último dispositivo del arreglo, o se quitan si no queda ninguno.
+ */
+const MAX_DISPOSITIVOS = 5;
+const ultimoToken = { $arrayElemAt: ['$fcmTokens', -1] };
+const sincronizarCamposAntiguos = {
+  $set: {
+    fcmToken: { $ifNull: [{ $getField: { field: 'token', input: ultimoToken } }, null] },
+    platform: { $ifNull: [{ $getField: { field: 'platform', input: ultimoToken } }, '$$REMOVE'] },
+    fcmTokenUpdatedAt: '$$NOW',
+  },
+};
+
+const AGREGAR_TOKEN = (token: string, platform: string, deviceInfo: Record<string, unknown>) => [
+  {
+    $set: {
+      fcmTokens: {
+        $slice: [
+          {
+            $concatArrays: [
+              // Migración perezosa: el token antiguo (fcmToken) entra al arreglo si aún no está
+              {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: [{ $type: '$fcmToken' }, 'string'] },
+                      { $ne: ['$fcmToken', token] },
+                      { $not: [{ $in: ['$fcmToken', { $ifNull: ['$fcmTokens.token', []] }] }] },
+                    ],
+                  },
+                  [
+                    {
+                      token: '$fcmToken',
+                      platform: { $ifNull: ['$platform', 'android'] },
+                      updatedAt: { $ifNull: ['$fcmTokenUpdatedAt', '$$NOW'] },
+                    },
+                  ],
+                  [],
+                ],
+              },
+              // Los demás dispositivos (sin el que se registra, que va al final como el más reciente)
+              {
+                $filter: {
+                  input: { $ifNull: ['$fcmTokens', []] },
+                  as: 'd',
+                  cond: { $ne: ['$$d.token', token] },
+                },
+              },
+              [{ token, platform, deviceInfo, updatedAt: '$$NOW' }],
+            ],
+          },
+          -MAX_DISPOSITIVOS, // se quedan los 5 más recientes: sale el más viejo
+        ],
+      },
+      deviceInfo,
+    },
+  },
+  sincronizarCamposAntiguos,
+];
+
+// Quita un dispositivo. El campo antiguo pasa al último dispositivo que quede SOLO si era ese token (o ya
+// estaba en el arreglo); un token antiguo aún no migrado a fcmTokens se conserva.
+const QUITAR_TOKEN = (token: string) => [
+  {
+    $set: {
+      fcmTokens: {
+        $filter: { input: { $ifNull: ['$fcmTokens', []] }, as: 'd', cond: { $ne: ['$$d.token', token] } },
+      },
+      _resincronizar: {
+        $or: [
+          { $eq: ['$fcmToken', token] },
+          { $in: ['$fcmToken', { $ifNull: ['$fcmTokens.token', []] }] },
+        ],
+      },
+    },
+  },
+  {
+    $set: {
+      fcmToken: {
+        $cond: [
+          '$_resincronizar',
+          { $ifNull: [{ $getField: { field: 'token', input: ultimoToken } }, null] },
+          '$fcmToken',
+        ],
+      },
+      platform: {
+        $cond: [
+          '$_resincronizar',
+          { $ifNull: [{ $getField: { field: 'platform', input: ultimoToken } }, '$$REMOVE'] },
+          { $ifNull: ['$platform', '$$REMOVE'] },
+        ],
+      },
+      fcmTokenUpdatedAt: '$$NOW',
+    },
+  },
+  { $unset: '_resincronizar' },
+];
+
+const QUITAR_TODOS_LOS_TOKENS = () => [
+  { $set: { fcmTokens: [], fcmToken: null, fcmTokenUpdatedAt: '$$NOW', platform: '$$REMOVE' } },
+];
+
 export class NotificacionController {
-  // MÉTODO CORREGIDO: Registrar token FCM
+  // Registrar token FCM (Fase 4.3): AGREGA el dispositivo al arreglo fcmTokens (máx. 5; sale el más viejo).
+  // Compatibilidad: las APK viejas envían lo mismo que antes y siguen funcionando; fcmToken (campo antiguo)
+  // queda con el último token registrado.
   async registrarTokenFCM(req: RequestWithUser, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!req.user) {
@@ -33,12 +138,9 @@ export class NotificacionController {
 
       const { fcmToken, deviceInfo } = req.body;
 
-      // fcmToken null: desvincular el dispositivo (las APK 1.0.0 lo envían así al cerrar sesión)
+      // fcmToken null: desvincular (las APK 1.0.0 lo envían así al cerrar sesión). Sin token concreto → TODOS
       if (fcmToken === null) {
-        await Usuario.updateOne(
-          { _id: req.user._id },
-          { $set: { fcmToken: null, fcmTokenUpdatedAt: new Date() }, $unset: { platform: '' } },
-        );
+        await Usuario.updateOne({ _id: req.user._id }, QUITAR_TODOS_LOS_TOKENS());
         res.json({ success: true, message: 'Token FCM eliminado', data: { tokenRegistered: false } });
         return;
       }
@@ -55,25 +157,28 @@ export class NotificacionController {
 
       logger.debug(`📱 Registrando token FCM para usuario: ${req.user._id}`);
 
-      // Un token pertenece a un solo dispositivo: quitarlo de cualquier otra cuenta
-      // (celular compartido → evita que lleguen push de la cuenta anterior)
-      await Usuario.updateMany(
-        { fcmToken, _id: { $ne: req.user._id } },
-        { $set: { fcmToken: null, fcmTokenUpdatedAt: new Date() } },
-      );
+      const registrar = async () => {
+        // Un token pertenece a un solo usuario: quitarlo de cualquier otra cuenta
+        // (celular compartido → evita que lleguen push de la cuenta anterior)
+        await Usuario.updateMany(
+          { _id: { $ne: req.user!._id }, $or: [{ 'fcmTokens.token': fcmToken }, { fcmToken }] },
+          QUITAR_TOKEN(fcmToken),
+        );
+        return Usuario.findOneAndUpdate(
+          { _id: req.user!._id },
+          AGREGAR_TOKEN(fcmToken, platform, deviceInfo || {}),
+          { new: true, projection: { _id: 1, nombre: 1, apellidos: 1 } },
+        ).lean();
+      };
 
-      const usuarioActualizado = await Usuario.findByIdAndUpdate(
-        req.user._id,
-        {
-          $set: {
-            fcmToken: fcmToken,
-            platform: platform,
-            deviceInfo: deviceInfo || {},
-            fcmTokenUpdatedAt: new Date(),
-          },
-        },
-        { new: true }
-      ).select('_id nombre apellidos fcmToken platform');
+      let usuarioActualizado: any;
+      try {
+        usuarioActualizado = await registrar();
+      } catch (error: any) {
+        // Índice único: otro usuario registró el mismo token en paralelo → se vuelve a quitar y se reintenta
+        if (error?.code !== 11000) throw error;
+        usuarioActualizado = await registrar();
+      }
 
       if (!usuarioActualizado) {
         throw new ApiError(404, 'Usuario no encontrado');
@@ -96,7 +201,7 @@ export class NotificacionController {
     }
   }
 
-  // Desvincular el dispositivo al cerrar sesión (idempotente: responde 200 aunque no coincida)
+  // Desvincular al cerrar sesión (idempotente). Con token: quita SOLO ese dispositivo. Sin token: todos.
   async desregistrarTokenFCM(req: RequestWithUser, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!req.user) {
@@ -105,11 +210,12 @@ export class NotificacionController {
 
       const { fcmToken } = req.body;
 
-      // Solo se borra si el token coincide con el registrado para ESTE usuario
-      const resultado = await Usuario.updateOne(
-        { _id: req.user._id, fcmToken },
-        { $set: { fcmToken: null, fcmTokenUpdatedAt: new Date() }, $unset: { platform: '' } },
-      );
+      const resultado = fcmToken
+        ? await Usuario.updateOne(
+            { _id: req.user._id, $or: [{ 'fcmTokens.token': fcmToken }, { fcmToken }] },
+            QUITAR_TOKEN(fcmToken),
+          )
+        : await Usuario.updateOne({ _id: req.user._id }, QUITAR_TODOS_LOS_TOKENS());
 
       res.json({
         success: true,

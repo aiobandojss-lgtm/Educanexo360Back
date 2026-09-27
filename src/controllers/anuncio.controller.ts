@@ -274,20 +274,18 @@ class AnuncioController {
       if ((anuncio as any).paraEstudiantes) rolesDestino.push('ESTUDIANTE');
       if (rolesDestino.length === 0) rolesDestino.push('ACUDIENTE', 'DOCENTE', 'ESTUDIANTE');
 
-      Usuario.find(
-        { escuelaId: req.user.escuelaId, tipo: { $in: rolesDestino }, fcmToken: { $exists: true, $ne: null } },
-        { fcmToken: 1 }
-      ).then((usuarios: any[]) => {
-        const tokens = usuarios.map((u) => u.fcmToken).filter(Boolean);
-        if (tokens.length > 0) {
-          pushNotificationService.enviarNotificacionMasiva({
-            tokens,
+      // Por la cola (Fase 4.3): lotes de ~50 usuarios, todos sus dispositivos, bloques de 500 tokens
+      pushNotificationService
+        .encolarPushFiltro(
+          { escuelaId: req.user.escuelaId, tipo: { $in: rolesDestino } },
+          {
             titulo: `Nuevo comunicado: ${anuncio.titulo}`,
             mensaje: 'Se ha publicado un nuevo comunicado en EducaNexo360',
             data: { tipo: 'anuncio', anuncioId: (anuncio._id as any).toString() },
-          }).catch(() => {/* silencioso */});
-        }
-      }).catch(() => {/* silencioso */});
+          },
+          { escuelaId: String(req.user.escuelaId) },
+        )
+        .catch((err) => console.error('[Anuncio] No se pudo encolar el push:', err));
     } catch (error) {
       next(error);
     }

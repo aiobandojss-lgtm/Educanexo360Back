@@ -1,5 +1,19 @@
+import mongoose from 'mongoose';
 import Usuario from '../models/usuario.model';
 import { logger } from '../utils/logger';
+import { encolar, NuevoTrabajo } from '../queue/outbox';
+
+/**
+ * Notificaciones push (FCM) — Fase 4.3.
+ *
+ * - Varios dispositivos por usuario: fcmTokens[] (máx. 5) + fcmToken (último, compatibilidad).
+ * - encolarPush(): los envíos pasan por la cola en trabajos de ~50 usuarios (nada de FCM dentro del request).
+ * - El worker lee los tokens de esos usuarios en UNA consulta y envía con sendEachForMulticast en bloques
+ *   de 500; los tokens inválidos se limpian con un solo $pull.
+ * - PUSH_PROVIDER=simulado (pruebas): no llama a Firebase; guarda en la colección push_simulado y trata los
+ *   tokens que empiezan por 'invalido' como no registrados.
+ * - Los datos (data) que recibe la app no cambian: tipo, mensajeId, tareaId, anuncioId, eventoId...
+ */
 
 interface NotificacionData {
   token: string;
@@ -18,6 +32,81 @@ interface NotificacionMasiva {
   data?: Record<string, string>;
 }
 
+export interface ContenidoPush {
+  titulo: string;
+  mensaje: string;
+  data?: Record<string, unknown>;
+  sound?: string;
+}
+
+// Usuarios por trabajo de push en la cola (ajuste del orquestador: lotes de ~50)
+export const USUARIOS_POR_TRABAJO_PUSH = 50;
+// Límite de FCM por llamada a sendEachForMulticast
+const TOKENS_POR_MULTICAST = 500;
+
+// Solo estos dos códigos significan que el token ya no sirve (invalid-argument puede ser otra cosa)
+const ERRORES_TOKEN_INVALIDO = [
+  'messaging/registration-token-not-registered',
+  'messaging/invalid-registration-token',
+];
+
+// FCM exige que todos los valores de data sean string
+const dataComoTexto = (data?: Record<string, unknown>): Record<string, string> => {
+  const salida: Record<string, string> = {};
+  Object.entries(data || {}).forEach(([k, v]) => {
+    if (v !== undefined && v !== null) salida[k] = String(v);
+  });
+  return salida;
+};
+
+// Mensaje FCM con la MISMA forma que antes (canal Android, prioridad alta, APNs)
+const construirMensaje = (c: ContenidoPush) => {
+  const data = dataComoTexto(c.data);
+  return {
+    notification: { title: c.titulo, body: c.mensaje },
+    data: { ...data, timestamp: Date.now().toString() },
+    android: {
+      notification: { channelId: 'educanexo360_messages', priority: 'high' as const, sound: c.sound || 'default' },
+      data,
+    },
+    apns: {
+      payload: { aps: { alert: { title: c.titulo, body: c.mensaje }, sound: c.sound || 'default' } },
+      headers: { 'apns-priority': '10', 'apns-push-type': 'alert' },
+    },
+  };
+};
+
+// Simulador de FCM para pruebas (nada sale a internet)
+export const simuladoPush = { fallar: false };
+const messagingSimulado = {
+  async sendEachForMulticast(msg: any) {
+    if (simuladoPush.fallar) throw new Error('FCM simulado: fallo forzado');
+    const responses = msg.tokens.map((t: string) =>
+      t.startsWith('invalido')
+        ? { success: false, error: { code: 'messaging/registration-token-not-registered', message: 'no registrado' } }
+        : { success: true, messageId: `sim-${t}` },
+    );
+    await mongoose.connection.collection('push_simulado').insertOne({
+      tokens: msg.tokens,
+      titulo: msg.notification?.title,
+      mensaje: msg.notification?.body,
+      data: msg.data,
+      fecha: new Date(),
+    });
+    const successCount = responses.filter((r: any) => r.success).length;
+    return { responses, successCount, failureCount: responses.length - successCount };
+  },
+  async send(msg: any) {
+    const r = await messagingSimulado.sendEachForMulticast({ ...msg, tokens: [msg.token] });
+    if (!r.responses[0].success) {
+      const e: any = new Error('no registrado');
+      e.code = r.responses[0].error.code;
+      throw e;
+    }
+    return r.responses[0].messageId;
+  },
+};
+
 class PushNotificationService {
   private firebaseInitialized = false;
   private messaging: any = null;
@@ -27,6 +116,13 @@ class PushNotificationService {
   }
 
   private initFirebase(): void {
+    if (process.env.PUSH_PROVIDER === 'simulado') {
+      this.messaging = messagingSimulado;
+      this.firebaseInitialized = true;
+      logger.info('Push en modo simulado (PUSH_PROVIDER=simulado)');
+      return;
+    }
+
     // Si faltan las variables de entorno criticas, desactivar silenciosamente
     if (
       !process.env.FIREBASE_PROJECT_ID ||
@@ -70,132 +166,163 @@ class PushNotificationService {
     }
   }
 
-  // 🚀 ENVIAR NOTIFICACIÓN A UN USUARIO
-  async enviarNotificacion(datos: NotificacionData): Promise<{
-    success: boolean;
-    messageId?: string;
-    error?: string;
-  }> {
+  get disponible(): boolean {
+    return this.firebaseInitialized;
+  }
+
+  /**
+   * Encola push para los usuarios dados, en trabajos de ~50 usuarios (Fase 4.3). Devuelve los trabajos.
+   */
+  async encolarPush(opciones: {
+    usuarioIds: (string | mongoose.Types.ObjectId)[];
+    contenido: ContenidoPush;
+    prioridad?: 'alta' | 'normal';
+    escuelaId?: string;
+  }): Promise<number> {
+    const ids = [...new Set(opciones.usuarioIds.map(String))].filter((id) => mongoose.isValidObjectId(id));
+    if (ids.length === 0) return 0;
+    const trabajos: NuevoTrabajo[] = [];
+    for (let i = 0; i < ids.length; i += USUARIOS_POR_TRABAJO_PUSH) {
+      trabajos.push({
+        tipo: 'push',
+        prioridad: opciones.prioridad || 'normal',
+        escuelaId: opciones.escuelaId,
+        payload: {
+          usuarioIds: ids.slice(i, i + USUARIOS_POR_TRABAJO_PUSH),
+          titulo: opciones.contenido.titulo,
+          mensaje: opciones.contenido.mensaje,
+          data: dataComoTexto(opciones.contenido.data),
+          ...(opciones.contenido.sound && { sound: opciones.contenido.sound }),
+        },
+      });
+    }
+    return encolar(trabajos);
+  }
+
+  /**
+   * Ids de los usuarios ACTIVOS que cumplen el filtro y tienen al menos un dispositivo (arreglo o campo
+   * antiguo). Evita encolar trabajos para usuarios sin app.
+   */
+  async idsConDispositivo(filtro: Record<string, unknown>): Promise<string[]> {
+    const usuarios = await Usuario.find(
+      {
+        ...filtro,
+        estado: 'ACTIVO',
+        $or: [{ 'fcmTokens.0': { $exists: true } }, { fcmToken: { $type: 'string' } }],
+      },
+      { _id: 1 },
+    ).lean();
+    return usuarios.map((u: any) => String(u._id));
+  }
+
+  /** Encola un push para los usuarios que cumplen el filtro y tienen dispositivo. Fire-and-forget seguro. */
+  async encolarPushFiltro(
+    filtro: Record<string, unknown>,
+    contenido: ContenidoPush,
+    opciones: { prioridad?: 'alta' | 'normal'; escuelaId?: string } = {},
+  ): Promise<number> {
+    const usuarioIds = await this.idsConDispositivo(filtro);
+    return this.encolarPush({ usuarioIds, contenido, ...opciones });
+  }
+
+  /** Tokens (sin repetir) de los usuarios ACTIVOS dados, en UNA consulta: fcmTokens[] + fcmToken antiguo. */
+  async obtenerTokens(usuarioIds: string[]): Promise<string[]> {
+    if (usuarioIds.length === 0) return [];
+    const usuarios = await Usuario.find(
+      { _id: { $in: usuarioIds }, estado: 'ACTIVO' },
+      { fcmTokens: 1, fcmToken: 1 },
+    ).lean();
+    const tokens = new Set<string>();
+    usuarios.forEach((u: any) => {
+      (u.fcmTokens || []).forEach((t: any) => t?.token && tokens.add(t.token));
+      if (typeof u.fcmToken === 'string' && u.fcmToken) tokens.add(u.fcmToken);
+    });
+    return [...tokens];
+  }
+
+  /**
+   * Envía el mismo push a muchos tokens: bloques de 500 con sendEachForMulticast y limpieza de inválidos.
+   * Lanza si FCM falla por completo (la cola reintenta el trabajo).
+   */
+  async enviarMulticast(tokens: string[], contenido: ContenidoPush): Promise<{ exitos: number; fallos: number; invalidos: number }> {
+    if (!this.firebaseInitialized || tokens.length === 0) return { exitos: 0, fallos: 0, invalidos: 0 };
+    const mensaje = construirMensaje(contenido);
+    const invalidos: string[] = [];
+    let exitos = 0;
+    let fallos = 0;
+    for (let i = 0; i < tokens.length; i += TOKENS_POR_MULTICAST) {
+      const bloque = tokens.slice(i, i + TOKENS_POR_MULTICAST);
+      const respuesta = await this.messaging.sendEachForMulticast({ tokens: bloque, ...mensaje });
+      exitos += respuesta.successCount || 0;
+      fallos += respuesta.failureCount || 0;
+      (respuesta.responses || []).forEach((r: any, idx: number) => {
+        if (!r.success && ERRORES_TOKEN_INVALIDO.includes(r.error?.code)) invalidos.push(bloque[idx]);
+      });
+    }
+    if (invalidos.length > 0) await this.limpiarTokensInvalidos(invalidos);
+    return { exitos, fallos, invalidos: invalidos.length };
+  }
+
+  /** Quita tokens inválidos de TODOS los usuarios con un solo $pull (y del campo antiguo). */
+  async limpiarTokensInvalidos(tokens: string[]): Promise<void> {
+    if (tokens.length === 0) return;
+    try {
+      await Usuario.updateMany(
+        { 'fcmTokens.token': { $in: tokens } },
+        { $pull: { fcmTokens: { token: { $in: tokens } } } },
+      );
+      await Usuario.updateMany(
+        { fcmToken: { $in: tokens } },
+        { $set: { fcmToken: null, fcmTokenUpdatedAt: new Date() } },
+      );
+    } catch (error) {
+      console.error('Error limpiando tokens inválidos:', error);
+    }
+  }
+
+  // Envío directo a UN token (endpoint de prueba /test-push). El resto de envíos van por la cola.
+  async enviarNotificacion(datos: NotificacionData): Promise<{ success: boolean; messageId?: string; error?: string }> {
     if (!this.firebaseInitialized) {
       return { success: false, error: 'Firebase no inicializado' };
     }
-
     try {
       if (!datos.token || !datos.titulo || !datos.mensaje) {
         throw new Error('Token, título y mensaje son requeridos');
       }
-
+      const base = construirMensaje({ titulo: datos.titulo, mensaje: datos.mensaje, data: datos.data, sound: datos.sound });
       const message = {
         token: datos.token,
-        notification: {
-          title: datos.titulo,
-          body: datos.mensaje,
-          ...(datos.imageUrl && { imageUrl: datos.imageUrl }),
-        },
-        data: {
-          ...(datos.data || {}),
-          timestamp: Date.now().toString(),
-        },
-        android: {
-          notification: {
-            channelId: 'educanexo360_messages',
-            priority: 'high' as const,
-            sound: datos.sound || 'default',
-            ...(datos.badge && { notificationCount: datos.badge }),
-          },
-          data: datos.data || {},
-        },
-        apns: {
-          payload: {
-            aps: {
-              alert: {
-                title: datos.titulo,
-                body: datos.mensaje,
-              },
-              sound: datos.sound || 'default',
-              ...(datos.badge && { badge: datos.badge }),
-            },
-          },
-          headers: {
-            'apns-priority': '10',
-            'apns-push-type': 'alert',
-          },
-        },
+        ...base,
+        notification: { ...base.notification, ...(datos.imageUrl && { imageUrl: datos.imageUrl }) },
       };
-
       const response = await this.messaging.send(message);
-
       return { success: true, messageId: response };
     } catch (error: any) {
       console.error('Error enviando push notification:', error);
-
-      if (
-        error.code === 'messaging/registration-token-not-registered' ||
-        error.code === 'messaging/invalid-registration-token'
-      ) {
-        await this.limpiarTokenInvalido(datos.token);
+      if (ERRORES_TOKEN_INVALIDO.includes(error.code)) {
+        await this.limpiarTokensInvalidos([datos.token]);
       }
-
       return { success: false, error: error.message };
     }
   }
 
-  // 🚀 ENVIAR NOTIFICACIÓN MASIVA
+  // Compatibilidad: envío masivo directo (bloques de 500). Preferir encolarPush.
   async enviarNotificacionMasiva(datos: NotificacionMasiva): Promise<{
     success: boolean;
     successCount: number;
     failureCount: number;
     errors?: string[];
   }> {
-    if (!this.firebaseInitialized) {
-      return { success: false, successCount: 0, failureCount: datos.tokens?.length ?? 0, errors: ['Firebase no inicializado'] };
-    }
-
     try {
-      if (!datos.tokens || datos.tokens.length === 0) {
-        throw new Error('Al menos un token es requerido');
-      }
-
-      const message = {
-        notification: { title: datos.titulo, body: datos.mensaje },
-        data: { ...(datos.data || {}), timestamp: Date.now().toString() },
-        android: { notification: { channelId: 'educanexo360_messages', priority: 'high' as const } },
-        apns: { payload: { aps: { alert: { title: datos.titulo, body: datos.mensaje }, sound: 'default' } } },
-      };
-
-      const response = await this.messaging.sendEachForMulticast({ tokens: datos.tokens, ...message });
-
-      if (response.responses) {
-        for (let i = 0; i < response.responses.length; i++) {
-          const resp = response.responses[i];
-          if (!resp.success && resp.error) {
-            const errorCode = resp.error.code;
-            if (
-              errorCode === 'messaging/registration-token-not-registered' ||
-              errorCode === 'messaging/invalid-registration-token'
-            ) {
-              await this.limpiarTokenInvalido(datos.tokens[i]);
-            }
-          }
-        }
-      }
-
-      return {
-        success: true,
-        successCount: response.successCount,
-        failureCount: response.failureCount,
-        errors: response.responses
-          ?.filter((r: any) => !r.success)
-          .map((r: any) => r.error?.message)
-          .filter(Boolean) as string[],
-      };
+      const r = await this.enviarMulticast(datos.tokens || [], { titulo: datos.titulo, mensaje: datos.mensaje, data: datos.data });
+      return { success: this.firebaseInitialized, successCount: r.exitos, failureCount: r.fallos };
     } catch (error: any) {
       console.error('Error enviando notificación masiva:', error);
-      return { success: false, successCount: 0, failureCount: datos.tokens.length, errors: [error.message] };
+      return { success: false, successCount: 0, failureCount: datos.tokens?.length ?? 0, errors: [error.message] };
     }
   }
 
-  // Notificación para nuevo mensaje
+  // Nuevo mensaje: ahora ENCOLA (antes: 1 consulta + 1 llamada a FCM por destinatario dentro del request)
   async notificarNuevoMensaje(
     destinatarioId: string,
     remitenteNombre: string,
@@ -203,97 +330,71 @@ class PushNotificationService {
     mensajeId: string,
     prioridad: 'ALTA' | 'NORMAL' | 'BAJA' = 'NORMAL',
   ): Promise<boolean> {
-    if (!this.firebaseInitialized) return false;
-
     try {
-      const destinatario = (await Usuario.findById(destinatarioId).select('fcmToken')) as any;
-      if (!destinatario?.fcmToken) return false;
-
       const titulo =
-        prioridad === 'ALTA'
-          ? `🔴 Mensaje importante de ${remitenteNombre}`
-          : `💬 Nuevo mensaje de ${remitenteNombre}`;
-
-      const resultado = await this.enviarNotificacion({
-        token: destinatario.fcmToken,
-        titulo,
-        mensaje: asunto,
-        data: { tipo: 'mensaje', mensajeId, prioridad, remitente: remitenteNombre },
+        prioridad === 'ALTA' ? `🔴 Mensaje importante de ${remitenteNombre}` : `💬 Nuevo mensaje de ${remitenteNombre}`;
+      const n = await this.encolarPush({
+        usuarioIds: [destinatarioId],
+        contenido: { titulo, mensaje: asunto, data: { tipo: 'mensaje', mensajeId, prioridad, remitente: remitenteNombre } },
+        prioridad: prioridad === 'ALTA' ? 'alta' : 'normal',
       });
-
-      return resultado.success;
+      return n > 0;
     } catch (error) {
       console.error('Error notificando nuevo mensaje:', error);
       return false;
     }
   }
 
-  // Notificación para mensaje urgente
+  // Mensaje urgente: ahora ENCOLA (mismos datos que antes: tipo 'urgente', sonido 'emergency')
   async notificarMensajeUrgente(
     destinatarioId: string,
     remitenteNombre: string,
     asunto: string,
     mensajeId: string,
   ): Promise<boolean> {
-    if (!this.firebaseInitialized) return false;
-
     try {
-      const destinatario = (await Usuario.findById(destinatarioId).select('fcmToken')) as any;
-      if (!destinatario?.fcmToken) return false;
-
-      const resultado = await this.enviarNotificacion({
-        token: destinatario.fcmToken,
-        titulo: `🚨 URGENTE: ${remitenteNombre}`,
-        mensaje: asunto,
-        data: { tipo: 'urgente', mensajeId, prioridad: 'ALTA', remitente: remitenteNombre },
-        sound: 'emergency',
+      const n = await this.encolarPush({
+        usuarioIds: [destinatarioId],
+        contenido: {
+          titulo: `🚨 URGENTE: ${remitenteNombre}`,
+          mensaje: asunto,
+          data: { tipo: 'urgente', mensajeId, prioridad: 'ALTA', remitente: remitenteNombre },
+          sound: 'emergency',
+        },
+        prioridad: 'alta',
       });
-
-      return resultado.success;
+      return n > 0;
     } catch (error) {
       console.error('Error notificando mensaje urgente:', error);
       return false;
     }
   }
 
-  // 🗑️ LIMPIAR TOKEN INVÁLIDO
-  private async limpiarTokenInvalido(token: string): Promise<void> {
-    try {
-      await Usuario.updateOne({ fcmToken: token }, { $unset: { fcmToken: 1, fcmTokenUpdatedAt: 1 } });
-    } catch (error) {
-      console.error('Error limpiando token inválido:', error);
-    }
-  }
-
-  // 📊 OBTENER ESTADÍSTICAS DE TOKENS
+  // 📊 OBTENER ESTADÍSTICAS DE TOKENS (dispositivos registrados)
   async obtenerEstadisticas(): Promise<{
     totalTokens: number;
     tokensPorPlataforma: { ios: number; android: number };
     tokensActivos: number;
   }> {
-    if (!this.firebaseInitialized) {
-      return { totalTokens: 0, tokensPorPlataforma: { ios: 0, android: 0 }, tokensActivos: 0 };
-    }
-
     try {
-      const estadisticas = await Usuario.aggregate([
-        { $match: { fcmToken: { $exists: true, $ne: null }, estado: 'ACTIVO' } },
-        { $group: { _id: '$platform', count: { $sum: 1 } } },
+      const [porPlataforma, totales] = await Promise.all([
+        Usuario.aggregate([
+          { $match: { 'fcmTokens.0': { $exists: true }, estado: 'ACTIVO' } },
+          { $unwind: '$fcmTokens' },
+          { $group: { _id: '$fcmTokens.platform', count: { $sum: 1 } } },
+        ]),
+        Usuario.aggregate([
+          { $match: { 'fcmTokens.0': { $exists: true } } },
+          { $project: { n: { $size: '$fcmTokens' }, activo: { $eq: ['$estado', 'ACTIVO'] } } },
+          { $group: { _id: null, total: { $sum: '$n' }, activos: { $sum: { $cond: ['$activo', '$n', 0] } } } },
+        ]),
       ]);
-
-      const totalTokens = await Usuario.countDocuments({ fcmToken: { $exists: true, $ne: null } });
-      const tokensActivos = await Usuario.countDocuments({ fcmToken: { $exists: true, $ne: null }, estado: 'ACTIVO' });
-
-      const tokensPorPlataforma = estadisticas.reduce(
-        (acc, curr) => {
-          if (curr._id === 'ios') acc.ios = curr.count;
-          if (curr._id === 'android') acc.android = curr.count;
-          return acc;
-        },
-        { ios: 0, android: 0 },
-      );
-
-      return { totalTokens, tokensPorPlataforma, tokensActivos };
+      const tokensPorPlataforma = { ios: 0, android: 0 };
+      porPlataforma.forEach((p: any) => {
+        if (p._id === 'ios') tokensPorPlataforma.ios = p.count;
+        if (p._id === 'android') tokensPorPlataforma.android = p.count;
+      });
+      return { totalTokens: totales[0]?.total || 0, tokensPorPlataforma, tokensActivos: totales[0]?.activos || 0 };
     } catch (error) {
       console.error('Error obteniendo estadísticas:', error);
       return { totalTokens: 0, tokensPorPlataforma: { ios: 0, android: 0 }, tokensActivos: 0 };

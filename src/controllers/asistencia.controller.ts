@@ -448,34 +448,42 @@ export const actualizarAsistencia = async (
         const ausentesIds = ausentes.map((est: any) => est.estudianteId);
         const asignaturaNombre = (asistencia.asignaturaId as any)?.nombre || 'clase';
 
+        // Por la cola (Fase 4.3): 2 consultas en total (estudiantes y acudientes con dispositivo) y un
+        // trabajo de push por estudiante ausente para sus acudientes (antes: 2 consultas + 1 envío por cada uno)
         (async () => {
-          for (const estudianteId of ausentesIds) {
-            try {
-              const estudiante = await Usuario.findOne({ _id: estudianteId, escuelaId: asistencia.escuelaId })
+          try {
+            const [estudiantesAusentes, acudienteIds] = await Promise.all([
+              Usuario.find({ _id: { $in: ausentesIds }, escuelaId: asistencia.escuelaId })
                 .select('nombre apellidos')
-                .lean() as any;
-              if (!estudiante) continue;
-
-              // Corregido: el campo real es info_academica.estudiantes_asociados (antes: estudiantesAsociados)
-              const acudientes = await Usuario.find(
-                {
-                  escuelaId: asistencia.escuelaId,
-                  tipo: 'ACUDIENTE',
-                  'info_academica.estudiantes_asociados': estudianteId,
-                  fcmToken: { $exists: true, $ne: null },
-                },
-                { fcmToken: 1 }
-              ).lean() as any[];
-
-              for (const acudiente of acudientes) {
-                pushNotificationService.enviarNotificacion({
-                  token: acudiente.fcmToken,
+                .lean(),
+              pushNotificationService.idsConDispositivo({
+                escuelaId: asistencia.escuelaId,
+                tipo: 'ACUDIENTE',
+                'info_academica.estudiantes_asociados': { $in: ausentesIds },
+              }),
+            ]);
+            if (acudienteIds.length === 0) return;
+            const acudientes = await Usuario.find({ _id: { $in: acudienteIds } })
+              .select('info_academica.estudiantes_asociados')
+              .lean();
+            for (const estudiante of estudiantesAusentes as any[]) {
+              const idEst = String(estudiante._id);
+              const suyos = (acudientes as any[])
+                .filter((a) => (a.info_academica?.estudiantes_asociados || []).some((e: any) => String(e) === idEst))
+                .map((a) => String(a._id));
+              if (suyos.length === 0) continue;
+              await pushNotificationService.encolarPush({
+                usuarioIds: suyos,
+                contenido: {
                   titulo: 'Ausencia registrada',
                   mensaje: `${estudiante.nombre} ${estudiante.apellidos} fue marcado ausente en ${asignaturaNombre}`,
-                  data: { tipo: 'ausencia', estudianteId: estudianteId.toString() },
-                }).catch(() => {});
-              }
-            } catch {/* silencioso */}
+                  data: { tipo: 'ausencia', estudianteId: idEst },
+                },
+                escuelaId: String(asistencia.escuelaId),
+              });
+            }
+          } catch (err) {
+            console.error('[Asistencia] No se pudo encolar el push de ausencias:', err);
           }
         })();
       }

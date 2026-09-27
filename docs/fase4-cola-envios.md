@@ -124,3 +124,34 @@ En el log de arranque debe aparecer `[Outbox] Worker iniciado (cada 5000 ms, con
 
 > Nota: el SDK de AWS v3 avisa que sus versiones publicadas desde enero de 2027 exigirán Node ≥ 22. La versión
 > instalada funciona con Node 20; al actualizar dependencias, verificar la versión de Node del hosting.
+
+## 4.3 Push masivo y varios dispositivos
+
+- `Usuario.fcmTokens: [{ token, platform, deviceInfo, updatedAt }]`, máximo 5 por usuario: al registrar uno
+  nuevo sale el más viejo. `fcmToken`/`platform` (campos antiguos) quedan con el último dispositivo.
+- `POST /notificaciones/register-token` (y su alias `fcm-token`) **agregan** el dispositivo. Un token pertenece
+  a un solo usuario: se quita de cualquier otra cuenta. `fcmToken: null` desvincula todos (APK 1.0.0).
+- `POST /notificaciones/unregister-token` con `fcmToken` quita solo ese dispositivo; **sin** `fcmToken` quita
+  todos (antes respondía 400).
+- Las APK viejas envían lo mismo que antes y siguen funcionando. Además ahora varios celulares del mismo
+  usuario reciben el push (antes el último pisaba al anterior).
+- Envío: trabajos `push` en la cola, de ~50 usuarios cada uno. El worker lee sus tokens en una consulta, envía
+  con `sendEachForMulticast` en bloques de 500 y limpia los inválidos con un `$pull`. Los datos que recibe la
+  app (`tipo`, `mensajeId`, `tareaId`, `anuncioId`, `eventoId`, `estudianteId`) no cambian.
+- Pasan por la cola: anuncios, calendario (una sola vez por evento, 3.Y), tareas, ausencias y alertas de
+  asistencia. Las alertas **ahora también envían push** (antes estaba pendiente); abren el mensaje de la alerta.
+- `PUSH_PROVIDER=simulado` (solo pruebas): no llama a Firebase.
+
+### Migración de tokens e índice único (en el deploy)
+
+El índice único `fcmTokens_token_unico` (`{ 'fcmTokens.token': 1 }`, parcial por `$type: 'string'`) está
+declarado en el schema con `_autoIndex: false`: **no** se crea al arrancar. Pasos:
+
+1. `mongodump` de Atlas.
+2. Deploy del código y reinicio (la migración perezosa empieza sola: cada registro mueve el token antiguo al
+   arreglo).
+3. Simulación: `MONGODB_URI="..." node src/scripts/migrar-fcm-tokens.js` (informa duplicados y copias; no
+   cambia nada). `sync-indexes.js` en simulación muestra el índice como faltante.
+4. `MONGODB_URI="..." node src/scripts/migrar-fcm-tokens.js --aplicar`: deduplica (gana el registro más
+   reciente), copia `fcmToken → fcmTokens` y **al final** crea el índice único. Se puede volver a correr (es
+   idempotente).

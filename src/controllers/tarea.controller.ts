@@ -192,23 +192,21 @@ class TareaController {
 
       // Notificar a los estudiantes asignados (fire-and-forget, no bloquea la respuesta)
       if (estudiantesParaAsignar.length > 0) {
-        Usuario.find(
-          { _id: { $in: estudiantesParaAsignar }, fcmToken: { $exists: true, $ne: null } },
-          { fcmToken: 1 }
-        ).then((estudiantes: any[]) => {
-          const tokens = estudiantes.map((e) => e.fcmToken).filter(Boolean);
-          if (tokens.length > 0) {
-            const fechaStr = nuevaTarea.fechaLimite
-              ? new Date(nuevaTarea.fechaLimite).toLocaleDateString('es-CO')
-              : '';
-            pushNotificationService.enviarNotificacionMasiva({
-              tokens,
+        // Por la cola (Fase 4.3): lotes de ~50 estudiantes, todos sus dispositivos
+        const fechaStr = nuevaTarea.fechaLimite
+          ? new Date(nuevaTarea.fechaLimite).toLocaleDateString('es-CO')
+          : '';
+        pushNotificationService
+          .encolarPushFiltro(
+            { _id: { $in: estudiantesParaAsignar } },
+            {
               titulo: `Nueva tarea: ${nuevaTarea.titulo}`,
               mensaje: `${req.user!.nombre} asignó una nueva tarea${fechaStr ? `. Vence: ${fechaStr}` : ''}`,
               data: { tipo: 'tarea', tareaId: (nuevaTarea._id as any).toString() },
-            }).catch(() => {/* silencioso */});
-          }
-        }).catch(() => {/* silencioso */});
+            },
+            { escuelaId: String(req.user!.escuelaId) },
+          )
+          .catch((err) => console.error('[Tarea] No se pudo encolar el push:', err));
       }
     } catch (error) {
       next(error);

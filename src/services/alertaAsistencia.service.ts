@@ -9,6 +9,7 @@ import Usuario from '../models/usuario.model';
 import Notificacion from '../models/notificacion.model';
 import Mensaje from '../models/mensaje.model';
 import { encolarCorreo } from './email.service';
+import pushNotificationService from './pushNotification.service';
 import { escapeHtml } from '../utils/escapeHtml';
 import { EstadoAsistencia } from '../interfaces/IAsistencia';
 import { NivelAlertaAsistencia } from '../interfaces/IAlertaAsistencia';
@@ -179,6 +180,7 @@ async function enviarNotificacionesAlerta(params: {
   }
 
   // Canal 2: Mensaje en bandeja de recibidos
+  let mensajeAlertaId: string | undefined;
   try {
     const prefijos: Record<NivelAlertaAsistencia, string> = {
       ALERTA: '⚠️',
@@ -191,7 +193,7 @@ async function enviarNotificacionesAlerta(params: {
       INMINENTE: PrioridadMensaje.ALTA,
     };
     const sistemaUser = await obtenerOCrearUsuarioSistema();
-    await Mensaje.create({
+    mensajeAlertaId = await Mensaje.create({
       remitente: sistemaUser._id,
       destinatarios: destinatariosUnicos.map((d) => d._id),
       asunto: `${prefijos[nivel]} Alerta ${nivel} — ${nombreEstudiante}`,
@@ -199,7 +201,7 @@ async function enviarNotificacionesAlerta(params: {
       tipo: TipoMensaje.INSTITUCIONAL,
       prioridad: prioridades[nivel],
       escuelaId: new mongoose.Types.ObjectId(escuelaId),
-    });
+    }).then((m: any) => String(m._id));
   } catch (errCanal2) {
     console.error('[AlertaAsistencia] Error en Canal 2:', errCanal2);
   }
@@ -220,7 +222,22 @@ async function enviarNotificacionesAlerta(params: {
     console.error('[AlertaAsistencia] Error en Canal 3:', error);
   }
 
-  // Canal 4: FCM / push notifications — pendiente cuando Flutter integre Firebase.
+  // Canal 4: push por la cola con prioridad ALTA (Fase 4.3). Abre el mensaje de la alerta en la app
+  // (tipo 'mensaje', que la app ya sabe enrutar).
+  try {
+    await pushNotificationService.encolarPush({
+      usuarioIds: destinatariosUnicos.map((d) => String(d._id)),
+      contenido: {
+        titulo,
+        mensaje,
+        data: { tipo: 'mensaje', ...(mensajeAlertaId && { mensajeId: mensajeAlertaId }), prioridad: 'ALTA' },
+      },
+      prioridad: 'alta',
+      escuelaId,
+    });
+  } catch (error) {
+    console.error('[AlertaAsistencia] Error en Canal 4:', error);
+  }
 }
 
 // Mínimo de clases registradas en el periodo antes de evaluar umbrales: al inicio del periodo 1 ausencia

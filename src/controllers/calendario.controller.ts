@@ -74,23 +74,19 @@ const notificarEventoPublicado = (
     { $set: { notificadoEn: new Date() } },
   )
     .then((reclamado) => {
-      if (!reclamado) return [];
-      return Usuario.find({ escuelaId, fcmToken: { $exists: true, $ne: null } }, { fcmToken: 1 });
+      if (!reclamado) return 0;
+      // Por la cola (Fase 4.3): lotes de ~50 usuarios del colegio con dispositivo
+      return pushNotificationService.encolarPushFiltro(
+        { escuelaId },
+        {
+          titulo: `Nuevo evento: ${titulo}`,
+          mensaje: fechaStr ? `Fecha: ${fechaStr}` : 'Se ha creado un nuevo evento en el calendario',
+          data: { tipo: 'evento', eventoId: String(evento._id) },
+        },
+        { escuelaId: String(escuelaId) },
+      );
     })
-    .then((usuarios: any[]) => {
-      const tokens = usuarios.map((u) => u.fcmToken).filter(Boolean);
-      if (tokens.length > 0) {
-        pushNotificationService
-          .enviarNotificacionMasiva({
-            tokens,
-            titulo: `Nuevo evento: ${titulo}`,
-            mensaje: fechaStr ? `Fecha: ${fechaStr}` : 'Se ha creado un nuevo evento en el calendario',
-            data: { tipo: 'evento', eventoId: String(evento._id) },
-          })
-          .catch(() => {/* silencioso */});
-      }
-    })
-    .catch(() => {/* silencioso */});
+    .catch((err) => console.error('[Calendario] No se pudo encolar el push:', err));
 };
 
 class CalendarioController {

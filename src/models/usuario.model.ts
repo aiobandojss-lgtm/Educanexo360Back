@@ -91,6 +91,22 @@ const UsuarioSchema = new Schema(
       type: Date,
       default: null
     },
+    // Fase 4.3: varios dispositivos por usuario (máx. 5; al registrar uno nuevo sale el más viejo).
+    // fcmToken (arriba) se conserva con el último token registrado por compatibilidad.
+    fcmTokens: {
+      type: [
+        new mongoose.Schema(
+          {
+            token: { type: String, required: true },
+            platform: { type: String, enum: ['ios', 'android'] },
+            deviceInfo: { type: mongoose.Schema.Types.Mixed },
+            updatedAt: { type: Date },
+          },
+          { _id: false },
+        ),
+      ],
+      default: undefined,
+    },
     
     // Campos para RBAC — perfil de rol personalizado por escuela (opcional)
     rolBase: {
@@ -125,6 +141,19 @@ UsuarioSchema.index(
   { fcmToken: 1 },
   { name: 'fcmToken_parcial', partialFilterExpression: { fcmToken: { $type: 'string' } } },
 );
+// Fase 4.3: un token pertenece a UN solo usuario (garantizado en la base). Parcial por $type string: sin eso
+// los usuarios sin dispositivos chocarían como duplicados de null. _autoIndex:false → NO se crea al arrancar:
+// lo crea src/scripts/migrar-fcm-tokens.js --aplicar DESPUÉS de migrar y deduplicar (sync-indexes lo muestra
+// como faltante en simulación hasta entonces).
+UsuarioSchema.index(
+  { 'fcmTokens.token': 1 },
+  {
+    name: 'fcmTokens_token_unico',
+    unique: true,
+    partialFilterExpression: { 'fcmTokens.token': { $type: 'string' } },
+    _autoIndex: false,
+  } as any,
+);
 
 // Campos que nunca deben salir en una respuesta HTTP
 const CAMPOS_SENSIBLES = [
@@ -134,6 +163,7 @@ const CAMPOS_SENSIBLES = [
   'fcmToken',
   'fcmTokenUpdatedAt',
   'deviceInfo',
+  'fcmTokens',
 ];
 
 // Elimina los campos sensibles al serializar (res.json usa toJSON; también aplica a populate).
