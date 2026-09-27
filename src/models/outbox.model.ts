@@ -30,6 +30,8 @@ export interface IOutbox extends Document {
   enviados: string[];
   // Solo en HECHO/FALLIDO: el TTL borra el documento 7 días después (los PENDIENTE nunca expiran)
   expireAt?: Date;
+  // FALLIDO que no tiene sentido reintentar (rechazo permanente, enlace vencido): reintentar-fallidos lo omite (4.AG)
+  definitivo?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -53,6 +55,7 @@ const OutboxSchema = new Schema<IOutbox>(
     claveUnica: { type: String },
     enviados: { type: [String], default: [] },
     expireAt: { type: Date },
+    definitivo: { type: Boolean },
   },
   { timestamps: true, collection: 'outbox', minimize: false },
 );

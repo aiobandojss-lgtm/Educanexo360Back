@@ -2,10 +2,11 @@
  * Registro de los handlers de la cola de envíos (Fase 4). Se importa una vez desde app.ts.
  * Cada tipo de trabajo registra aquí su handler con registrarHandler(tipo, fn) de ./outbox.
  */
-import { registrarHandler, registrarTareaPeriodica, ReprogramarTrabajo, encolar } from './outbox';
+import { registrarHandler, registrarTareaPeriodica, ReprogramarTrabajo, encolar, registrarObservadorFallido } from './outbox';
+import { registrarEnvioProveedor, registrarFallido, revisarCierre } from './monitorEnvios';
 import { encolarResumenSiCorresponde, procesarResumenDiario } from '../services/resumenDiario.service';
 import { esEmailFicticio } from '../services/email.service';
-import { obtenerProveedor } from '../services/email/proveedores';
+import { obtenerProveedor, registrarObservadorEnvios } from '../services/email/proveedores';
 import { reservarCupo, liberarCupo, cupoDeHoy } from '../services/email/cupo';
 import { renderizarCorreo } from '../services/email/plantillas';
 import { inicioDiaSiguienteColombia } from '../utils/fechas';
@@ -15,6 +16,11 @@ import Mensaje from '../models/mensaje.model';
 import { logger } from '../utils/logger';
 import { enmascararEmail, enmascararEmailsEnTexto } from '../utils/enmascarar';
 import { procesarCorreoCuenta } from '../services/email/cuentas';
+
+// Auditoría 4.AG: detector de fallos sistémicos del correo (episodios con aviso por campanita + push)
+registrarObservadorEnvios((resultado) => registrarEnvioProveedor(resultado));
+registrarObservadorFallido((trabajo) => registrarFallido(trabajo));
+registrarTareaPeriodica('monitor-envios', async () => revisarCierre());
 
 /** Marca un id como atendido reintentando ante fallos de red (el envío ya ocurrió: nunca se reenvía por esto). */
 const marcarConReintentos = async (ctx: { marcarEnviados: (ids: string[]) => Promise<void> }, id: string) => {

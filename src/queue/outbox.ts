@@ -77,6 +77,9 @@ const CFG = {
   lote: num('OUTBOX_BATCH', 20), // trabajos máximos por tick
   concurrencia: num('OUTBOX_CONCURRENCY', 5),
   maxIntentos: num('OUTBOX_MAX_INTENTOS', 5),
+  // Auditoría 4.AG: los correos aguantan un bloqueo del proveedor más largo (8 intentos, ~1 h en total)
+  maxIntentosCorreo: num('OUTBOX_MAX_INTENTOS_CORREO', 8),
+  backoffMaxMs: num('OUTBOX_BACKOFF_MAX_MS', 30 * 60 * 1000),
   lockMs: LOCK_MS,
   backoffBaseMs: num('OUTBOX_BACKOFF_MS', 30 * 1000),
   timeoutTrabajoMs: TIMEOUT.timeoutMs,
@@ -140,6 +143,26 @@ export class TrabajoCancelado extends Error {
     this.name = 'TrabajoCancelado';
   }
 }
+
+/** Tipos de correo (auditoría 4.AG): más intentos y vigilados por el detector de fallos sistémicos. */
+export const TIPOS_CORREO = ['email', 'correo-cuenta'];
+const maxIntentosDe = (tipo: string): number => (TIPOS_CORREO.includes(tipo) ? CFG.maxIntentosCorreo : CFG.maxIntentos);
+
+/** Observadores de trabajos que terminan en FALLIDO (el detector de fallos los conecta desde queue/handlers.ts). */
+const observadoresFallido: ((trabajo: IOutbox) => void)[] = [];
+export const registrarObservadorFallido = (fn: (trabajo: IOutbox) => void): void => {
+  observadoresFallido.push(fn);
+};
+const avisarFallido = (trabajo: IOutbox, error: string): void => {
+  const t = { ...(trabajo.toObject ? trabajo.toObject() : trabajo), error } as IOutbox;
+  for (const fn of observadoresFallido) {
+    try {
+      fn(t);
+    } catch (e: any) {
+      logger.error(`[Outbox] observador de FALLIDO: ${textoError(e)}`);
+    }
+  }
+};
 
 const handlers = new Map<string, HandlerTrabajo>();
 const tareasPeriodicas: { nombre: string; fn: () => Promise<void> }[] = [];
@@ -212,8 +235,9 @@ let trabajosEnCurso = 0;
 const redactar = (trabajo: IOutbox) =>
   trabajo.payload?.sensible ? { payload: { sensible: true, redactado: true } } : {};
 
+// Backoff exponencial con tope (auditoría 4.AG: OUTBOX_BACKOFF_MAX_MS, 30 min)
 const retrasoBackoff = (intentos: number): number =>
-  CFG.backoffBaseMs * Math.pow(2, Math.max(intentos - 1, 0));
+  Math.min(CFG.backoffBaseMs * Math.pow(2, Math.max(intentos - 1, 0)), CFG.backoffMaxMs);
 
 /**
  * Cierre de un trabajo (auditoría 4.F): solo si SIGUE siendo nuestro (PROCESANDO con el mismo lockedUntil del
@@ -341,15 +365,24 @@ const ejecutarTrabajo = async (trabajo: IOutbox): Promise<void> => {
     return;
   }
 
-  const mensaje = textoError(errorHandler);
-  if (trabajo.intentos >= CFG.maxIntentos || errorHandler?.definitivo === true) {
-    await cerrarTrabajo(
+  let mensaje = textoError(errorHandler);
+  let definitivo = errorHandler?.definitivo === true;
+  const nextRunAt = new Date(Date.now() + retrasoBackoff(trabajo.intentos));
+  // 4.AG: un correo crítico no se reprograma más allá de su caducaEn (llegaría con el enlace vencido)
+  const caducaEn = trabajo.payload?.caducaEn ? new Date(trabajo.payload.caducaEn) : null;
+  if (!definitivo && caducaEn && nextRunAt.getTime() > caducaEn.getTime()) {
+    definitivo = true;
+    mensaje = `${mensaje} | El siguiente intento sería después de que venza el enlace`.slice(0, 1000);
+  }
+  if (trabajo.intentos >= maxIntentosDe(trabajo.tipo) || definitivo) {
+    const cerrado = await cerrarTrabajo(
       trabajo,
       {
         $set: {
           estado: 'FALLIDO',
           error: mensaje,
           expireAt: new Date(Date.now() + CFG.retencionMs),
+          ...(definitivo && { definitivo: true }),
           ...redactar(trabajo),
         },
         $unset: { lockedUntil: 1 },
@@ -357,8 +390,8 @@ const ejecutarTrabajo = async (trabajo: IOutbox): Promise<void> => {
       'FALLIDO',
     );
     logger.error(`[Outbox] ${trabajo.tipo} ${trabajo._id} FALLIDO tras ${trabajo.intentos} intento(s): ${mensaje}`);
+    if (cerrado) avisarFallido(trabajo, mensaje);
   } else {
-    const nextRunAt = new Date(Date.now() + retrasoBackoff(trabajo.intentos));
     await cerrarTrabajo(
       trabajo,
       { $set: { estado: 'PENDIENTE', error: mensaje, nextRunAt }, $unset: { lockedUntil: 1 } },
@@ -420,8 +453,15 @@ export const ejecutarTick = async (): Promise<void> => {
       // 1. Retomar trabajos de un proceso que murió (lock vencido); el intento ya quedó contado.
       //    Si ya agotó los intentos (p. ej. un trabajo que tumba el proceso siempre) pasa a FALLIDO.
       const vencido = { estado: 'PROCESANDO', lockedUntil: { $lt: new Date() } };
+      // Intentos agotados según el tipo (4.AG: los correos tienen más)
+      const agotados = {
+        $or: [
+          { tipo: { $in: TIPOS_CORREO }, intentos: { $gte: CFG.maxIntentosCorreo } },
+          { tipo: { $nin: TIPOS_CORREO }, intentos: { $gte: CFG.maxIntentos } },
+        ],
+      };
       await Outbox.updateMany(
-        { ...vencido, intentos: { $gte: CFG.maxIntentos } },
+        { ...vencido, ...agotados },
         {
           $set: {
             estado: 'FALLIDO',
@@ -432,7 +472,7 @@ export const ejecutarTick = async (): Promise<void> => {
         },
       );
       await Outbox.updateMany(
-        { ...vencido, intentos: { $lt: CFG.maxIntentos } },
+        { ...vencido, $nor: [agotados] },
         { $set: { estado: 'PENDIENTE' }, $unset: { lockedUntil: 1 } },
       );
 

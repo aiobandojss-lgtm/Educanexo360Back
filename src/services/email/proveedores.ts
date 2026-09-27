@@ -308,10 +308,43 @@ export const crearProveedor = (nombre: string): EmailProvider => {
   }
 };
 
+/**
+ * Observadores de cada envío (auditoría 4.AG): 'exito', 'fallo' (el proveedor no lo aceptó) o 'rechazo' (dirección
+ * rechazada de forma permanente: el proveedor funciona). El detector de fallos sistémicos se conecta desde
+ * queue/handlers.ts.
+ */
+export type ResultadoEnvio = 'exito' | 'fallo' | 'rechazo';
+const observadoresEnvio: ((resultado: ResultadoEnvio) => void)[] = [];
+export const registrarObservadorEnvios = (fn: (resultado: ResultadoEnvio) => void): void => {
+  observadoresEnvio.push(fn);
+};
+const avisarEnvio = (resultado: ResultadoEnvio): void => {
+  for (const fn of observadoresEnvio) {
+    try {
+      fn(resultado);
+    } catch (e: any) {
+      logger.error(`[Email] observador de envíos: ${e?.message || e}`);
+    }
+  }
+};
+
 /** Proveedor configurado (EMAIL_PROVIDER). Por defecto smtp, que es lo que había antes de la Fase 4. */
 export const obtenerProveedor = (): EmailProvider => {
   if (proveedor) return proveedor;
-  proveedor = crearProveedor(process.env.EMAIL_PROVIDER || 'smtp');
+  const real = crearProveedor(process.env.EMAIL_PROVIDER || 'smtp');
+  proveedor = {
+    nombre: real.nombre,
+    async send(m) {
+      try {
+        const r = await real.send(m);
+        avisarEnvio('exito');
+        return r;
+      } catch (error: any) {
+        avisarEnvio(error?.permanente ? 'rechazo' : 'fallo');
+        throw error;
+      }
+    },
+  };
   logger.info(`[Email] Proveedor de correo: ${proveedor.nombre}`);
   return proveedor;
 };
