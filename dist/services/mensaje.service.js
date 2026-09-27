@@ -22,6 +22,7 @@ const simpleCache_1 = require("../cache/simpleCache");
 const config_1 = __importDefault(require("../config/config"));
 const accesoAcademico_1 = require("../utils/accesoAcademico");
 const logger_1 = require("../utils/logger");
+const claveLote_1 = require("../utils/claveLote");
 const TIPO_LEGIBLE = {
     DOCENTE: 'docente',
     RECTOR: 'rector(a)',
@@ -365,10 +366,10 @@ class MensajeService {
         logger_1.logger.debug(`✅ Destinatarios de cursos obtenidos: ${destinatarios.length}`);
         return destinatarios;
     }
-    async encolarDespacho(mensajeId, remitente, prioridad, opciones = {}) {
+    async encolarDespacho(mensajeId, remitente, _prioridad, opciones = {}) {
         const trabajo = {
             tipo: 'despachar-mensaje',
-            prioridad: (prioridad === IMensaje_1.PrioridadMensaje.ALTA ? 'alta' : 'normal'),
+            prioridad: 'alta',
             escuelaId: String(remitente.escuelaId),
             claveUnica: `despacho:${mensajeId}`,
             payload: {
@@ -410,6 +411,7 @@ class MensajeService {
             estado: 'ACTIVO',
         })
             .select('_id email nombre tipo preferencias fcmToken fcmTokens.token')
+            .sort({ _id: 1 })
             .lean();
         if (usuarios.length === 0)
             return;
@@ -420,7 +422,11 @@ class MensajeService {
         const asunto = mensaje.asunto;
         const tieneAdjuntos = (mensaje.adjuntos || []).length > 0;
         const mensajeObjId = new mongoose_1.default.Types.ObjectId(mensajeId);
-        const yaNotificados = new Set((await notificacion_model_1.default.find({ entidadId: mensajeObjId, usuarioId: { $in: usuarios.map((u) => u._id) } })
+        const yaNotificados = new Set((await notificacion_model_1.default.find({
+            entidadTipo: 'Mensaje',
+            entidadId: mensajeObjId,
+            usuarioId: { $in: usuarios.map((u) => u._id) },
+        })
             .select('usuarioId')
             .lean()).map((n) => String(n.usuarioId)));
         const faltan = usuarios.filter((u) => !yaNotificados.has(String(u._id)));
@@ -445,10 +451,16 @@ class MensajeService {
                 },
                 createdAt: ahora,
                 updatedAt: ahora,
-            })), { ordered: false, lean: true });
+            })), { ordered: false, lean: true }).catch((error) => {
+                const errores = error?.writeErrors || [];
+                if (errores.length > 0 && errores.every((e) => (e.code ?? e.err?.code) === 11000))
+                    return;
+                throw error;
+            });
         }
         const urgente = prioridad === IMensaje_1.PrioridadMensaje.ALTA || /urgente|emergencia/i.test(String(asunto || ''));
-        const conClave = (trabajos, canal) => trabajos.map((t, i) => ({ ...t, claveUnica: `despacho:${mensajeId}:${canal}:${i}` }));
+        const idsDelLote = (t) => t.payload.usuarioIds || (t.payload.destinatarios || []).map((d) => d.usuarioId || d.email);
+        const conClave = (trabajos, canal) => trabajos.map((t) => ({ ...t, claveUnica: (0, claveLote_1.claveDeLote)(`despacho:${mensajeId}:${canal}`, idsDelLote(t)) }));
         const trabajos = [
             ...conClave((0, email_service_1.construirTrabajosCorreo)({
                 destinatarios: usuarios

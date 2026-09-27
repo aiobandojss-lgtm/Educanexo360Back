@@ -475,8 +475,9 @@ class UsuarioController {
                 }
                 enviarA = [String(objetivo._id)];
             }
+            let encolados = 0;
             try {
-                await (0, cuentas_1.encolarCorreoCuenta)({
+                encolados = await (0, cuentas_1.encolarCorreoCuenta)({
                     tipo: 'definir',
                     usuarioId: String(objetivo._id),
                     enviarA,
@@ -486,6 +487,9 @@ class UsuarioController {
             catch (errorCola) {
                 console.error('[Usuarios] No se pudo encolar el reenvío del enlace:', errorCola);
                 throw new ApiError_1.default(503, 'No se pudo enviar el enlace en este momento; intente de nuevo');
+            }
+            if (encolados === 0) {
+                throw new ApiError_1.default(429, 'Ya se envió un enlace hace menos de 5 minutos');
             }
             res.json({
                 success: true,

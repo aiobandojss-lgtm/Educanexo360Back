@@ -15,6 +15,7 @@ const preferencias_1 = require("../utils/preferencias");
 const fechas_1 = require("../utils/fechas");
 const config_1 = __importDefault(require("../config/config"));
 const logger_1 = require("../utils/logger");
+const claveLote_1 = require("../utils/claveLote");
 const MAX_ITEMS_POR_CORREO = 30;
 const VENTANA_MARCAS_MS = 48 * 60 * 60 * 1000;
 const horaResumen = () => {
@@ -119,7 +120,7 @@ const procesarResumenDiario = async (dia, ahora = new Date()) => {
                 tipo: 'email',
                 prioridad: 'normal',
                 escuelaId,
-                claveUnica: `resumen:${dia}:${escuelaId}:${i / email_service_1.DESTINATARIOS_POR_TRABAJO}`,
+                claveUnica: (0, claveLote_1.claveDeLote)(`resumen:${dia}:${escuelaId}`, lote.map((d) => d.usuarioId)),
                 payload: {
                     plantilla: 'resumen',
                     datos: { dia, urlMensajes: `${config_1.default.frontendUrl}/mensajes`, urlPreferencias: process.env.EMAIL_PREFERENCIAS_URL || '' },

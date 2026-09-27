@@ -36,24 +36,49 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.estadoWorker = exports.detenerWorker = exports.iniciarWorker = exports.ejecutarTick = exports.encolar = exports.registrarTareaPeriodica = exports.registrarHandler = exports.FalloDefinitivo = exports.ReprogramarTrabajo = void 0;
+exports.estadoWorker = exports.detenerWorker = exports.iniciarWorker = exports.ejecutarTick = exports.encolar = exports.registrarTareaPeriodica = exports.registrarHandler = exports.TrabajoCancelado = exports.FalloDefinitivo = exports.ReprogramarTrabajo = exports.configuracionWorker = void 0;
 const mongoose_1 = __importDefault(require("mongoose"));
 const outbox_model_1 = __importStar(require("../models/outbox.model"));
 const logger_1 = require("../utils/logger");
+const enmascarar_1 = require("../utils/enmascarar");
+const textoError = (error, max = 1000) => (0, enmascarar_1.enmascararEmailsEnTexto)(String(error?.message || error)).slice(0, max);
+const textoErrorConStack = (error) => (0, enmascarar_1.enmascararEmailsEnTexto)(String(error?.stack || error?.message || error));
 const num = (clave, porDefecto) => {
     const v = parseInt(process.env[clave] || '', 10);
     return Number.isFinite(v) && v > 0 ? v : porDefecto;
 };
+const calcularTimeoutTrabajo = (lockMs) => {
+    const envioMs = num('EMAIL_TIMEOUT_MS', 30 * 1000);
+    const margenMs = Math.min(5000, Math.floor(lockMs / 10));
+    const seguro = lockMs - envioMs - margenMs;
+    if (seguro <= 0) {
+        logger_1.logger.error(`[Outbox] OUTBOX_LOCK_MS (${lockMs}) debe ser mayor que EMAIL_TIMEOUT_MS (${envioMs}) + margen (${margenMs}); ` +
+            `se usa un timeout de trabajo de ${Math.floor(lockMs / 2)} ms`);
+        return { timeoutMs: Math.floor(lockMs / 2), envioMs, margenMs };
+    }
+    const configurado = parseInt(process.env.OUTBOX_TIMEOUT_TRABAJO_MS || '', 10);
+    if (Number.isFinite(configurado) && configurado > 0 && configurado > seguro) {
+        logger_1.logger.error(`[Outbox] OUTBOX_TIMEOUT_TRABAJO_MS=${configurado} excede el máximo seguro ${seguro} ms ` +
+            `(OUTBOX_LOCK_MS ${lockMs} - EMAIL_TIMEOUT_MS ${envioMs} - margen ${margenMs}); se usa ${seguro} ms`);
+        return { timeoutMs: seguro, envioMs, margenMs };
+    }
+    return { timeoutMs: Number.isFinite(configurado) && configurado > 0 ? configurado : seguro, envioMs, margenMs };
+};
+const LOCK_MS = num('OUTBOX_LOCK_MS', 2 * 60 * 1000);
+const TIMEOUT = calcularTimeoutTrabajo(LOCK_MS);
 const CFG = {
     intervaloMs: num('OUTBOX_INTERVAL_MS', 5000),
     lote: num('OUTBOX_BATCH', 20),
     concurrencia: num('OUTBOX_CONCURRENCY', 5),
     maxIntentos: num('OUTBOX_MAX_INTENTOS', 5),
-    lockMs: num('OUTBOX_LOCK_MS', 2 * 60 * 1000),
+    lockMs: LOCK_MS,
     backoffBaseMs: num('OUTBOX_BACKOFF_MS', 30 * 1000),
-    timeoutTrabajoMs: Math.min(num('OUTBOX_TIMEOUT_TRABAJO_MS', 90 * 1000), num('OUTBOX_LOCK_MS', 2 * 60 * 1000) - 1000),
+    timeoutTrabajoMs: TIMEOUT.timeoutMs,
+    esperaCancelacionMs: TIMEOUT.envioMs + TIMEOUT.margenMs,
     retencionMs: 7 * 24 * 60 * 60 * 1000,
 };
+const configuracionWorker = () => ({ ...CFG });
+exports.configuracionWorker = configuracionWorker;
 class ReprogramarTrabajo extends Error {
     constructor(fecha, motivo) {
         super(motivo);
@@ -70,6 +95,13 @@ class FalloDefinitivo extends Error {
     }
 }
 exports.FalloDefinitivo = FalloDefinitivo;
+class TrabajoCancelado extends Error {
+    constructor() {
+        super('Trabajo cancelado por tiempo agotado');
+        this.name = 'TrabajoCancelado';
+    }
+}
+exports.TrabajoCancelado = TrabajoCancelado;
 const handlers = new Map();
 const tareasPeriodicas = [];
 const registrarHandler = (tipo, handler) => {
@@ -81,7 +113,17 @@ const registrarTareaPeriodica = (nombre, fn) => {
         tareasPeriodicas.push({ nombre, fn });
 };
 exports.registrarTareaPeriodica = registrarTareaPeriodica;
+let indicesListos = null;
+const asegurarIndices = () => {
+    if (!indicesListos) {
+        indicesListos = outbox_model_1.default.init().then(() => undefined, (error) => {
+            logger_1.logger.error(`[Outbox] No se pudieron crear los índices de outbox (claveUnica): ${textoError(error)}`);
+        });
+    }
+    return indicesListos;
+};
 const encolar = async (trabajos) => {
+    await asegurarIndices();
     const lista = (Array.isArray(trabajos) ? trabajos : [trabajos]).map((t) => ({
         tipo: t.tipo,
         payload: t.payload,
@@ -124,7 +166,7 @@ const cerrarTrabajo = async (trabajo, update, que) => {
         }
         catch (error) {
             if (intento === 3) {
-                logger_1.logger.error(`[Outbox] ${trabajo.tipo} ${trabajo._id}: no se pudo marcar ${que}:`, error?.message || error);
+                logger_1.logger.error(`[Outbox] ${trabajo.tipo} ${trabajo._id}: no se pudo marcar ${que}: ${textoError(error)}`);
                 return false;
             }
             await new Promise((r) => setTimeout(r, 200 * intento));
@@ -135,8 +177,14 @@ const cerrarTrabajo = async (trabajo, update, que) => {
 const ejecutarTrabajo = async (trabajo) => {
     const handler = handlers.get(trabajo.tipo);
     const enviados = new Set(trabajo.enviados || []);
+    const cancelacion = new AbortController();
     const ctx = {
         enviados,
+        signal: cancelacion.signal,
+        comprobarCancelacion: () => {
+            if (cancelacion.signal.aborted)
+                throw new TrabajoCancelado();
+        },
         marcarEnviados: async (ids) => {
             const nuevos = ids.map(String).filter((id) => !enviados.has(id));
             if (nuevos.length === 0)
@@ -146,25 +194,37 @@ const ejecutarTrabajo = async (trabajo) => {
         },
     };
     let errorHandler = null;
-    try {
-        if (!handler)
-            throw new Error(`Sin handler para el tipo de trabajo '${trabajo.tipo}'`);
+    if (!handler) {
+        errorHandler = new Error(`Sin handler para el tipo de trabajo '${trabajo.tipo}'`);
+    }
+    else {
+        const ejecucion = Promise.resolve().then(() => handler(trabajo, ctx));
         let reloj;
-        try {
+        const resultado = await Promise.race([
+            ejecucion.then(() => ({ vencido: false, error: null }), (error) => ({ vencido: false, error: error ?? new Error('Error desconocido') })),
+            new Promise((resolver) => {
+                reloj = setTimeout(() => resolver({ vencido: true, error: null }), CFG.timeoutTrabajoMs);
+            }),
+        ]);
+        if (reloj)
+            clearTimeout(reloj);
+        if (resultado.vencido) {
+            cancelacion.abort();
+            const aviso = `Tiempo agotado (${CFG.timeoutTrabajoMs} ms): cancelado; se retoma al vencer el lock`;
+            logger_1.logger.warn(`[Outbox] ${trabajo.tipo} ${trabajo._id}: ${aviso}`);
+            let espera;
             await Promise.race([
-                handler(trabajo, ctx),
-                new Promise((_, rechazar) => {
-                    reloj = setTimeout(() => rechazar(new Error(`Tiempo agotado: el trabajo superó ${CFG.timeoutTrabajoMs} ms`)), CFG.timeoutTrabajoMs);
+                ejecucion.catch(() => undefined),
+                new Promise((r) => {
+                    espera = setTimeout(r, CFG.esperaCancelacionMs);
                 }),
             ]);
+            if (espera)
+                clearTimeout(espera);
+            await outbox_model_1.default.updateOne({ _id: trabajo._id, estado: 'PROCESANDO', lockedUntil: trabajo.lockedUntil }, { $set: { error: aviso } }).catch(() => undefined);
+            return;
         }
-        finally {
-            if (reloj)
-                clearTimeout(reloj);
-        }
-    }
-    catch (error) {
-        errorHandler = error ?? new Error('Error desconocido');
+        errorHandler = resultado.error;
     }
     if (!errorHandler) {
         await cerrarTrabajo(trabajo, {
@@ -175,14 +235,14 @@ const ejecutarTrabajo = async (trabajo) => {
     }
     if (errorHandler instanceof ReprogramarTrabajo) {
         await cerrarTrabajo(trabajo, {
-            $set: { estado: 'PENDIENTE', nextRunAt: errorHandler.fecha, error: errorHandler.message },
+            $set: { estado: 'PENDIENTE', nextRunAt: errorHandler.fecha, error: textoError(errorHandler) },
             $inc: { intentos: -1 },
             $unset: { lockedUntil: 1 },
         }, 'aplazado');
-        logger_1.logger.warn(`[Outbox] ${trabajo.tipo} ${trabajo._id} aplazado hasta ${errorHandler.fecha.toISOString()}: ${errorHandler.message}`);
+        logger_1.logger.warn(`[Outbox] ${trabajo.tipo} ${trabajo._id} aplazado hasta ${errorHandler.fecha.toISOString()}: ${textoError(errorHandler)}`);
         return;
     }
-    const mensaje = String(errorHandler?.message || errorHandler).slice(0, 1000);
+    const mensaje = textoError(errorHandler);
     if (trabajo.intentos >= CFG.maxIntentos || errorHandler?.definitivo === true) {
         await cerrarTrabajo(trabajo, {
             $set: {
@@ -200,6 +260,29 @@ const ejecutarTrabajo = async (trabajo) => {
         await cerrarTrabajo(trabajo, { $set: { estado: 'PENDIENTE', error: mensaje, nextRunAt }, $unset: { lockedUntil: 1 } }, 'para reintento');
         logger_1.logger.warn(`[Outbox] ${trabajo.tipo} ${trabajo._id} intento ${trabajo.intentos} falló (reintento ${nextRunAt.toISOString()}): ${mensaje}`);
     }
+};
+let ordenCompletado = false;
+const completarOrdenFaltante = async () => {
+    if (ordenCompletado)
+        return;
+    const r = await outbox_model_1.default.updateMany({ orden: { $exists: false } }, [
+        {
+            $set: {
+                orden: {
+                    $switch: {
+                        branches: [
+                            { case: { $eq: ['$prioridad', 'critica'] }, then: outbox_model_1.ORDEN_PRIORIDAD.critica },
+                            { case: { $eq: ['$prioridad', 'alta'] }, then: outbox_model_1.ORDEN_PRIORIDAD.alta },
+                        ],
+                        default: outbox_model_1.ORDEN_PRIORIDAD.normal,
+                    },
+                },
+            },
+        },
+    ]);
+    ordenCompletado = true;
+    if (r.modifiedCount > 0)
+        logger_1.logger.info(`[Outbox] Campo orden completado en ${r.modifiedCount} trabajo(s) previos`);
 };
 const tomarSiguiente = async () => {
     const ahora = new Date();
@@ -226,10 +309,11 @@ const ejecutarTick = async () => {
                 $unset: { lockedUntil: 1 },
             });
             await outbox_model_1.default.updateMany({ ...vencido, intentos: { $lt: CFG.maxIntentos } }, { $set: { estado: 'PENDIENTE' }, $unset: { lockedUntil: 1 } });
+            await completarOrdenFaltante().catch((err) => logger_1.logger.error(`[Outbox] completar orden: ${textoError(err)}`));
             for (const tarea of tareasPeriodicas) {
                 if (deteniendo)
                     break;
-                await tarea.fn().catch((err) => logger_1.logger.error(`[Outbox] tarea periódica ${tarea.nombre}:`, err));
+                await tarea.fn().catch((err) => logger_1.logger.error(`[Outbox] tarea periódica ${tarea.nombre}: ${textoError(err)}`));
             }
             let tomados = 0;
             const carril = async () => {
@@ -240,7 +324,7 @@ const ejecutarTick = async () => {
                         trabajo = await tomarSiguiente();
                     }
                     catch (error) {
-                        logger_1.logger.error('[Outbox] Error tomando el siguiente trabajo:', error);
+                        logger_1.logger.error(`[Outbox] Error tomando el siguiente trabajo: ${textoErrorConStack(error)}`);
                         return;
                     }
                     if (!trabajo)
@@ -250,7 +334,7 @@ const ejecutarTick = async () => {
                         await ejecutarTrabajo(trabajo);
                     }
                     catch (error) {
-                        logger_1.logger.error(`[Outbox] Error inesperado en el trabajo ${trabajo._id}:`, error);
+                        logger_1.logger.error(`[Outbox] Error inesperado en el trabajo ${trabajo._id}: ${textoErrorConStack(error)}`);
                     }
                     finally {
                         trabajosEnCurso--;
@@ -260,7 +344,7 @@ const ejecutarTick = async () => {
             await Promise.allSettled(Array.from({ length: CFG.concurrencia }, carril));
         }
         catch (error) {
-            logger_1.logger.error('[Outbox] Error en el tick del worker:', error);
+            logger_1.logger.error(`[Outbox] Error en el tick del worker: ${textoErrorConStack(error)}`);
         }
     })().finally(() => {
         tickEnCurso = null;
@@ -273,7 +357,7 @@ const iniciarWorker = () => {
         return;
     deteniendo = false;
     timer = setInterval(() => {
-        (0, exports.ejecutarTick)().catch((err) => logger_1.logger.error('[Outbox] tick:', err));
+        (0, exports.ejecutarTick)().catch((err) => logger_1.logger.error(`[Outbox] tick: ${textoErrorConStack(err)}`));
     }, CFG.intervaloMs);
     timer.unref();
     logger_1.logger.info(`[Outbox] Worker iniciado (cada ${CFG.intervaloMs} ms, concurrencia ${CFG.concurrencia})`);

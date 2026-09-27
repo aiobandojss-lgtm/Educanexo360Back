@@ -95,6 +95,7 @@ NotificacionSchema.index({ usuarioId: 1, createdAt: -1 });
 NotificacionSchema.index({ usuarioId: 1, estado: 1 });
 NotificacionSchema.index({ escuelaId: 1 });
 NotificacionSchema.index({ createdAt: 1 }, { name: 'ttl_180_dias', expireAfterSeconds: 180 * 24 * 60 * 60 });
+NotificacionSchema.index({ entidadId: 1, usuarioId: 1 }, { name: 'mensaje_usuario_unico', unique: true, partialFilterExpression: { entidadTipo: 'Mensaje' } });
 NotificacionSchema.index({ 'metadata.resumen': 1, createdAt: 1 }, { name: 'resumen_diario', partialFilterExpression: { 'metadata.resumen': true } });
 exports.default = mongoose_1.default.model('Notificacion', NotificacionSchema);
 //# sourceMappingURL=notificacion.model.js.map

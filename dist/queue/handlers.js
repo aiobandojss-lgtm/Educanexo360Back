@@ -70,6 +70,7 @@ const marcarConReintentos = async (ctx, id) => {
         const clave = String(dest?.email || '').trim().toLowerCase();
         if (!clave || ctx.enviados.has(clave))
             continue;
+        ctx.comprobarCancelacion();
         if ((0, email_service_1.esEmailFicticio)(clave)) {
             await ctx.marcarEnviados([clave]);
             continue;
@@ -108,17 +109,26 @@ const marcarConReintentos = async (ctx, id) => {
     const contenido = { titulo, mensaje, data, sound };
     let tokens;
     let pendientes = [];
+    let destinatarios = usuarioIds.map(String);
     if (Array.isArray(tokensDirectos)) {
         if (ctx.enviados.has('tokens'))
             return;
-        tokens = tokensDirectos.filter((t) => typeof t === 'string' && t);
+        const vigentes = new Set(destinatarios.length > 0 ? await pushNotification_service_1.default.obtenerTokens(destinatarios) : []);
+        tokens = tokensDirectos.filter((t) => typeof t === 'string' && t && vigentes.has(t));
+        if (tokens.length === 0) {
+            await ctx.marcarEnviados(['tokens']);
+            return;
+        }
     }
     else {
+        destinatarios = [];
         pendientes = usuarioIds.map(String).filter((id) => !ctx.enviados.has(id));
         if (pendientes.length === 0)
             return;
         tokens = await pushNotification_service_1.default.obtenerTokens(pendientes);
+        destinatarios = pendientes;
     }
+    ctx.comprobarCancelacion();
     const { transitorios } = await pushNotification_service_1.default.enviarMulticast(tokens, contenido);
     if (transitorios.length > 0) {
         if (reintentoTokens < pushNotification_service_1.MAX_REINTENTOS_TOKENS) {
@@ -129,7 +139,7 @@ const marcarConReintentos = async (ctx, id) => {
                 escuelaId: trabajo.escuelaId ? String(trabajo.escuelaId) : undefined,
                 claveUnica: `${trabajo._id}:tokens`,
                 nextRunAt: new Date(Date.now() + base * 2 ** reintentoTokens),
-                payload: { ...contenido, tokens: transitorios, reintentoTokens: reintentoTokens + 1 },
+                payload: { ...contenido, tokens: transitorios, usuarioIds: destinatarios, reintentoTokens: reintentoTokens + 1 },
             });
         }
         else {
@@ -143,6 +153,7 @@ const marcarConReintentos = async (ctx, id) => {
     for (const estudianteId of estudianteIds.map(String)) {
         if (ctx.enviados.has(estudianteId))
             continue;
+        ctx.comprobarCancelacion();
         const yaExiste = await mensaje_model_1.default.exists({
             'copiaDe.mensajeId': mensajeOriginalId,
             'copiaDe.estudianteId': estudianteId,
@@ -182,8 +193,8 @@ const marcarConReintentos = async (ctx, id) => {
     const { mensajeId, remitente } = trabajo.payload || {};
     await mensaje_service_1.default.procesarDespacho(String(mensajeId), remitente || {});
 });
-(0, outbox_1.registrarHandler)('correo-cuenta', async (trabajo) => {
-    await (0, cuentas_1.procesarCorreoCuenta)(trabajo.payload || {});
+(0, outbox_1.registrarHandler)('correo-cuenta', async (trabajo, ctx) => {
+    await (0, cuentas_1.procesarCorreoCuenta)(trabajo.payload || {}, ctx);
 });
 (0, outbox_1.registrarHandler)('resumen-diario', async (trabajo) => {
     await (0, resumenDiario_service_1.procesarResumenDiario)(String(trabajo.payload?.dia));

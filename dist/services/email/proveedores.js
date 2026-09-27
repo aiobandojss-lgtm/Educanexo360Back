@@ -17,13 +17,25 @@ const esErrorPermanente = (proveedor, error) => {
     if (!error)
         return false;
     if (proveedor === 'smtp') {
-        const rcpt = /RCPT/i.test(String(error.command || ''));
-        return error.code === 'EENVELOPE' || (rcpt && error.responseCode >= 550 && error.responseCode <= 554);
+        const rcpt = /^RCPT TO$/i.test(String(error.command || '').trim());
+        const codigo = Number(error.responseCode);
+        return rcpt && codigo >= 550 && codigo <= 554;
     }
-    if (proveedor === 'brevo')
-        return error.status === 400 || error.status === 422;
-    if (proveedor === 'ses')
-        return ['MessageRejected', 'InvalidParameterValue', 'MailFromDomainNotVerifiedException'].includes(error.name);
+    const texto = String(error.detalle ?? error.message ?? '');
+    if (proveedor === 'brevo') {
+        if (error.status !== 400 && error.status !== 422)
+            return false;
+        if (/sender|remitente/i.test(texto))
+            return false;
+        return /(invalid|not valid).{0,40}(\bto\b|recipient|email)|(\bto\b|recipient|email).{0,40}(invalid|not valid)/i.test(texto);
+    }
+    if (proveedor === 'ses') {
+        if (!['BadRequestException', 'MessageRejected'].includes(error.name))
+            return false;
+        if (/not verified|sender|from/i.test(texto))
+            return false;
+        return /illegal address|invalid (email )?address|missing final '@|domain contains illegal|local address contains/i.test(texto);
+    }
     return false;
 };
 exports.esErrorPermanente = esErrorPermanente;
@@ -144,6 +156,7 @@ const crearBrevo = () => {
                 const detalle = (await resp.text().catch(() => '')).slice(0, 300);
                 const error = new Error(`Brevo respondió ${resp.status}: ${detalle}`);
                 error.status = resp.status;
+                error.detalle = detalle;
                 throw marcarPermanente('brevo', error);
             }
             const json = await resp.json().catch(() => ({}));
