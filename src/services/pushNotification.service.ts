@@ -135,6 +135,7 @@ class PushNotificationService {
 
     try {
       // Importar firebase-admin solo cuando las credenciales estan disponibles
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
       const admin = require('firebase-admin');
 
       if (!admin.apps.length) {
@@ -157,7 +158,7 @@ class PushNotificationService {
         });
       }
 
-      this.messaging = require('firebase-admin').messaging();
+      this.messaging = admin.messaging();
       this.firebaseInitialized = true;
       logger.info('Firebase Admin SDK inicializado correctamente');
     } catch (error) {
