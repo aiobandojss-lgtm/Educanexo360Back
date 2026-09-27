@@ -9,6 +9,7 @@ import { preferenciaEmail } from '../utils/preferencias';
 import { fechaColombiaISO, horaColombia } from '../utils/fechas';
 import config from '../config/config';
 import { logger } from '../utils/logger';
+import { claveDeLote } from '../utils/claveLote';
 
 /**
  * Resumen diario de mensajes por correo (Fase 4.5).
@@ -146,7 +147,8 @@ export const procesarResumenDiario = async (dia: string, ahora: Date = new Date(
         tipo: 'email',
         prioridad: 'normal',
         escuelaId,
-        claveUnica: `resumen:${dia}:${escuelaId}:${i / DESTINATARIOS_POR_TRABAJO}`,
+        // Auditoría 4.AC: clave por QUIÉNES van en el lote; una clave repetida implica el mismo lote (mismas marcas)
+        claveUnica: claveDeLote(`resumen:${dia}:${escuelaId}`, lote.map((d: any) => d.usuarioId)),
         payload: {
           plantilla: 'resumen',
           datos: { dia, urlMensajes: `${config.frontendUrl}/mensajes`, urlPreferencias: process.env.EMAIL_PREFERENCIAS_URL || '' },

@@ -25,6 +25,7 @@ import {
 import config from '../config/config';
 import { aArregloDeIds, obtenerCursosDocente } from '../utils/accesoAcademico';
 import { logger } from '../utils/logger';
+import { claveDeLote } from '../utils/claveLote';
 
 // Tipo de usuario legible en minúsculas para el texto de las copias a acudientes
 const TIPO_LEGIBLE: Record<string, string> = {
@@ -558,6 +559,7 @@ class MensajeService {
       estado: 'ACTIVO',
     })
       .select('_id email nombre tipo preferencias fcmToken fcmTokens.token')
+      .sort({ _id: 1 }) // auditoría 4.AC: lotes estables entre reintentos
       .lean();
     if (usuarios.length === 0) return;
     const setDest = new Set(idsDest);
@@ -619,8 +621,11 @@ class MensajeService {
 
     // 2. Correos + push en un solo insertMany, con claveUnica por lote (idempotente ante reintentos)
     const urgente = prioridad === PrioridadMensaje.ALTA || /urgente|emergencia/i.test(String(asunto || ''));
+    // Auditoría 4.AC: la clave del lote sale de QUIÉNES contiene (hash), no de su posición
+    const idsDelLote = (t: NuevoTrabajo): string[] =>
+      t.payload.usuarioIds || (t.payload.destinatarios || []).map((d: any) => d.usuarioId || d.email);
     const conClave = (trabajos: NuevoTrabajo[], canal: string) =>
-      trabajos.map((t, i) => ({ ...t, claveUnica: `despacho:${mensajeId}:${canal}:${i}` }));
+      trabajos.map((t) => ({ ...t, claveUnica: claveDeLote(`despacho:${mensajeId}:${canal}`, idsDelLote(t)) }));
     const trabajos: NuevoTrabajo[] = [
       ...conClave(
         construirTrabajosCorreo({
