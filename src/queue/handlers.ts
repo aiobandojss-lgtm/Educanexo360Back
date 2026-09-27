@@ -130,6 +130,17 @@ registrarHandler('copias-acudientes', async (trabajo, ctx) => {
         if (permanente) logger.warn(`[Copias] Estudiante ${estudianteId}: ${error.message} (se omite)`);
       }
     }
+    // Auditoría 4.N: la copia pudo quedar guardada sin su despacho (se cayó al encolarlo). Se asegura su
+    // 'despachar-mensaje' (misma claveUnica, idempotente); si no se puede encolar, el trabajo se reintenta.
+    const copia: any = await Mensaje.findOne({
+      'copiaDe.mensajeId': mensajeOriginalId,
+      'copiaDe.estudianteId': estudianteId,
+    })
+      .select('_id prioridad')
+      .lean();
+    if (copia) {
+      await mensajeService.encolarDespacho(String(copia._id), usuario, copia.prioridad, { lanzarError: true });
+    }
     await ctx.marcarEnviados([estudianteId]);
   }
 });

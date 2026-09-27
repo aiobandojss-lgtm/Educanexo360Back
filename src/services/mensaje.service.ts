@@ -498,9 +498,15 @@ class MensajeService {
   /**
    * Encola el despacho de un mensaje enviado (auditoría 4.D): UN trabajo 'despachar-mensaje' idempotente por
    * mensajeId (claveUnica). Si no se puede encolar se reintenta una vez y, si aun así falla, se registra con el id
-   * del mensaje (el mensaje ya quedó guardado).
+   * del mensaje (el mensaje ya quedó guardado). Con lanzarError (desde un trabajo de la cola) el error se propaga
+   * para que ese trabajo se reintente.
    */
-  async encolarDespacho(mensajeId: string, remitente: any, prioridad?: string): Promise<void> {
+  async encolarDespacho(
+    mensajeId: string,
+    remitente: any,
+    prioridad?: string,
+    opciones: { lanzarError?: boolean } = {},
+  ): Promise<void> {
     const trabajo = {
       tipo: 'despachar-mensaje',
       prioridad: (prioridad === PrioridadMensaje.ALTA ? 'alta' : 'normal') as 'alta' | 'normal',
@@ -522,6 +528,7 @@ class MensajeService {
       try {
         await encolar(trabajo);
       } catch (error2) {
+        if (opciones.lanzarError) throw error2;
         console.error(`[Mensajes] No se pudo encolar el despacho del mensaje ${mensajeId}:`, error2);
       }
     }
