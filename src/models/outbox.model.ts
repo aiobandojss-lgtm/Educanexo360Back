@@ -8,11 +8,15 @@ import mongoose, { Schema, Document, Types } from 'mongoose';
  * findOneAndUpdate atómico PENDIENTE → PROCESANDO + lockedUntil.
  */
 export type EstadoTrabajo = 'PENDIENTE' | 'PROCESANDO' | 'HECHO' | 'FALLIDO';
-export type PrioridadTrabajo = 'alta' | 'normal';
+// 'critica': reset de contraseña, definir contraseña, cuentas (auditoría 4.E); 'alta': alertas, mensajes ALTA
+export type PrioridadTrabajo = 'critica' | 'alta' | 'normal';
+export const ORDEN_PRIORIDAD: Record<PrioridadTrabajo, number> = { critica: 0, alta: 1, normal: 2 };
 
 export interface IOutbox extends Document {
   tipo: string;
   prioridad: PrioridadTrabajo;
+  // Orden de toma (0 crítica, 1 alta, 2 normal): el string no ordena bien 'critica' antes de 'alta'
+  orden: number;
   payload: Record<string, any>;
   estado: EstadoTrabajo;
   intentos: number;
@@ -33,8 +37,8 @@ export interface IOutbox extends Document {
 const OutboxSchema = new Schema<IOutbox>(
   {
     tipo: { type: String, required: true },
-    // 'alta' < 'normal' en orden alfabético: ordenar ascendente toma primero la prioridad alta
-    prioridad: { type: String, enum: ['alta', 'normal'], default: 'normal' },
+    prioridad: { type: String, enum: ['critica', 'alta', 'normal'], default: 'normal' },
+    orden: { type: Number, default: 2 },
     payload: { type: Schema.Types.Mixed, default: {} },
     estado: {
       type: String,
@@ -53,8 +57,8 @@ const OutboxSchema = new Schema<IOutbox>(
   { timestamps: true, collection: 'outbox', minimize: false },
 );
 
-// Worker: siguiente trabajo PENDIENTE por prioridad y fecha; también sirve para retomar PROCESANDO vencidos
-OutboxSchema.index({ estado: 1, prioridad: 1, nextRunAt: 1 });
+// Worker: siguiente trabajo PENDIENTE por orden de prioridad y fecha; también sirve para retomar PROCESANDO vencidos
+OutboxSchema.index({ estado: 1, orden: 1, nextRunAt: 1 });
 // TTL: HECHO/FALLIDO se borran 7 días después para no llenar el M0 (expireAt solo se llena al terminar)
 OutboxSchema.index({ expireAt: 1 }, { expireAfterSeconds: 0 });
 // Idempotencia: solo los trabajos que traen clave (sin partial, todos los null chocarían entre sí)

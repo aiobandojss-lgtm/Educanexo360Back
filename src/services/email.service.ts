@@ -32,7 +32,7 @@ export interface OpcionesCorreo {
   destinatarios: DestinatarioCorreo[];
   plantilla: string;
   datos: Record<string, any>;
-  prioridad?: 'alta' | 'normal';
+  prioridad?: 'critica' | 'alta' | 'normal';
   escuelaId?: string;
   sensible?: boolean;
 }
@@ -86,7 +86,7 @@ export const enviarCorreoAhora = async (opciones: {
   destinatario: DestinatarioCorreo;
   plantilla: string;
   datos: Record<string, any>;
-  prioridad: 'alta' | 'normal';
+  prioridad: 'critica' | 'alta' | 'normal';
 }): Promise<boolean> => {
   const correo = renderizarCorreo(opciones.plantilla, opciones.datos, opciones.destinatario);
   const diaCupo = await reservarCupo(opciones.prioridad);

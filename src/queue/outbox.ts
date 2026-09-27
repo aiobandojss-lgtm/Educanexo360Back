@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import Outbox, { IOutbox, PrioridadTrabajo } from '../models/outbox.model';
+import Outbox, { IOutbox, PrioridadTrabajo, ORDEN_PRIORIDAD } from '../models/outbox.model';
 import { logger } from '../utils/logger';
 
 /**
@@ -9,7 +9,7 @@ import { logger } from '../utils/logger';
  * - El worker corre en el MISMO proceso (Passenger, sin Redis) con un setInterval de OUTBOX_INTERVAL_MS:
  *     1. Devuelve a PENDIENTE los PROCESANDO con lockedUntil vencido (el proceso murió a mitad de un trabajo).
  *     2. Toma trabajos uno a uno con findOneAndUpdate atómico (PENDIENTE → PROCESANDO + lockedUntil),
- *        prioridad 'alta' primero, con concurrencia acotada (OUTBOX_CONCURRENCY).
+ *        prioridad 'critica' y luego 'alta' primero (campo orden), con concurrencia acotada (OUTBOX_CONCURRENCY).
  *     3. Éxito → HECHO. Error → reintento con backoff exponencial (30 s, 1, 2, 4 min); al llegar a
  *        OUTBOX_MAX_INTENTOS → FALLIDO (se registra el error). HECHO/FALLIDO expiran a los 7 días (TTL).
  * - Entrega "al menos una vez": si el proceso muere después de enviar y antes de marcar HECHO, ese trabajo
@@ -101,6 +101,7 @@ export const encolar = async (trabajos: NuevoTrabajo | NuevoTrabajo[]): Promise<
     tipo: t.tipo,
     payload: t.payload,
     prioridad: t.prioridad || 'normal',
+    orden: ORDEN_PRIORIDAD[t.prioridad || 'normal'] ?? 2,
     ...(t.escuelaId && mongoose.isValidObjectId(String(t.escuelaId)) && { escuelaId: t.escuelaId }),
     ...(t.claveUnica && { claveUnica: t.claveUnica }),
     nextRunAt: t.nextRunAt || new Date(),
@@ -252,7 +253,7 @@ const ejecutarTrabajo = async (trabajo: IOutbox): Promise<void> => {
   }
 };
 
-/** Toma atómicamente el siguiente trabajo listo (prioridad alta primero). */
+/** Toma atómicamente el siguiente trabajo listo (crítica, luego alta, luego normal). */
 const tomarSiguiente = async (): Promise<IOutbox | null> => {
   const ahora = new Date();
   return Outbox.findOneAndUpdate(
@@ -261,7 +262,7 @@ const tomarSiguiente = async (): Promise<IOutbox | null> => {
       $set: { estado: 'PROCESANDO', lockedUntil: new Date(ahora.getTime() + CFG.lockMs) },
       $inc: { intentos: 1 },
     },
-    { sort: { prioridad: 1, nextRunAt: 1 }, new: true },
+    { sort: { orden: 1, nextRunAt: 1 }, new: true },
   );
 };
 

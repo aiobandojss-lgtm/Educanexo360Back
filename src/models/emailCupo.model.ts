@@ -8,6 +8,7 @@ export interface ICupoCorreo {
   _id: string;
   enviados: number;
   altaEnviados: number;
+  criticaEnviados: number;
   expireAt: Date;
 }
 
@@ -16,6 +17,7 @@ const CupoSchema = new Schema<ICupoCorreo>(
     _id: { type: String },
     enviados: { type: Number, default: 0 },
     altaEnviados: { type: Number, default: 0 },
+    criticaEnviados: { type: Number, default: 0 },
     expireAt: { type: Date },
   },
   { collection: 'email_cupo', versionKey: false },

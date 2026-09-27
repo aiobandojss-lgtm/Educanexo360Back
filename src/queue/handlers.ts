@@ -14,6 +14,7 @@ import mensajeService from '../services/mensaje.service';
 import Mensaje from '../models/mensaje.model';
 import { logger } from '../utils/logger';
 import { enmascararEmail, enmascararEmailsEnTexto } from '../utils/enmascarar';
+import { procesarCorreoCuenta } from '../services/email/cuentas';
 
 /** Marca un id como atendido reintentando ante fallos de red (el envío ya ocurrió: nunca se reenvía por esto). */
 const marcarConReintentos = async (ctx: { marcarEnviados: (ids: string[]) => Promise<void> }, id: string) => {
@@ -55,7 +56,7 @@ registrarHandler('email', async (trabajo, ctx) => {
       const pendientes = destinatarios.length - ctx.enviados.size;
       throw new ReprogramarTrabajo(
         inicioDiaSiguienteColombia(new Date(), 5),
-        `Cupo diario de correo agotado (${cupo.enviados}/${cupo.limite}, reserva alta ${cupo.reservaAlta}); ` +
+        `Cupo diario de correo agotado (${cupo.enviados}/${cupo.limite}, reservas alta ${cupo.reservaAlta} y crítica ${cupo.reservaCritica}); ` +
           `${pendientes} correo(s) quedan para mañana`,
       );
     }
@@ -140,6 +141,13 @@ registrarHandler('copias-acudientes', async (trabajo, ctx) => {
 registrarTareaPeriodica('resumen-diario', async () => {
   await encolarResumenSiCorresponde();
 });
+/**
+ * 'correo-cuenta' (auditoría 4.E): reset/definir contraseña con prioridad crítica. El token se crea al enviar.
+ */
+registrarHandler('correo-cuenta', async (trabajo) => {
+  await procesarCorreoCuenta(trabajo.payload || {});
+});
+
 registrarHandler('resumen-diario', async (trabajo) => {
   await procesarResumenDiario(String(trabajo.payload?.dia));
 });

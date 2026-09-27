@@ -5,29 +5,14 @@ import Usuario from '../models/usuario.model';
 import Invitacion, { TipoInvitacion } from '../models/invitacion.model';
 import Curso from '../models/curso.model';
 import invitacionService from './invitacion.service';
-import crypto from 'crypto';
 import { encolarCorreo } from '../services/email.service';
+import { encolarCorreoCuenta } from '../services/email/cuentas';
 import config from '../config/config';
 import { estudianteService } from './estudiante.service';
 import ApiError from '../utils/ApiError';
 import { generarPasswordAleatoria } from '../utils/passwordUtils';
 import mongoose from 'mongoose';
 import { logger } from '../utils/logger';
-
-// Fase 4.7: enlace para DEFINIR la contraseña (reutiliza el flujo de reset): token aleatorio de 32 bytes,
-// se guarda solo su hash sha256 en resetPasswordToken, vence en 72 h y es de un solo uso (resetPassword
-// lo borra al usarlo). El enlace apunta a la página existente del React: FRONTEND_URL/reset-password/:token
-const HORAS_ENLACE_DEFINIR = 72;
-const nuevoEnlaceDefinir = () => {
-  const token = crypto.randomBytes(32).toString('hex');
-  return {
-    url: `${config.frontendUrl}/reset-password/${token}`,
-    campos: {
-      resetPasswordToken: crypto.createHash('sha256').update(token).digest('hex'),
-      resetPasswordExpires: new Date(Date.now() + HORAS_ENLACE_DEFINIR * 60 * 60 * 1000),
-    },
-  };
-};
 
 class RegistroService {
   /**
@@ -227,16 +212,14 @@ Por favor, revise la solicitud en el panel de administración.
 
       logger.debug('Credenciales de acudiente generadas con éxito');
 
-      // La contraseña aleatoria NUNCA se envía: el acudiente define la suya con un enlace (Fase 4.7)
-      const enlaceAcudiente = nuevoEnlaceDefinir();
-
+      // La contraseña aleatoria NUNCA se envía: el acudiente define la suya con un enlace (Fase 4.7). El token se
+      // crea al ENVIAR el correo (auditoría 4.E), no aquí: nunca queda en claro en la cola.
       // 1. CREAR ACUDIENTE
       const acudiente = new Usuario({
         nombre: solicitud.nombre,
         apellidos: solicitud.apellidos,
         email: acudienteCredenciales.email,
         password: acudienteCredenciales.password,
-        ...enlaceAcudiente.campos,
         tipo: 'ACUDIENTE',
         estado: 'ACTIVO',
         escuelaId: solicitud.escuelaId,
@@ -338,13 +321,11 @@ Por favor, revise la solicitud en el panel de administración.
           }
 
           // Crear estudiante (su contraseña también se define con un enlace; el correo lo recibe el acudiente)
-          const enlaceEstudiante = nuevoEnlaceDefinir();
           const estudiante = new Usuario({
             nombre: estData.nombre,
             apellidos: estData.apellidos,
             email: credenciales.email,
             password: credenciales.password,
-            ...enlaceEstudiante.campos,
             tipo: 'ESTUDIANTE',
             estado: 'ACTIVO',
             escuelaId: solicitud.escuelaId,
@@ -381,7 +362,7 @@ Por favor, revise la solicitud en el panel de administración.
           estudiantesParaEmail.push({
             nombre: `${estData.nombre} ${estData.apellidos}`,
             email: credenciales.email,
-            enlace: enlaceEstudiante.url,
+            usuarioId: String(estudiante._id),
             codigo: credenciales.codigo,
             curso: cursoInfo.nombre,
             emailGenerado: !estData.email,
@@ -421,13 +402,13 @@ Por favor, revise la solicitud en el panel de administración.
       //    por la cola con prioridad alta: se reintenta y no se pierde. Si no se pudiera encolar, la
       //    aprobación ya quedó hecha: se registra y el acudiente puede usar "¿Olvidaste tu contraseña?".
       try {
-        await this.enviarCorreoConfirmacion(
-          acudienteCredenciales.email,
-          `${solicitud.nombre} ${solicitud.apellidos}`,
-          enlaceAcudiente.url,
-          estudiantesParaEmail,
-          String(solicitud.escuelaId),
-        );
+        await encolarCorreoCuenta({
+          tipo: 'bienvenida',
+          acudienteId: acudienteId,
+          nombre: `${solicitud.nombre} ${solicitud.apellidos}`,
+          estudiantes: estudiantesParaEmail,
+          escuelaId: String(solicitud.escuelaId),
+        });
       } catch (errorCorreo) {
         console.error(`[Registro] No se pudo encolar el correo de bienvenida de la solicitud ${solicitudId}:`, errorCorreo);
       }
@@ -499,7 +480,7 @@ Por favor, revise la solicitud en el panel de administración.
     await encolarCorreo({
       destinatarios: [{ email: solicitud.email, nombre: solicitud.nombre }],
       plantilla: 'texto',
-      prioridad: 'alta',
+      prioridad: 'critica',
       escuelaId: solicitud.escuelaId ? String(solicitud.escuelaId) : undefined,
       datos: {
       subject: 'Solicitud de registro - No aprobada',
@@ -680,42 +661,6 @@ El equipo de EducaNexo360`,
     };
   }
 
-  /**
-   * Correo de bienvenida al aprobar una solicitud (Fase 4.7): enlaces para DEFINIR la contraseña del
-   * acudiente y de cada estudiante nuevo (72 h, un solo uso), nunca contraseñas en texto plano.
-   * Prioridad alta y payload sensible (se borra del trabajo al enviarse).
-   */
-  private async enviarCorreoConfirmacion(
-    email: string,
-    nombreCompleto: string,
-    enlaceAcudiente: string,
-    estudiantes: Array<{
-      nombre: string;
-      email: string;
-      enlace?: string;
-      codigo: string;
-      curso?: string;
-      emailGenerado?: boolean;
-      esExistente?: boolean;
-    }>,
-    escuelaId?: string,
-  ) {
-    await encolarCorreo({
-      destinatarios: [{ email, nombre: nombreCompleto }],
-      plantilla: 'credenciales',
-      datos: {
-        nombre: nombreCompleto,
-        email,
-        enlace: enlaceAcudiente,
-        horas: HORAS_ENLACE_DEFINIR,
-        loginUrl: `${config.frontendUrl}/login`,
-        estudiantes,
-      },
-      prioridad: 'alta',
-      escuelaId,
-      sensible: true,
-    });
-  }
 }
 
 export const registroService = new RegistroService();

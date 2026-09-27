@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import authService from '../services/auth/auth.service';
 import ApiError from '../utils/ApiError';
-import { encolarCorreo } from '../services/email.service';
+import { encolarCorreoCuenta } from '../services/email/cuentas';
 import crypto from 'crypto';
 import Usuario from '../models/usuario.model';
 import config from '../config/config';
@@ -136,42 +136,17 @@ export const authController = {
         return;
       }
 
-      // Generar token aleatorio
-      const resetToken = crypto.randomBytes(32).toString('hex');
-
-      // Almacenar hash del token en la base de datos
-      const resetPasswordToken = crypto.createHash('sha256').update(resetToken).digest('hex');
-
-      // Token válido por 1 hora
-      const resetPasswordExpires = new Date(Date.now() + 3600000);
-
-      // Guardar token en el documento de usuario
-      user.resetPasswordToken = resetPasswordToken;
-      user.resetPasswordExpires = resetPasswordExpires;
-      await user.save();
-
-      // Crear URL para restablecer contraseña
-      const frontendUrl = config.frontendUrl || 'http://localhost:3000';
-      const resetUrl = `${frontendUrl}/reset-password/${resetToken}`;
-
-      // Correo de recuperación por la cola con prioridad ALTA (usa el cupo reservado y se reintenta).
-      // El payload es sensible (enlace con token): se borra del trabajo al terminar. Si no se puede
-      // encolar, NO se ignora el fallo (Fase 4.4): se invalida el token y se responde 503.
+      // Auditoría 4.E: el token se genera AL ENVIAR (en el worker), nunca queda en claro en la cola. El trabajo
+      // es de prioridad CRÍTICA (reserva propia de cupo) y caduca en 1 h: si no alcanza a salir, queda FALLIDO
+      // registrado en vez de llegar con un enlace vencido. Si no se puede encolar → 503 (no se ignora).
       try {
-        await encolarCorreo({
-          destinatarios: [{ email: user.email, nombre: user.nombre, usuarioId: String(user._id) }],
-          plantilla: 'reset',
-          datos: { nombre: user.nombre, resetUrl, expirationTime: '1 hora' },
-          prioridad: 'alta',
+        await encolarCorreoCuenta({
+          tipo: 'reset',
+          usuarioId: String(user._id),
           escuelaId: user.escuelaId ? String(user.escuelaId) : undefined,
-          sensible: true,
         });
       } catch (errorCola) {
         logger.error('[forgotPassword] No se pudo encolar el correo de recuperación:', errorCola);
-        await Usuario.updateOne(
-          { _id: user._id },
-          { $unset: { resetPasswordToken: 1, resetPasswordExpires: 1 } },
-        ).catch(() => undefined);
         throw new ApiError(503, 'No se pudo enviar el correo de recuperación. Intenta de nuevo en unos minutos.');
       }
 
