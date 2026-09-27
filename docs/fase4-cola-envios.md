@@ -215,3 +215,58 @@ de inmediato con la misma forma de siempre.
   (`educanexo360-web.vercel.app`): todo sale de `FRONTEND_URL`.
 - Para verificarlo en la web: aprobar una solicitud de prueba, abrir el enlace del correo
   (`https://<FRONTEND_URL>/reset-password/<token>`), definir la contraseña e iniciar sesión.
+
+## 4.8 Pruebas y medición (seed de escala, MongoDB local, proveedores simulados)
+
+Colegio de escala: 2.000 estudiantes, 2.600 acudientes, 90 docentes, 60 cursos, 50.000 mensajes previos.
+
+| Escenario | Resultado |
+|---|---|
+| Mensaje a todo el colegio (60 cursos, 4.600 destinatarios) | 201 en ~0,55–0,93 s (caché caliente / recién sembrado). Servicio: ~550 ms con 4.600 y ~410 ms con 3.252 destinatarios |
+| Trabajos generados | 40 de correo (2.000 inmediatos: estudiantes; los acudientes van al resumen) + 92 de push (4.467 tokens) + 1 resumen diario → 52 trabajos (2.600 correos, uno por acudiente) |
+| Tiempo del worker a velocidad máxima | ~6,5 s para todo el mensaje (en producción con 5 s/20 trabajos por tick: ~1 minuto) |
+| Caída del proceso a mitad de lote (kill sin apagado limpio, 3.000 correos) | El segundo proceso retoma al vencer el lock: 60/60 trabajos HECHO, 3.000/3.000 destinatarios, **4 duplicados** (el correo en vuelo de cada trabajo al morir) |
+| Proveedor de correo caído | 40/40 trabajos → FALLIDO tras 5 intentos con el error registrado; 0 correos; cupo devuelto; el push no se afecta |
+| Tope diario 1.000 con reserva alta 100 | 900 normales salen, el resto queda PENDIENTE para mañana 00:05 sin gastar intentos; 50 de prioridad alta salen de la reserva; al llegar a 1.000 también la alta se aplaza (no se pierde) |
+
+**Tamaño en el M0** tras un mensaje a todo el colegio y su resumen del día: `outbox` 185 documentos, ~1,5 MB de datos
+(~260 KB comprimidos en disco) + ~128 KB de índices; se borran solos a los 7 días. `email_cupo`: 1 documento por día
+(~75 B; 20 KB mínimos de asignación en disco) + índices ~40 KB; TTL de 60 días. Total: **< 0,5 MB en disco por
+mensaje masivo**, dentro de la semana de retención.
+
+## Variables de entorno nuevas (resumen)
+
+| Variable | Por defecto | Uso |
+|---|---|---|
+| `EMAIL_PROVIDER` | `smtp` | `smtp` \| `ses` \| `brevo` (\| `simulado` solo pruebas) |
+| `EMAIL_DAILY_LIMIT` | 250 | Tope diario de correos |
+| `EMAIL_RESERVA_ALTA` | 20 | Cupo reservado para prioridad alta |
+| `EMAIL_SMTP_MAX_CONNECTIONS` / `EMAIL_SMTP_RATE_LIMIT` | 2 / 5 | Pool SMTP |
+| `AWS_SES_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SES_CONFIGURATION_SET` | — | Amazon SES |
+| `BREVO_API_KEY` | — | Brevo |
+| `EMAIL_PREFERENCIAS_URL` | — | Enlace "cambiar preferencia" en el resumen (opcional) |
+| `RESUMEN_HORA` | 18 | Hora (Colombia) del resumen diario |
+| `OUTBOX_INTERVAL_MS`, `OUTBOX_BATCH`, `OUTBOX_CONCURRENCY`, `OUTBOX_MAX_INTENTOS`, `OUTBOX_LOCK_MS`, `OUTBOX_BACKOFF_MS` | 5000, 20, 5, 5, 120000, 30000 | Worker de la cola |
+| `FRONTEND_URL` | (ya existía) | Base de todos los enlaces de correo (mensajes, reset, definir contraseña) |
+
+Solo para pruebas o mantenimiento (no definir en producción): `OUTBOX_DISABLED`, `PUSH_PROVIDER=simulado`,
+`EMAIL_SIMULADO_FALLA`, `EMAIL_SIMULADO_DEMORA_MS`, `RESUMEN_DIARIO_DESACTIVADO`.
+
+## Plan de deploy de la Fase 4
+
+1. `mongodump` de Atlas (M0 sin backups).
+2. En cPanel, agregar las variables nuevas. Mientras no se elija proveedor, basta con dejar el SMTP actual
+   (`EMAIL_PROVIDER=smtp` o sin definir) y ajustar `EMAIL_DAILY_LIMIT` al límite del hosting.
+3. Configurar **PassengerMinInstances 1** o el **cron de ping** cada 5 minutos a `/api/health` (sin esto la cola y el
+   resumen de las 18:00 se detienen cuando la app duerme).
+4. FTP de `dist/` y reinicio. En el log: `[Outbox] Worker iniciado ...`.
+5. Verificar `GET /api/system/outbox` (SUPER_ADMIN): `worker.activo = true` y `ultimoTick` reciente.
+6. Índices: `MONGODB_URI="..." node src/scripts/sync-indexes.js` (simulación). Esperado: el índice nuevo de
+   `usuarios` (`fcmTokens.token`) como faltante; los de `outbox`, `email_cupo`, `notificacions` (TTL 180 días y
+   `resumen_diario`) y `mensajes` (`copiaDe`, `adjuntos.fileId`) los crea Mongoose al arrancar.
+7. Migración de tokens: `node src/scripts/migrar-fcm-tokens.js` (simulación) → revisar → `--aplicar` (crea el índice
+   único al final). **Antes** de cualquier `sync-indexes --aplicar`.
+8. Pruebas de humo: enviar un mensaje a un curso (respuesta inmediata; correos y push en segundos), recuperar
+   contraseña, registrar un token desde la app, aprobar una solicitud de prueba y abrir su enlace de contraseña.
+9. Opcional, con aprobación de Aymer: `node src/scripts/marcar-eventos-notificados.js --aplicar`.
+10. Cuando se elija proveedor: seguir "Configurar Brevo" o "Configurar Amazon SES", cambiar `EMAIL_PROVIDER` y reiniciar.

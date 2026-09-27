@@ -27,6 +27,8 @@ if (!URI) {
 const MODELOS = [
   'usuario', 'escuela', 'curso', 'asignatura', 'calificacion', 'logro', 'mensaje', 'notificacion',
   'asistencia', 'anuncio', 'tarea', 'calendario', 'invitacion', 'solicitud-registro', 'alertaAsistencia', 'perfilRol',
+  // Fase 4
+  'outbox', 'emailCupo',
 ];
 
 const mb = (bytes) => `${(bytes / 1048576).toFixed(2)} MB`;

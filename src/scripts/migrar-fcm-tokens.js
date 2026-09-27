@@ -6,6 +6,7 @@
  * Pasos:
  *   1. Tokens antiguos repetidos entre usuarios: se queda el usuario con el registro más reciente
  *      (fcmTokenUpdatedAt, luego updatedAt); a los demás se les quita.
+ *   1b. Token antiguo que ya está en el arreglo de otro usuario: gana el arreglo (más reciente).
  *   2. Copia fcmToken → fcmTokens (si aún no está), sin pasar de 5 dispositivos.
  *   3. Tokens repetidos en fcmTokens entre usuarios: se queda el más reciente; a los demás se les quita.
  *   4. Crea el índice único parcial (si no existe).
@@ -53,6 +54,22 @@ async function main() {
     }
   }
   console.log(`1. Tokens antiguos repetidos: ${repetidosAntiguos.length} token(s); se quitan de ${quitadosAntiguos} usuario(s).`);
+
+  // 1b. Token antiguo que ya está en el arreglo de OTRO usuario (se registró después en otra cuenta): gana el
+  //     arreglo (registro más reciente); al dueño del token antiguo se le quita. Evita chocar con el índice.
+  const enArreglos = new Set(await usuarios.distinct('fcmTokens.token'));
+  const antiguos = await usuarios
+    .find({ fcmToken: { $type: 'string' } }, { projection: { _id: 1, fcmToken: 1, fcmTokens: 1 } })
+    .toArray();
+  const conflictos = antiguos.filter(
+    (u) => enArreglos.has(u.fcmToken) && !(u.fcmTokens || []).some((t) => t.token === u.fcmToken),
+  );
+  if (APLICAR && conflictos.length > 0) {
+    await usuarios.bulkWrite(
+      conflictos.map((u) => ({ updateOne: { filter: { _id: u._id, fcmToken: u.fcmToken }, update: { $set: { fcmToken: null } } } })),
+    );
+  }
+  console.log(`1b. Tokens antiguos que ya usa otro usuario en su arreglo: ${conflictos.length} (se quitan del antiguo).`);
 
   // 2. Copiar fcmToken → fcmTokens
   const filtroCopia = {

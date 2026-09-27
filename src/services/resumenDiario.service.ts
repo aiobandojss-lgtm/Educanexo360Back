@@ -32,6 +32,8 @@ let ultimoDiaEncolado: string | null = null;
 
 /** Tarea periódica del worker: encola el resumen del día a partir de la hora configurada (una vez). */
 export const encolarResumenSiCorresponde = async (ahora: Date = new Date()): Promise<boolean> => {
+  // Solo pruebas o mantenimiento: sin resumen automático (los acudientes con 'resumen' no recibirían nada)
+  if (process.env.RESUMEN_DIARIO_DESACTIVADO === 'true') return false;
   const dia = fechaColombiaISO(ahora);
   if (ultimoDiaEncolado === dia || horaColombia(ahora) < horaResumen()) return false;
   await encolar({ tipo: 'resumen-diario', payload: { dia }, claveUnica: `resumen:${dia}` });

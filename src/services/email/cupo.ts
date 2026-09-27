@@ -1,4 +1,4 @@
-import mongoose, { Schema } from 'mongoose';
+import CupoCorreoModelo from '../../models/emailCupo.model';
 import { fechaColombiaISO } from '../../utils/fechas';
 
 /**
@@ -12,26 +12,8 @@ import { fechaColombiaISO } from '../../utils/fechas';
  * - La reserva es atómica (findOneAndUpdate con condición + upsert): sin carreras entre trabajos en paralelo.
  * - Lo que no cabe NO se descarta: la cola lo aplaza al día siguiente (ReprogramarTrabajo) y lo registra.
  */
-interface ICupoCorreo {
-  _id: string;
-  enviados: number;
-  altaEnviados: number;
-  expireAt: Date;
-}
-
-const CupoSchema = new Schema<ICupoCorreo>(
-  {
-    _id: { type: String },
-    enviados: { type: Number, default: 0 },
-    altaEnviados: { type: Number, default: 0 },
-    expireAt: { type: Date },
-  },
-  { collection: 'email_cupo', versionKey: false },
-);
-// Los días viejos se borran solos (60 días)
-CupoSchema.index({ expireAt: 1 }, { expireAfterSeconds: 0 });
-
-export const CupoCorreo = mongoose.models.CupoCorreo || mongoose.model<ICupoCorreo>('CupoCorreo', CupoSchema);
+// El modelo vive en src/models/emailCupo.model.ts (así sync-indexes también lo revisa)
+export const CupoCorreo = CupoCorreoModelo;
 
 const num = (clave: string, d: number) => {
   const v = parseInt(process.env[clave] || '', 10);

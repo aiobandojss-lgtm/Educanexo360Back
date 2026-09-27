@@ -133,6 +133,9 @@ export const simulado = {
 const crearSimulado = (): EmailProvider => ({
   nombre: 'simulado',
   async send(m) {
+    // Solo pruebas: EMAIL_SIMULADO_DEMORA_MS simula la latencia de un proveedor real
+    const demora = parseInt(process.env.EMAIL_SIMULADO_DEMORA_MS || '0', 10);
+    if (demora > 0) await new Promise((r) => setTimeout(r, demora));
     if (simulado.fallar) throw new Error('Proveedor simulado: fallo forzado');
     if (simulado.fallarPara && m.to.includes(simulado.fallarPara)) {
       throw new Error(`Proveedor simulado: rechazo para ${m.to}`);
