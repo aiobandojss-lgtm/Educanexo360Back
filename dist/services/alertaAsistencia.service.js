@@ -16,7 +16,9 @@ const curso_model_1 = __importDefault(require("../models/curso.model"));
 const usuario_model_1 = __importDefault(require("../models/usuario.model"));
 const notificacion_model_1 = __importDefault(require("../models/notificacion.model"));
 const mensaje_model_1 = __importDefault(require("../models/mensaje.model"));
-const email_service_1 = __importDefault(require("./email.service"));
+const email_service_1 = require("./email.service");
+const pushNotification_service_1 = __importDefault(require("./pushNotification.service"));
+const escapeHtml_1 = require("../utils/escapeHtml");
 const IAsistencia_1 = require("../interfaces/IAsistencia");
 const INotificacion_1 = require("../interfaces/INotificacion");
 const IMensaje_1 = require("../interfaces/IMensaje");
@@ -33,7 +35,7 @@ function generarCuerpoMensaje(nivel, nombreEstudiante, nombreCurso, porcentajeAu
         INMINENTE: '30%',
     };
     return `
-<p>El estudiante <strong>${nombreEstudiante}</strong> del curso <strong>${nombreCurso}</strong> ${descripciones[nivel]}.</p>
+<p>El estudiante <strong>${(0, escapeHtml_1.escapeHtml)(nombreEstudiante)}</strong> del curso <strong>${(0, escapeHtml_1.escapeHtml)(nombreCurso)}</strong> ${descripciones[nivel]}.</p>
 
 <p>
   <strong>Porcentaje actual de ausencias:</strong> ${porcentajeAusencias.toFixed(1)}%<br>
@@ -97,28 +99,27 @@ async function enviarNotificacionesAlerta(params) {
     if (destinatariosUnicos.length === 0) {
         return;
     }
-    for (const destinatario of destinatariosUnicos) {
-        try {
-            await notificacion_model_1.default.create({
-                usuarioId: destinatario._id,
-                titulo,
-                mensaje,
-                tipo: INotificacion_1.TipoNotificacion.ALERTA_ASISTENCIA,
-                estado: INotificacion_1.EstadoNotificacion.PENDIENTE,
-                escuelaId,
-                metadata: {
-                    nivel,
-                    porcentajeAusencias,
-                    estudianteId,
-                    cursoId,
-                    periodoId,
-                },
-            });
-        }
-        catch (error) {
-            console.error('[AlertaAsistencia] Error en Canal 1:', error);
-        }
+    try {
+        await notificacion_model_1.default.insertMany(destinatariosUnicos.map((destinatario) => ({
+            usuarioId: destinatario._id,
+            titulo,
+            mensaje,
+            tipo: INotificacion_1.TipoNotificacion.ALERTA_ASISTENCIA,
+            estado: INotificacion_1.EstadoNotificacion.PENDIENTE,
+            escuelaId,
+            metadata: {
+                nivel,
+                porcentajeAusencias,
+                estudianteId,
+                cursoId,
+                periodoId,
+            },
+        })), { ordered: false });
     }
+    catch (error) {
+        console.error('[AlertaAsistencia] Error en Canal 1:', error);
+    }
+    let mensajeAlertaId;
     try {
         const prefijos = {
             ALERTA: '⚠️',
@@ -131,7 +132,7 @@ async function enviarNotificacionesAlerta(params) {
             INMINENTE: IMensaje_1.PrioridadMensaje.ALTA,
         };
         const sistemaUser = await obtenerOCrearUsuarioSistema();
-        await mensaje_model_1.default.create({
+        mensajeAlertaId = await mensaje_model_1.default.create({
             remitente: sistemaUser._id,
             destinatarios: destinatariosUnicos.map((d) => d._id),
             asunto: `${prefijos[nivel]} Alerta ${nivel} — ${nombreEstudiante}`,
@@ -139,28 +140,39 @@ async function enviarNotificacionesAlerta(params) {
             tipo: IMensaje_1.TipoMensaje.INSTITUCIONAL,
             prioridad: prioridades[nivel],
             escuelaId: new mongoose_1.default.Types.ObjectId(escuelaId),
-        });
+        }).then((m) => String(m._id));
     }
     catch (errCanal2) {
         console.error('[AlertaAsistencia] Error en Canal 2:', errCanal2);
     }
-    for (const destinatario of destinatariosUnicos) {
-        if (destinatario.email) {
-            try {
-                await email_service_1.default.sendEmail({
-                    to: destinatario.email,
-                    subject: titulo,
-                    html: `
-            <p>Estimado/a ${destinatario.nombre ?? 'usuario'},</p>
-            <p>${mensaje}</p>
-            <p>Ingrese a <strong>EducaNexo360</strong> para revisar el detalle de la alerta.</p>
-          `,
-                });
-            }
-            catch (error) {
-                console.error('[AlertaAsistencia] Error en Canal 3:', error);
-            }
-        }
+    try {
+        await (0, email_service_1.encolarCorreo)({
+            destinatarios: destinatariosUnicos
+                .filter((d) => d.email)
+                .map((d) => ({ email: d.email, nombre: d.nombre, usuarioId: String(d._id) })),
+            plantilla: 'alerta-asistencia',
+            datos: { titulo, mensaje },
+            prioridad: 'alta',
+            escuelaId,
+        });
+    }
+    catch (error) {
+        console.error('[AlertaAsistencia] Error en Canal 3:', error);
+    }
+    try {
+        await pushNotification_service_1.default.encolarPush({
+            usuarioIds: destinatariosUnicos.map((d) => String(d._id)),
+            contenido: {
+                titulo,
+                mensaje,
+                data: { tipo: 'mensaje', ...(mensajeAlertaId && { mensajeId: mensajeAlertaId }), prioridad: 'ALTA' },
+            },
+            prioridad: 'alta',
+            escuelaId,
+        });
+    }
+    catch (error) {
+        console.error('[AlertaAsistencia] Error en Canal 4:', error);
     }
 }
 exports.MIN_CLASES_ALERTA = Math.max(parseInt(process.env.ALERTA_MIN_CLASES || '8', 10) || 8, 1);

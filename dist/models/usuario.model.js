@@ -124,6 +124,21 @@ const UsuarioSchema = new mongoose_1.Schema({
         type: Date,
         default: null
     },
+    fcmTokens: {
+        type: [
+            new mongoose_1.default.Schema({
+                token: { type: String, required: true },
+                platform: { type: String, enum: ['ios', 'android'] },
+                deviceInfo: { type: mongoose_1.default.Schema.Types.Mixed },
+                updatedAt: { type: Date },
+            }, { _id: false }),
+        ],
+        default: undefined,
+    },
+    preferencias: {
+        type: new mongoose_1.default.Schema({ email: { type: String, enum: ['inmediato', 'resumen', 'ninguno'] } }, { _id: false }),
+        default: undefined,
+    },
     rolBase: {
         type: String,
         enum: ['DOCENTE', 'COORDINADOR', 'RECTOR', 'ADMINISTRATIVO', 'ACUDIENTE', 'ESTUDIANTE'],
@@ -144,6 +159,12 @@ UsuarioSchema.index({ escuelaId: 1, tipo: 1, estado: 1 });
 UsuarioSchema.index({ 'info_academica.estudiantes_asociados': 1 });
 UsuarioSchema.index({ resetPasswordToken: 1 }, { sparse: true });
 UsuarioSchema.index({ fcmToken: 1 }, { name: 'fcmToken_parcial', partialFilterExpression: { fcmToken: { $type: 'string' } } });
+UsuarioSchema.index({ 'fcmTokens.token': 1 }, {
+    name: 'fcmTokens_token_unico',
+    unique: true,
+    partialFilterExpression: { 'fcmTokens.token': { $type: 'string' } },
+    _autoIndex: false,
+});
 const CAMPOS_SENSIBLES = [
     'password',
     'resetPasswordToken',
@@ -151,6 +172,7 @@ const CAMPOS_SENSIBLES = [
     'fcmToken',
     'fcmTokenUpdatedAt',
     'deviceInfo',
+    'fcmTokens',
 ];
 const ocultarCamposSensibles = (_doc, ret) => {
     CAMPOS_SENSIBLES.forEach((campo) => delete ret[campo]);

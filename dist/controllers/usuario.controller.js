@@ -12,6 +12,7 @@ const paginacion_1 = require("../utils/paginacion");
 const notificacion_service_1 = __importDefault(require("../services/notificacion.service"));
 const INotificacion_1 = require("../interfaces/INotificacion");
 const accesoAcademico_1 = require("../utils/accesoAcademico");
+const preferencias_1 = require("../utils/preferencias");
 const perfilPorRutas = (perfil) => {
     const datos = {};
     if (perfil && typeof perfil === 'object') {
@@ -23,6 +24,7 @@ const perfilPorRutas = (perfil) => {
     }
     return datos;
 };
+const quedaAdminActivo = async (escuelaId) => !!(await usuario_model_1.default.exists({ escuelaId, tipo: 'ADMIN', estado: 'ACTIVO' }));
 class UsuarioController {
     async obtenerUsuarios(req, res, next) {
         try {
@@ -163,6 +165,7 @@ class UsuarioController {
                 }
             }
             let datosPermitidos = {};
+            let adminAntes = null;
             if (tieneRolAdministrativo && actualizandoPropioUsuario) {
                 datosPermitidos = {
                     nombre: req.body.nombre,
@@ -175,7 +178,10 @@ class UsuarioController {
                 const usuarioObjetivo = await usuario_model_1.default.findOne({
                     _id: req.params.id,
                     escuelaId: req.user.escuelaId,
-                }).select('tipo');
+                }).select('tipo estado');
+                if (usuarioObjetivo?.tipo === 'ADMIN') {
+                    adminAntes = { tipo: usuarioObjetivo.tipo, estado: usuarioObjetivo.estado };
+                }
                 if (!usuarioObjetivo) {
                     throw new ApiError_1.default(404, 'Usuario no encontrado');
                 }
@@ -230,6 +236,10 @@ class UsuarioController {
             }, datosPermitidos, { new: true, runValidators: true }).select('-password');
             if (!usuario) {
                 throw new ApiError_1.default(404, 'Usuario no encontrado');
+            }
+            if (adminAntes && (usuario.tipo !== 'ADMIN' || usuario.estado !== 'ACTIVO') && !(await quedaAdminActivo(req.user.escuelaId))) {
+                await usuario_model_1.default.updateOne({ _id: usuario._id }, { $set: adminAntes });
+                throw new ApiError_1.default(409, 'No se puede dejar al colegio sin ningún administrador activo');
             }
             res.json({
                 success: true,
@@ -292,6 +302,44 @@ class UsuarioController {
             next(error);
         }
     }
+    async obtenerPreferencias(req, res, next) {
+        try {
+            if (!req.user)
+                throw new ApiError_1.default(401, 'No autorizado');
+            const usuario = await usuario_model_1.default.findById(req.user._id).select('tipo preferencias').lean();
+            if (!usuario)
+                throw new ApiError_1.default(404, 'Usuario no encontrado');
+            res.json({
+                success: true,
+                data: {
+                    email: (0, preferencias_1.preferenciaEmail)(usuario),
+                    porDefecto: !usuario.preferencias?.email,
+                    opciones: preferencias_1.PREFERENCIAS_EMAIL,
+                },
+            });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    async actualizarPreferencias(req, res, next) {
+        try {
+            if (!req.user)
+                throw new ApiError_1.default(401, 'No autorizado');
+            const { email } = req.body;
+            const r = await usuario_model_1.default.updateOne({ _id: req.user._id }, { $set: { 'preferencias.email': email } });
+            if (r.matchedCount === 0)
+                throw new ApiError_1.default(404, 'Usuario no encontrado');
+            res.json({
+                success: true,
+                data: { email, porDefecto: false, opciones: preferencias_1.PREFERENCIAS_EMAIL },
+                message: 'Preferencia de correo actualizada',
+            });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
     async solicitarEliminacionCuenta(req, res, next) {
         try {
             if (!req.user) {
@@ -315,8 +363,18 @@ class UsuarioController {
             if (!isPasswordMatch) {
                 throw new ApiError_1.default(400, 'La contraseña es incorrecta');
             }
+            if (usuario.tipo === 'ADMIN' &&
+                !(await usuario_model_1.default.exists({
+                    escuelaId: req.user.escuelaId,
+                    tipo: 'ADMIN',
+                    estado: 'ACTIVO',
+                    _id: { $ne: usuario._id },
+                }))) {
+                throw new ApiError_1.default(409, 'Eres el único administrador activo del colegio; asigna otro antes de eliminar tu cuenta');
+            }
             usuario.estado = 'INACTIVO';
             usuario.set('fcmToken', null);
+            usuario.set('fcmTokens', []);
             usuario.set('eliminacionCuenta', {
                 solicitada: true,
                 fecha: new Date(),
@@ -369,7 +427,7 @@ class UsuarioController {
                 throw new ApiError_1.default(403, 'No puedes desactivar tu propia cuenta');
             }
             const objetivo = await usuario_model_1.default.findOne({ _id: req.params.id, escuelaId: req.user.escuelaId })
-                .select('tipo')
+                .select('tipo estado')
                 .lean();
             if (!objetivo) {
                 throw new ApiError_1.default(404, 'Usuario no encontrado');
@@ -383,6 +441,10 @@ class UsuarioController {
             }, { estado: 'INACTIVO' }, { new: true });
             if (!usuario) {
                 throw new ApiError_1.default(404, 'Usuario no encontrado');
+            }
+            if (objetivo.tipo === 'ADMIN' && !(await quedaAdminActivo(req.user.escuelaId))) {
+                await usuario_model_1.default.updateOne({ _id: usuario._id }, { $set: { estado: objetivo.estado } });
+                throw new ApiError_1.default(409, 'No se puede desactivar al último administrador activo del colegio');
             }
             res.json({
                 success: true,

@@ -37,6 +37,8 @@ const dashboard_routes_1 = __importDefault(require("./routes/dashboard.routes"))
 const tarea_routes_1 = __importDefault(require("./routes/tarea.routes"));
 const perfilRol_routes_1 = __importDefault(require("./routes/perfilRol.routes"));
 const sanitize_middleware_1 = require("./middleware/sanitize.middleware");
+const outbox_1 = require("./queue/outbox");
+require("./queue/handlers");
 dotenv_1.default.config();
 const basePath = process.env.BASE_PATH || '';
 console.log(`Inicializando aplicación con BASE_PATH: "${basePath}"`);
@@ -176,6 +178,7 @@ const connectDB = async () => {
 const PORT = process.env.PORT || 3000;
 const startServer = async () => {
     await connectDB();
+    (0, outbox_1.iniciarWorker)();
     const server = app.listen(PORT, () => {
         console.log(`✅ Servidor iniciado en puerto ${PORT} en modo ${process.env.NODE_ENV || 'development'}`);
         console.log(`📝 API documentación: http://localhost:${PORT}${basePath}/api/docs`);
@@ -187,6 +190,7 @@ const startServer = async () => {
         server.close(async () => {
             console.log('Servidor HTTP cerrado.');
             try {
+                await (0, outbox_1.detenerWorker)();
                 await mongoose_1.default.connection.close();
                 console.log('Conexión a MongoDB cerrada correctamente.');
                 process.exit(0);

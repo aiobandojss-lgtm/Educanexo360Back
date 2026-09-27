@@ -148,20 +148,16 @@ class TareaController {
                 message: 'Tarea creada exitosamente',
             });
             if (estudiantesParaAsignar.length > 0) {
-                usuario_model_1.default.find({ _id: { $in: estudiantesParaAsignar }, fcmToken: { $exists: true, $ne: null } }, { fcmToken: 1 }).then((estudiantes) => {
-                    const tokens = estudiantes.map((e) => e.fcmToken).filter(Boolean);
-                    if (tokens.length > 0) {
-                        const fechaStr = nuevaTarea.fechaLimite
-                            ? new Date(nuevaTarea.fechaLimite).toLocaleDateString('es-CO')
-                            : '';
-                        pushNotification_service_1.default.enviarNotificacionMasiva({
-                            tokens,
-                            titulo: `Nueva tarea: ${nuevaTarea.titulo}`,
-                            mensaje: `${req.user.nombre} asignó una nueva tarea${fechaStr ? `. Vence: ${fechaStr}` : ''}`,
-                            data: { tipo: 'tarea', tareaId: nuevaTarea._id.toString() },
-                        }).catch(() => { });
-                    }
-                }).catch(() => { });
+                const fechaStr = nuevaTarea.fechaLimite
+                    ? new Date(nuevaTarea.fechaLimite).toLocaleDateString('es-CO')
+                    : '';
+                pushNotification_service_1.default
+                    .encolarPushFiltro({ _id: { $in: estudiantesParaAsignar } }, {
+                    titulo: `Nueva tarea: ${nuevaTarea.titulo}`,
+                    mensaje: `${req.user.nombre} asignó una nueva tarea${fechaStr ? `. Vence: ${fechaStr}` : ''}`,
+                    data: { tipo: 'tarea', tareaId: nuevaTarea._id.toString() },
+                }, { escuelaId: String(req.user.escuelaId) })
+                    .catch((err) => console.error('[Tarea] No se pudo encolar el push:', err));
             }
         }
         catch (error) {

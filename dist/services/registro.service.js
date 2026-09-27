@@ -44,27 +44,44 @@ const usuario_model_1 = __importDefault(require("../models/usuario.model"));
 const invitacion_model_1 = __importDefault(require("../models/invitacion.model"));
 const curso_model_1 = __importDefault(require("../models/curso.model"));
 const invitacion_service_1 = __importDefault(require("./invitacion.service"));
-const email_service_1 = __importDefault(require("../services/email.service"));
+const crypto_1 = __importDefault(require("crypto"));
+const email_service_1 = require("../services/email.service");
+const config_1 = __importDefault(require("../config/config"));
 const estudiante_service_1 = require("./estudiante.service");
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
 const passwordUtils_1 = require("../utils/passwordUtils");
 const mongoose_2 = __importDefault(require("mongoose"));
 const logger_1 = require("../utils/logger");
+const HORAS_ENLACE_DEFINIR = 72;
+const nuevoEnlaceDefinir = () => {
+    const token = crypto_1.default.randomBytes(32).toString('hex');
+    return {
+        url: `${config_1.default.frontendUrl}/reset-password/${token}`,
+        campos: {
+            resetPasswordToken: crypto_1.default.createHash('sha256').update(token).digest('hex'),
+            resetPasswordExpires: new Date(Date.now() + HORAS_ENLACE_DEFINIR * 60 * 60 * 1000),
+        },
+    };
+};
 class RegistroService {
     async notificarNuevaSolicitud(solicitud) {
         try {
-            await email_service_1.default.sendEmail({
-                to: process.env.ADMIN_EMAIL || 'admin@educanexo360.com',
-                subject: 'Nueva solicitud de registro recibida',
-                text: `Se ha recibido una nueva solicitud de registro:
-          
+            await (0, email_service_1.encolarCorreo)({
+                destinatarios: [{ email: process.env.ADMIN_EMAIL || 'admin@educanexo360.com' }],
+                plantilla: 'texto',
+                datos: {
+                    subject: 'Nueva solicitud de registro recibida',
+                    text: `Se ha recibido una nueva solicitud de registro:
+
 Nombre: ${solicitud.nombre} ${solicitud.apellidos}
 Email: ${solicitud.email}
 Teléfono: ${solicitud.telefono || 'No proporcionado'}
 Estudiantes: ${solicitud.estudiantes.length}
-          
+
 Por favor, revise la solicitud en el panel de administración.
         `,
+                },
+                escuelaId: solicitud.escuelaId ? String(solicitud.escuelaId) : undefined,
             });
             logger_1.logger.debug(`Notificación enviada para la solicitud ${solicitud._id}`);
         }
@@ -152,11 +169,13 @@ Por favor, revise la solicitud en el panel de administración.
         try {
             const acudienteCredenciales = this.generarCredencialesUnicas(solicitud.nombre, solicitud.apellidos, solicitud.email);
             logger_1.logger.debug('Credenciales de acudiente generadas con éxito');
+            const enlaceAcudiente = nuevoEnlaceDefinir();
             const acudiente = new usuario_model_1.default({
                 nombre: solicitud.nombre,
                 apellidos: solicitud.apellidos,
                 email: acudienteCredenciales.email,
                 password: acudienteCredenciales.password,
+                ...enlaceAcudiente.campos,
                 tipo: 'ACUDIENTE',
                 estado: 'ACTIVO',
                 escuelaId: solicitud.escuelaId,
@@ -191,7 +210,6 @@ Por favor, revise la solicitud en el panel de administración.
                         estudiantesParaEmail.push({
                             nombre: `${estudianteExistente.nombre} ${estudianteExistente.apellidos}`,
                             email: estudianteExistente.email,
-                            password: 'Usar credenciales existentes',
                             codigo: estudianteExistente.codigo_estudiante || 'N/A',
                             curso: estudianteExistente.curso?.nombre || 'No especificado',
                             esExistente: true,
@@ -220,11 +238,13 @@ Por favor, revise la solicitud en el panel de administración.
                     catch (error) {
                         console.error('Error al obtener información del curso:', error);
                     }
+                    const enlaceEstudiante = nuevoEnlaceDefinir();
                     const estudiante = new usuario_model_1.default({
                         nombre: estData.nombre,
                         apellidos: estData.apellidos,
                         email: credenciales.email,
                         password: credenciales.password,
+                        ...enlaceEstudiante.campos,
                         tipo: 'ESTUDIANTE',
                         estado: 'ACTIVO',
                         escuelaId: solicitud.escuelaId,
@@ -253,7 +273,7 @@ Por favor, revise la solicitud en el panel de administración.
                     estudiantesParaEmail.push({
                         nombre: `${estData.nombre} ${estData.apellidos}`,
                         email: credenciales.email,
-                        password: credenciales.password,
+                        enlace: enlaceEstudiante.url,
                         codigo: credenciales.codigo,
                         curso: cursoInfo.nombre,
                         emailGenerado: !estData.email,
@@ -272,7 +292,12 @@ Por favor, revise la solicitud en el panel de administración.
             await solicitud.save({ session });
             await session.commitTransaction();
             logger_1.logger.debug('Transacción completada exitosamente');
-            await this.enviarCorreoConfirmacion(acudienteCredenciales.email, `${solicitud.nombre} ${solicitud.apellidos}`, acudienteCredenciales.password, estudiantesParaEmail);
+            try {
+                await this.enviarCorreoConfirmacion(acudienteCredenciales.email, `${solicitud.nombre} ${solicitud.apellidos}`, enlaceAcudiente.url, estudiantesParaEmail, String(solicitud.escuelaId));
+            }
+            catch (errorCorreo) {
+                console.error(`[Registro] No se pudo encolar el correo de bienvenida de la solicitud ${solicitudId}:`, errorCorreo);
+            }
             return {
                 mensaje: 'Solicitud aprobada exitosamente',
                 acudienteId: acudiente._id,
@@ -315,10 +340,14 @@ Por favor, revise la solicitud en el panel de administración.
         solicitud.revisadoPor = new mongoose_1.Types.ObjectId(usuarioAdminId);
         solicitud.comentarios = motivo;
         await solicitud.save();
-        await email_service_1.default.sendEmail({
-            to: solicitud.email,
-            subject: 'Solicitud de registro - No aprobada',
-            text: `Estimado/a ${solicitud.nombre} ${solicitud.apellidos},
+        await (0, email_service_1.encolarCorreo)({
+            destinatarios: [{ email: solicitud.email, nombre: solicitud.nombre }],
+            plantilla: 'texto',
+            prioridad: 'alta',
+            escuelaId: solicitud.escuelaId ? String(solicitud.escuelaId) : undefined,
+            datos: {
+                subject: 'Solicitud de registro - No aprobada',
+                text: `Estimado/a ${solicitud.nombre} ${solicitud.apellidos},
 
 Su solicitud de registro en el sistema EducaNexo360 no ha sido aprobada por el siguiente motivo:
 
@@ -328,6 +357,7 @@ Si considera que esto es un error, por favor contacte directamente con la instit
 
 Saludos cordiales,
 El equipo de EducaNexo360`,
+            },
         });
         return {
             mensaje: 'Solicitud rechazada exitosamente',
@@ -431,79 +461,21 @@ El equipo de EducaNexo360`,
             codigo,
         };
     }
-    async enviarCorreoConfirmacion(email, nombreCompleto, passwordAcudiente, credencialesEstudiantes) {
-        const PLATFORM_URL = process.env.FRONTEND_URL || 'https://educanexo360-web.vercel.app';
-        const LOGIN_URL = `${PLATFORM_URL}/login`;
-        let listaEstudiantes = '';
-        credencialesEstudiantes.forEach((est) => {
-            if (est.esExistente) {
-                listaEstudiantes += `
-- Estudiante: ${est.nombre} (EXISTENTE - ya asociado)
-  Código: ${est.codigo}
-  Curso: ${est.curso || 'No especificado'}
-  Email: ${est.email}
-  Contraseña: ${est.password}
-      `;
-            }
-            else {
-                listaEstudiantes += `
-- Estudiante: ${est.nombre} (NUEVO)
-  Código: ${est.codigo}
-  Curso: ${est.curso || 'No especificado'}
-  Email: ${est.email}${est.emailGenerado ? ' (generado por el sistema)' : ''}
-  Contraseña: ${est.password}
-      `;
-            }
-        });
-        await email_service_1.default.sendEmail({
-            to: email,
-            subject: '🎓 ¡Bienvenido a EducaNexo360! - Credenciales de Acceso',
-            text: `¡Bienvenido/a ${nombreCompleto} a EducaNexo360!
-
-Su solicitud de registro ha sido aprobada. A continuación encontrará las credenciales de acceso para usted y sus estudiantes asociados:
-
-🔗 ACCEDER A LA PLATAFORMA:
-   ${LOGIN_URL}
-
-📱 TAMBIÉN DISPONIBLE EN MÓVIL:
-   Próximamente en Play Store y App Store
-
-═══════════════════════════════════════════════════
-
-👨‍👩‍👧‍👦 SUS CREDENCIALES DE ACUDIENTE:
-- Email: ${email}
-- Contraseña: ${passwordAcudiente}
-
-🎓 ESTUDIANTES ASOCIADOS:
-${listaEstudiantes}
-
-═══════════════════════════════════════════════════
-
-📋 NOTA IMPORTANTE:
-- Los estudiantes marcados como "EXISTENTES" ya tenían cuenta en el sistema y ahora han sido asociados a usted como acudiente adicional.
-- Los estudiantes marcados como "NUEVOS" son cuentas creadas específicamente para esta solicitud.
-
-🔐 SEGURIDAD:
-Por favor, conserve estas credenciales en un lugar seguro y cámbielas en su primer inicio de sesión por su propia seguridad.
-
-🌐 ACCESO:
-Puede acceder al sistema desde cualquier dispositivo con internet:
-• Computador: ${LOGIN_URL}
-• Celular o Tablet: ${LOGIN_URL}
-• Aplicación Móvil: Próximamente disponible
-
-📞 ¿NECESITA AYUDA?
-Si tiene dificultades para ingresar, contacte a la institución educativa o escriba a soporte técnico.
-
-¡Esperamos que disfrute de la experiencia EducaNexo360!
-
-Saludos cordiales,
-El equipo de EducaNexo360
-
-───────────────────────────────────────────────────
-Este es un mensaje automático del sistema EducaNexo360.
-Para soporte técnico: soporte@educanexo360.creativebycode.com
-whatsApp: +57 3185489198`,
+    async enviarCorreoConfirmacion(email, nombreCompleto, enlaceAcudiente, estudiantes, escuelaId) {
+        await (0, email_service_1.encolarCorreo)({
+            destinatarios: [{ email, nombre: nombreCompleto }],
+            plantilla: 'credenciales',
+            datos: {
+                nombre: nombreCompleto,
+                email,
+                enlace: enlaceAcudiente,
+                horas: HORAS_ENLACE_DEFINIR,
+                loginUrl: `${config_1.default.frontendUrl}/login`,
+                estudiantes,
+            },
+            prioridad: 'alta',
+            escuelaId,
+            sensible: true,
         });
     }
 }

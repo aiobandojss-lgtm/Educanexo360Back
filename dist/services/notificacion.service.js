@@ -5,7 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const notificacion_model_1 = __importDefault(require("../models/notificacion.model"));
 const usuario_model_1 = __importDefault(require("../models/usuario.model"));
-const email_service_1 = __importDefault(require("./email.service"));
+const email_service_1 = require("./email.service");
 const INotificacion_1 = require("../interfaces/INotificacion");
 const config_1 = __importDefault(require("../config/config"));
 class NotificacionService {
@@ -23,10 +23,7 @@ class NotificacionService {
                 metadata: data.metadata || {},
             });
             if (data.enviarEmail) {
-                const usuario = await usuario_model_1.default.findById(data.usuarioId);
-                if (usuario && usuario.email) {
-                    await this.enviarEmailNotificacion(usuario.email, data.titulo, data.mensaje, data.tipo, data.metadata);
-                }
+                await this.encolarEmailNotificacion([data.usuarioId], data);
             }
             return notificacion;
         }
@@ -53,12 +50,7 @@ class NotificacionService {
                 notificaciones.push(...(await notificacion_model_1.default.insertMany(notificacionesDocs)));
             }
             if (data.enviarEmail) {
-                const usuarios = await usuario_model_1.default.find({ _id: { $in: data.usuarioIds } });
-                for (const usuario of usuarios) {
-                    if (usuario.email) {
-                        await this.enviarEmailNotificacion(usuario.email, data.titulo, data.mensaje, data.tipo, data.metadata);
-                    }
-                }
+                await this.encolarEmailNotificacion(data.usuarioIds, data);
             }
             return notificaciones;
         }
@@ -103,13 +95,15 @@ class NotificacionService {
             throw error;
         }
     }
-    async enviarEmailNotificacion(email, titulo, mensaje, tipo, metadata) {
-        const text = `${titulo}\n\n${mensaje}`;
+    async encolarEmailNotificacion(usuarioIds, data) {
+        const usuarios = await usuario_model_1.default.find({ _id: { $in: usuarioIds } })
+            .select('_id email nombre')
+            .lean();
         let url = `${config_1.default.frontendUrl}/notificaciones`;
         let tipoTexto = 'Notificación del sistema';
-        switch (tipo) {
+        switch (data.tipo) {
             case INotificacion_1.TipoNotificacion.MENSAJE:
-                url = metadata?.url || `${config_1.default.frontendUrl}/mensajes/${metadata?.mensajeId || ''}`;
+                url = data.metadata?.url || `${config_1.default.frontendUrl}/mensajes/${data.metadata?.mensajeId || ''}`;
                 tipoTexto = 'Nuevo mensaje';
                 break;
             case INotificacion_1.TipoNotificacion.CALIFICACION:
@@ -121,27 +115,13 @@ class NotificacionService {
                 tipoTexto = 'Evento escolar';
                 break;
         }
-        const html = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <div style="background-color: #3f51b5; color: white; padding: 20px; text-align: center;">
-          <h1>${tipoTexto}</h1>
-        </div>
-        <div style="padding: 20px; border: 1px solid #ddd; border-top: none;">
-          <h2>${titulo}</h2>
-          <p>${mensaje}</p>
-          <p><a href="${url}" style="display: inline-block; background-color: #3f51b5; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-top: 20px;">Ver detalles</a></p>
-        </div>
-        <div style="margin-top: 20px; text-align: center; font-size: 12px; color: #666;">
-          <p>Este es un correo automático, por favor no responda a este mensaje.</p>
-          <p>&copy; 2024 EducaNexo360. Todos los derechos reservados.</p>
-        </div>
-      </div>
-    `;
-        return email_service_1.default.sendEmail({
-            to: email,
-            subject: titulo,
-            text,
-            html,
+        await (0, email_service_1.encolarCorreo)({
+            destinatarios: usuarios
+                .filter((u) => u.email)
+                .map((u) => ({ email: u.email, nombre: u.nombre, usuarioId: String(u._id) })),
+            plantilla: 'notificacion',
+            datos: { titulo: data.titulo, mensaje: data.mensaje, tipoTexto, url },
+            escuelaId: data.escuelaId,
         });
     }
 }

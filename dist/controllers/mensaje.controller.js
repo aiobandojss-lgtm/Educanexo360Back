@@ -12,7 +12,6 @@ const mensaje_service_1 = __importDefault(require("../services/mensaje.service")
 const escapeRegex_1 = require("../utils/escapeRegex");
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
 const IMensaje_1 = require("../interfaces/IMensaje");
-const pushNotification_service_1 = __importDefault(require("../services/pushNotification.service"));
 const paginacion_1 = require("../utils/paginacion");
 const logger_1 = require("../utils/logger");
 const adjuntosGridFS_1 = require("../utils/adjuntosGridFS");
@@ -654,28 +653,40 @@ class MensajeController {
                 throw new ApiError_1.default(500, 'El mensaje no se actualizó correctamente');
             }
             try {
-                const destinatariosIds = mensajeEnviado.destinatarios.map((d) => typeof d === 'object' && d._id ? d._id.toString() : d.toString());
-                if (destinatariosIds.length > 0) {
-                    const estudiantesInfo = await usuario_model_1.default.find({
-                        _id: { $in: destinatariosIds },
-                        tipo: 'ESTUDIANTE',
-                        escuelaId: req.user.escuelaId,
-                    }).select('_id');
-                    const datosMensaje = {
-                        asunto: mensajeEnviado.asunto,
-                        contenido: mensajeEnviado.contenido,
-                        adjuntos: mensajeEnviado.adjuntos || [],
-                        tipo: mensajeEnviado.tipo,
-                        prioridad: mensajeEnviado.prioridad,
-                        etiquetas: mensajeEnviado.etiquetas || [],
-                    };
-                    for (const est of estudiantesInfo) {
-                        await mensaje_service_1.default.enviarCopiaAcudientes(est._id.toString(), datosMensaje, req.user);
-                    }
-                }
+                const destinatariosIds = mensajeEnviado.destinatarios.map((d) => String(d?._id ?? d));
+                const ccIds = (mensajeEnviado.destinatariosCc || []).map((d) => String(d?._id ?? d));
+                const usuariosDestino = await usuario_model_1.default.find({
+                    _id: { $in: [...destinatariosIds, ...ccIds] },
+                    escuelaId: req.user.escuelaId,
+                    estado: 'ACTIVO',
+                })
+                    .select('_id email nombre tipo preferencias fcmToken fcmTokens.token')
+                    .lean();
+                const setDest = new Set(destinatariosIds);
+                const setCc = new Set(ccIds);
+                await mensaje_service_1.default.despacharMensaje({
+                    mensajeId: String(mensajeEnviado._id),
+                    asunto: mensajeEnviado.asunto,
+                    prioridad: mensajeEnviado.prioridad,
+                    remitente: req.user,
+                    tieneAdjuntos: (mensajeEnviado.adjuntos || []).length > 0,
+                    destinatarios: usuariosDestino.filter((u) => setDest.has(String(u._id))),
+                    cc: usuariosDestino.filter((u) => setCc.has(String(u._id))),
+                });
+                const estudiantesIds = usuariosDestino
+                    .filter((u) => u.tipo === 'ESTUDIANTE' && setDest.has(String(u._id)))
+                    .map((u) => String(u._id));
+                await mensaje_service_1.default.encolarCopiasAcudientes(String(mensajeEnviado._id), estudiantesIds, {
+                    asunto: mensajeEnviado.asunto,
+                    contenido: mensajeEnviado.contenido,
+                    adjuntos: mensajeEnviado.adjuntos || [],
+                    tipo: mensajeEnviado.tipo,
+                    prioridad: mensajeEnviado.prioridad,
+                    etiquetas: mensajeEnviado.etiquetas || [],
+                }, req.user);
             }
-            catch (errorCopia) {
-                console.error('[ERROR] enviarCopiaAcudientes en borrador falló pero el mensaje fue enviado:', errorCopia);
+            catch (errorDespacho) {
+                console.error('[ERROR] Notificaciones/copias del borrador enviado fallaron (el mensaje sí se envió):', errorDespacho);
             }
             res.status(200).json({
                 success: true,
@@ -1410,52 +1421,17 @@ class MensajeController {
                 await revertirAdjuntosSinMensaje(adjuntos.map((a) => a.fileId));
                 throw crearError;
             }
-            if (estado !== IMensaje_1.EstadoMensaje.BORRADOR) {
-                try {
-                    logger_1.logger.debug('📱 Enviando notificaciones push automáticas...');
-                    const senderName = `${req.user.nombre} ${req.user.apellidos}`;
-                    const isUrgent = prioridad === IMensaje_1.PrioridadMensaje.ALTA ||
-                        asunto.toLowerCase().includes('urgente') ||
-                        asunto.toLowerCase().includes('emergencia');
-                    let allRecipients = (nuevoMensaje.destinatarios || []).map((d) => String(d?._id ?? d));
-                    allRecipients = [...new Set(allRecipients)];
-                    let pushEnviadas = 0;
-                    for (const recipientId of allRecipients) {
-                        try {
-                            let resultado;
-                            if (isUrgent) {
-                                resultado = await pushNotification_service_1.default.notificarMensajeUrgente(recipientId, senderName, asunto, nuevoMensaje._id.toString());
-                            }
-                            else {
-                                resultado = await pushNotification_service_1.default.notificarNuevoMensaje(recipientId, senderName, asunto, nuevoMensaje._id.toString(), prioridad);
-                            }
-                            if (resultado)
-                                pushEnviadas++;
-                        }
-                        catch (error) {
-                            console.error(`❌ Error enviando push a ${recipientId}:`, error);
-                        }
-                    }
-                    logger_1.logger.debug(`✅ Notificaciones push enviadas: ${pushEnviadas}/${allRecipients.length}`);
-                }
-                catch (error) {
-                    console.error('❌ Error enviando notificaciones push:', error);
-                }
-            }
-            if (cursoIdsArray.length === 0 && destinatariosArray.length > 0) {
+            if (estado !== IMensaje_1.EstadoMensaje.BORRADOR && cursoIdsArray.length === 0 && destinatariosArray.length > 0) {
                 try {
                     const estudiantesInfo = await usuario_model_1.default.find({
                         _id: { $in: destinatariosArray },
                         tipo: 'ESTUDIANTE',
                         escuelaId: req.user.escuelaId,
                     }).select('_id');
-                    const estudiantesIds = estudiantesInfo.map((est) => est._id.toString());
-                    for (const estudianteId of estudiantesIds) {
-                        await mensaje_service_1.default.enviarCopiaAcudientes(estudianteId, datosMensaje, req.user);
-                    }
+                    await mensaje_service_1.default.encolarCopiasAcudientes(nuevoMensaje._id.toString(), estudiantesInfo.map((est) => est._id.toString()), datosMensaje, req.user);
                 }
                 catch (errorCopia) {
-                    console.error('[ERROR] enviarCopiaAcudientes falló pero el mensaje principal fue enviado:', errorCopia);
+                    console.error('[ERROR] No se pudieron encolar las copias a acudientes (el mensaje sí se envió):', errorCopia);
                 }
             }
             res.status(201).json({
@@ -2347,23 +2323,15 @@ class MensajeController {
                 throw crearError;
             }
             try {
-                const senderName = `${req.user.nombre} ${req.user.apellidos}`;
-                for (const recipientId of destinatarios) {
-                    await pushNotification_service_1.default.notificarNuevoMensaje(recipientId, senderName, datosRespuesta.asunto, respuesta._id.toString(), 'NORMAL');
-                }
-                logger_1.logger.debug('✅ Notificaciones push enviadas para respuesta');
+                const estudiantesInfo = await usuario_model_1.default.find({
+                    _id: { $in: destinatarios },
+                    tipo: 'ESTUDIANTE',
+                    escuelaId: req.user.escuelaId,
+                }).select('_id');
+                await mensaje_service_1.default.encolarCopiasAcudientes(respuesta._id.toString(), estudiantesInfo.map((est) => est._id.toString()), datosRespuesta, req.user);
             }
-            catch (error) {
-                console.error('❌ Error enviando push para respuesta:', error);
-            }
-            const estudiantesInfo = await usuario_model_1.default.find({
-                _id: { $in: destinatarios },
-                tipo: 'ESTUDIANTE',
-                escuelaId: req.user.escuelaId,
-            }).select('_id');
-            const estudiantesIds = estudiantesInfo.map((est) => est._id.toString());
-            for (const estudianteId of estudiantesIds) {
-                await mensaje_service_1.default.enviarCopiaAcudientes(estudianteId, datosRespuesta, req.user);
+            catch (errorCopia) {
+                console.error('[ERROR] No se pudieron encolar las copias a acudientes de la respuesta:', errorCopia);
             }
             res.status(201).json({
                 success: true,

@@ -6,7 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.authController = void 0;
 const auth_service_1 = __importDefault(require("../services/auth/auth.service"));
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
-const email_service_1 = __importDefault(require("../services/email.service"));
+const email_service_1 = require("../services/email.service");
 const crypto_1 = __importDefault(require("crypto"));
 const usuario_model_1 = __importDefault(require("../models/usuario.model"));
 const config_1 = __importDefault(require("../config/config"));
@@ -106,11 +106,21 @@ exports.authController = {
             await user.save();
             const frontendUrl = config_1.default.frontendUrl || 'http://localhost:3000';
             const resetUrl = `${frontendUrl}/reset-password/${resetToken}`;
-            await email_service_1.default.sendPasswordResetEmail(user.email, {
-                nombre: user.nombre,
-                resetUrl,
-                expirationTime: '1 hora',
-            });
+            try {
+                await (0, email_service_1.encolarCorreo)({
+                    destinatarios: [{ email: user.email, nombre: user.nombre, usuarioId: String(user._id) }],
+                    plantilla: 'reset',
+                    datos: { nombre: user.nombre, resetUrl, expirationTime: '1 hora' },
+                    prioridad: 'alta',
+                    escuelaId: user.escuelaId ? String(user.escuelaId) : undefined,
+                    sensible: true,
+                });
+            }
+            catch (errorCola) {
+                logger_1.logger.error('[forgotPassword] No se pudo encolar el correo de recuperación:', errorCola);
+                await usuario_model_1.default.updateOne({ _id: user._id }, { $unset: { resetPasswordToken: 1, resetPasswordExpires: 1 } }).catch(() => undefined);
+                throw new ApiError_1.default(503, 'No se pudo enviar el correo de recuperación. Intenta de nuevo en unos minutos.');
+            }
             res.json({
                 success: true,
                 message: 'Si el correo electrónico existe, recibirás instrucciones para recuperar tu contraseña',

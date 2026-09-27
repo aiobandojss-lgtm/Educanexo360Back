@@ -1,37 +1,4 @@
 "use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -45,8 +12,12 @@ const ApiError_1 = __importDefault(require("../utils/ApiError"));
 const IMensaje_1 = require("../interfaces/IMensaje");
 const INotificacion_1 = require("../interfaces/INotificacion");
 const escapeRegex_1 = require("../utils/escapeRegex");
-const email_service_1 = __importStar(require("./email.service"));
-const notificacion_service_1 = __importDefault(require("./notificacion.service"));
+const email_service_1 = require("./email.service");
+const preferencias_1 = require("../utils/preferencias");
+const pushNotification_service_1 = __importDefault(require("./pushNotification.service"));
+const notificacion_model_1 = __importDefault(require("../models/notificacion.model"));
+const INotificacion_2 = require("../interfaces/INotificacion");
+const outbox_1 = require("../queue/outbox");
 const simpleCache_1 = require("../cache/simpleCache");
 const config_1 = __importDefault(require("../config/config"));
 const accesoAcademico_1 = require("../utils/accesoAcademico");
@@ -270,7 +241,7 @@ class MensajeService {
     }
     async crearMensaje(datos, user) {
         try {
-            const { destinatarios = [], destinatariosCc = [], cursoIds = [], asunto, contenido, adjuntos = [], tipo = IMensaje_1.TipoMensaje.INDIVIDUAL, prioridad = IMensaje_1.PrioridadMensaje.NORMAL, estado = IMensaje_1.EstadoMensaje.ENVIADO, etiquetas = [], esRespuesta = false, mensajeOriginalId = null, esCopiaAcudiente = false, } = datos;
+            const { destinatarios = [], destinatariosCc = [], cursoIds = [], asunto, contenido, adjuntos = [], tipo = IMensaje_1.TipoMensaje.INDIVIDUAL, prioridad = IMensaje_1.PrioridadMensaje.NORMAL, estado = IMensaje_1.EstadoMensaje.ENVIADO, etiquetas = [], esRespuesta = false, mensajeOriginalId = null, esCopiaAcudiente = false, copiaDe = undefined, } = datos;
             if (!user.escuelaId) {
                 throw new ApiError_1.default(403, 'No tiene una escuela asociada');
             }
@@ -305,7 +276,7 @@ class MensajeService {
                 escuelaId: user.escuelaId,
                 estado: 'ACTIVO',
             })
-                .select('_id')
+                .select('_id email nombre tipo preferencias fcmToken fcmTokens.token')
                 .lean();
             const idsValidos = new Set(validos.map((u) => String(u._id)));
             destinatariosFinales = destinatariosFinales.filter((id) => idsValidos.has(id));
@@ -335,17 +306,28 @@ class MensajeService {
                 mensajeOriginalId,
                 lecturas: [],
                 esCopiaAcudiente,
+                ...(copiaDe && { copiaDe }),
                 cursoIds: cursoIdsValidos
                     .map((id) => this.safeObjectId(id))
                     .filter((id) => id !== null),
             }));
             if (estado !== IMensaje_1.EstadoMensaje.BORRADOR) {
-                await this.enviarNotificacionesEnBatch(nuevoMensaje._id.toString(), [...destinatariosFinales, ...destinatariosCcFinales], asunto, user, adjuntos.length > 0);
+                const setDest = new Set(destinatariosFinales);
+                const setCc = new Set(destinatariosCcFinales);
+                await this.despacharMensaje({
+                    mensajeId: nuevoMensaje._id.toString(),
+                    asunto,
+                    prioridad,
+                    remitente: user,
+                    tieneAdjuntos: adjuntos.length > 0,
+                    destinatarios: validos.filter((u) => setDest.has(String(u._id))),
+                    cc: validos.filter((u) => setCc.has(String(u._id))),
+                });
             }
             await nuevoMensaje.populate([
                 { path: 'remitente', select: 'nombre apellidos email tipo' },
-                { path: 'destinatarios', select: 'nombre apellidos tipo' },
-                { path: 'destinatariosCc', select: 'nombre apellidos tipo' },
+                { path: 'destinatarios', select: 'nombre apellidos tipo', options: { lean: true } },
+                { path: 'destinatariosCc', select: 'nombre apellidos tipo', options: { lean: true } },
             ]);
             this.invalidarCacheMensajes(user._id, user.escuelaId);
             (0, simpleCache_1.invalidarCacheUsuarios)(['dashboard', 'dashboard_rol', 'dashboard_completo'], [...destinatariosFinales, ...destinatariosCcFinales].map(String), String(user.escuelaId));
@@ -393,64 +375,119 @@ class MensajeService {
         logger_1.logger.debug(`✅ Destinatarios de cursos obtenidos: ${destinatarios.length}`);
         return destinatarios;
     }
-    async enviarNotificacionesEnBatch(mensajeId, destinatariosIds, asunto, remitente, tieneAdjuntos) {
+    async despacharMensaje(p) {
         try {
-            const validDestinatariosIds = destinatariosIds
-                .map((id) => this.safeObjectId(id))
-                .filter((id) => id !== null);
-            if (validDestinatariosIds.length === 0)
+            const todos = [...new Map([...p.destinatarios, ...p.cc].map((u) => [String(u._id), u])).values()];
+            if (todos.length === 0)
                 return;
-            const usuarios = await usuario_model_1.default.find({
-                _id: { $in: validDestinatariosIds },
-                escuelaId: remitente.escuelaId,
-                estado: 'ACTIVO',
-            }).select('_id email nombre apellidos');
-            const nombreRemitente = `${remitente.nombre} ${remitente.apellidos}`.trim();
-            const batchSize = 20;
-            for (let i = 0; i < usuarios.length; i += batchSize) {
-                const batch = usuarios.slice(i, i + batchSize);
-                const promesasBatch = batch.map(async (destinatario) => {
-                    const destId = destinatario._id.toString();
-                    const [,] = await Promise.all([
-                        notificacion_service_1.default.crearNotificacion({
-                            usuarioId: destId,
-                            titulo: `Nuevo mensaje: ${asunto}`,
-                            mensaje: `Has recibido un nuevo mensaje de ${nombreRemitente}`,
-                            tipo: INotificacion_1.TipoNotificacion.MENSAJE,
-                            escuelaId: remitente.escuelaId,
-                            entidadId: mensajeId,
-                            entidadTipo: 'Mensaje',
-                            metadata: {
-                                remitente: nombreRemitente,
-                                tieneAdjuntos,
-                                mensajeId,
-                                url: `${config_1.default.frontendUrl}/mensajes/${mensajeId}`,
-                            },
-                            enviarEmail: false,
-                        }),
-                        destinatario.email && !(0, email_service_1.esEmailFicticio)(destinatario.email)
-                            ? email_service_1.default.sendMensajeNotification(destinatario.email, {
-                                remitente: nombreRemitente,
-                                asunto,
-                                fecha: new Date(),
-                                tieneAdjuntos,
-                                url: `${config_1.default.frontendUrl}/mensajes/${mensajeId}`,
-                            })
-                            : Promise.resolve(),
-                    ]);
-                });
-                await Promise.all(promesasBatch);
-                if (i + batchSize < usuarios.length) {
-                    await new Promise((resolve) => setTimeout(resolve, 100));
-                }
-            }
-            logger_1.logger.debug(`✅ Notificaciones enviadas a ${usuarios.length} destinatarios`);
+            const nombreRemitente = `${p.remitente.nombre ?? ''} ${p.remitente.apellidos ?? ''}`.trim();
+            const url = `${config_1.default.frontendUrl}/mensajes/${p.mensajeId}`;
+            const escuelaId = String(p.remitente.escuelaId);
+            const ahora = new Date();
+            const escuelaObjId = new mongoose_1.default.Types.ObjectId(escuelaId);
+            const alResumen = new Set(todos
+                .filter((u) => this.correoAlResumen(u, p.prioridad))
+                .map((u) => String(u._id)));
+            await notificacion_model_1.default.insertMany(todos.map((u) => ({
+                usuarioId: new mongoose_1.default.Types.ObjectId(String(u._id)),
+                titulo: `Nuevo mensaje: ${p.asunto}`,
+                mensaje: `Has recibido un nuevo mensaje de ${nombreRemitente}`,
+                tipo: INotificacion_1.TipoNotificacion.MENSAJE,
+                estado: INotificacion_2.EstadoNotificacion.PENDIENTE,
+                escuelaId: escuelaObjId,
+                entidadId: new mongoose_1.default.Types.ObjectId(p.mensajeId),
+                entidadTipo: 'Mensaje',
+                metadata: {
+                    remitente: nombreRemitente,
+                    tieneAdjuntos: p.tieneAdjuntos,
+                    mensajeId: p.mensajeId,
+                    url,
+                    ...(alResumen.has(String(u._id)) && { resumen: true }),
+                },
+                createdAt: ahora,
+                updatedAt: ahora,
+            })), { ordered: false, lean: true });
+            const correoInmediato = todos.filter((u) => this.correoInmediato(u, p.prioridad));
+            const urgente = p.prioridad === IMensaje_1.PrioridadMensaje.ALTA || /urgente|emergencia/i.test(String(p.asunto || ''));
+            const trabajos = [
+                ...(0, email_service_1.construirTrabajosCorreo)({
+                    destinatarios: correoInmediato.map((u) => ({ email: u.email, nombre: u.nombre, usuarioId: String(u._id) })),
+                    plantilla: 'mensaje',
+                    datos: { remitente: nombreRemitente, asunto: p.asunto, fecha: new Date(), tieneAdjuntos: p.tieneAdjuntos, url },
+                    prioridad: p.prioridad === IMensaje_1.PrioridadMensaje.ALTA ? 'alta' : 'normal',
+                    escuelaId,
+                }),
+                ...pushNotification_service_1.default.construirTrabajosPush({
+                    usuarioIds: p.destinatarios
+                        .filter((u) => !('fcmToken' in u || 'fcmTokens' in u) || u.fcmToken || (u.fcmTokens || []).length > 0)
+                        .map((u) => String(u._id)),
+                    contenido: urgente
+                        ? {
+                            titulo: `🚨 URGENTE: ${nombreRemitente}`,
+                            mensaje: p.asunto,
+                            data: { tipo: 'urgente', mensajeId: p.mensajeId, prioridad: 'ALTA', remitente: nombreRemitente },
+                            sound: 'emergency',
+                        }
+                        : {
+                            titulo: `💬 Nuevo mensaje de ${nombreRemitente}`,
+                            mensaje: p.asunto,
+                            data: { tipo: 'mensaje', mensajeId: p.mensajeId, prioridad: p.prioridad || 'NORMAL', remitente: nombreRemitente },
+                        },
+                    prioridad: urgente ? 'alta' : 'normal',
+                    escuelaId,
+                }),
+            ];
+            if (trabajos.length > 0)
+                await (0, outbox_1.encolar)(trabajos);
         }
         catch (error) {
-            console.error('Error enviando notificaciones en batch:', error);
+            console.error('[Mensajes] Error despachando notificaciones del mensaje', p.mensajeId, error);
         }
     }
-    async enviarCopiaAcudientes(estudianteId, datos, usuarioOrigen) {
+    correoInmediato(usuario, prioridad) {
+        if (!usuario?.email || (0, email_service_1.esEmailFicticio)(usuario.email))
+            return false;
+        if (prioridad === IMensaje_1.PrioridadMensaje.ALTA)
+            return true;
+        return (0, preferencias_1.preferenciaEmail)(usuario) === 'inmediato';
+    }
+    correoAlResumen(usuario, prioridad) {
+        if (!usuario?.email || (0, email_service_1.esEmailFicticio)(usuario.email))
+            return false;
+        if (prioridad === IMensaje_1.PrioridadMensaje.ALTA)
+            return false;
+        return (0, preferencias_1.preferenciaEmail)(usuario) === 'resumen';
+    }
+    async encolarCopiasAcudientes(mensajeOriginalId, estudianteIds, datos, usuarioOrigen) {
+        const ids = [...new Set(estudianteIds.map(String))].filter((id) => mongoose_1.default.isValidObjectId(id));
+        if (ids.length === 0)
+            return 0;
+        const usuario = {
+            _id: String(usuarioOrigen._id),
+            escuelaId: String(usuarioOrigen.escuelaId),
+            tipo: usuarioOrigen.tipo,
+            nombre: usuarioOrigen.nombre,
+            apellidos: usuarioOrigen.apellidos,
+        };
+        const datosCopia = {
+            asunto: datos.asunto,
+            contenido: datos.contenido,
+            adjuntos: datos.adjuntos || [],
+            tipo: datos.tipo,
+            prioridad: datos.prioridad,
+            etiquetas: datos.etiquetas || [],
+        };
+        const trabajos = [];
+        for (let i = 0; i < ids.length; i += 50) {
+            trabajos.push({
+                tipo: 'copias-acudientes',
+                escuelaId: usuario.escuelaId,
+                payload: { mensajeOriginalId: String(mensajeOriginalId), estudianteIds: ids.slice(i, i + 50), datos: datosCopia, usuario },
+            });
+        }
+        return (0, outbox_1.encolar)(trabajos);
+    }
+    async enviarCopiaAcudientes(estudianteId, datos, usuarioOrigen, copiaDe) {
         try {
             if (!mongoose_1.default.isValidObjectId(estudianteId)) {
                 logger_1.logger.debug(`[WARNING] ID de estudiante inválido: ${estudianteId}`);
@@ -508,6 +545,12 @@ class MensajeService {
                 etiquetas: datos.etiquetas || [],
                 esRespuesta: false,
                 esCopiaAcudiente: true,
+                ...(copiaDe && {
+                    copiaDe: {
+                        mensajeId: new mongoose_1.default.Types.ObjectId(copiaDe.mensajeId),
+                        estudianteId: new mongoose_1.default.Types.ObjectId(copiaDe.estudianteId),
+                    },
+                }),
             };
             return this.crearMensaje(mensajeAcudientes, usuarioOrigen);
         }

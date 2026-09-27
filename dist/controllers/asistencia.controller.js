@@ -295,29 +295,42 @@ const actualizarAsistencia = async (req, res, next) => {
                 const ausentesIds = ausentes.map((est) => est.estudianteId);
                 const asignaturaNombre = asistencia.asignaturaId?.nombre || 'clase';
                 (async () => {
-                    for (const estudianteId of ausentesIds) {
-                        try {
-                            const estudiante = await usuario_model_1.default.findOne({ _id: estudianteId, escuelaId: asistencia.escuelaId })
+                    try {
+                        const [estudiantesAusentes, acudienteIds] = await Promise.all([
+                            usuario_model_1.default.find({ _id: { $in: ausentesIds }, escuelaId: asistencia.escuelaId })
                                 .select('nombre apellidos')
-                                .lean();
-                            if (!estudiante)
-                                continue;
-                            const acudientes = await usuario_model_1.default.find({
+                                .lean(),
+                            pushNotification_service_1.default.idsConDispositivo({
                                 escuelaId: asistencia.escuelaId,
                                 tipo: 'ACUDIENTE',
-                                'info_academica.estudiantes_asociados': estudianteId,
-                                fcmToken: { $exists: true, $ne: null },
-                            }, { fcmToken: 1 }).lean();
-                            for (const acudiente of acudientes) {
-                                pushNotification_service_1.default.enviarNotificacion({
-                                    token: acudiente.fcmToken,
+                                'info_academica.estudiantes_asociados': { $in: ausentesIds },
+                            }),
+                        ]);
+                        if (acudienteIds.length === 0)
+                            return;
+                        const acudientes = await usuario_model_1.default.find({ _id: { $in: acudienteIds } })
+                            .select('info_academica.estudiantes_asociados')
+                            .lean();
+                        for (const estudiante of estudiantesAusentes) {
+                            const idEst = String(estudiante._id);
+                            const suyos = acudientes
+                                .filter((a) => (a.info_academica?.estudiantes_asociados || []).some((e) => String(e) === idEst))
+                                .map((a) => String(a._id));
+                            if (suyos.length === 0)
+                                continue;
+                            await pushNotification_service_1.default.encolarPush({
+                                usuarioIds: suyos,
+                                contenido: {
                                     titulo: 'Ausencia registrada',
                                     mensaje: `${estudiante.nombre} ${estudiante.apellidos} fue marcado ausente en ${asignaturaNombre}`,
-                                    data: { tipo: 'ausencia', estudianteId: estudianteId.toString() },
-                                }).catch(() => { });
-                            }
+                                    data: { tipo: 'ausencia', estudianteId: idEst },
+                                },
+                                escuelaId: String(asistencia.escuelaId),
+                            });
                         }
-                        catch { }
+                    }
+                    catch (err) {
+                        console.error('[Asistencia] No se pudo encolar el push de ausencias:', err);
                     }
                 })();
             }

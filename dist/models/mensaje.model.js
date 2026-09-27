@@ -167,6 +167,13 @@ const MensajeSchema = new mongoose_1.Schema({
         type: Boolean,
         default: false,
     },
+    copiaDe: {
+        type: new mongoose_1.Schema({
+            mensajeId: { type: mongoose_1.Schema.Types.ObjectId, ref: 'Mensaje' },
+            estudianteId: { type: mongoose_1.Schema.Types.ObjectId, ref: 'Usuario' },
+        }, { _id: false }),
+        default: undefined,
+    },
     cursoIds: {
         type: [
             {
@@ -246,6 +253,8 @@ MensajeSchema.index({ remitente: 1, createdAt: -1 });
 MensajeSchema.index({ escuelaId: 1, remitente: 1, createdAt: -1 });
 MensajeSchema.index({ asunto: 'text', contenido: 'text' });
 MensajeSchema.index({ 'estadosUsuarios.usuarioId': 1, 'estadosUsuarios.estado': 1 });
+MensajeSchema.index({ 'adjuntos.fileId': 1 }, { sparse: true });
+MensajeSchema.index({ 'copiaDe.mensajeId': 1, 'copiaDe.estudianteId': 1 }, { unique: true, partialFilterExpression: { 'copiaDe.mensajeId': { $exists: true } } });
 const Mensaje = mongoose_1.default.model('Mensaje', MensajeSchema);
 exports.default = Mensaje;
 //# sourceMappingURL=mensaje.model.js.map

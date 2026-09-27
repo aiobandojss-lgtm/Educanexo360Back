@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.asociarEstudianteValidation = exports.cambiarPasswordValidation = exports.actualizarUsuarioValidation = void 0;
+exports.preferenciasValidation = exports.asociarEstudianteValidation = exports.cambiarPasswordValidation = exports.actualizarUsuarioValidation = void 0;
 const express_validator_1 = require("express-validator");
 exports.actualizarUsuarioValidation = [
     (0, express_validator_1.body)('nombre').optional().isString().withMessage('El nombre debe ser un texto'),
@@ -45,5 +45,12 @@ exports.asociarEstudianteValidation = [
         .withMessage('El ID del estudiante es requerido')
         .isMongoId()
         .withMessage('ID de estudiante no válido'),
+];
+exports.preferenciasValidation = [
+    (0, express_validator_1.body)('email')
+        .exists()
+        .withMessage('La preferencia de correo es requerida')
+        .isIn(['inmediato', 'resumen', 'ninguno'])
+        .withMessage('La preferencia de correo debe ser inmediato, resumen o ninguno'),
 ];
 //# sourceMappingURL=usuario.validation.js.map

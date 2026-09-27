@@ -45,6 +45,8 @@ const simpleCache_1 = require("../cache/simpleCache");
 const router = express_1.default.Router();
 router.use(authMiddleware.authenticate);
 router.post('/eliminar-cuenta', usuario_controller_1.default.solicitarEliminacionCuenta);
+router.get('/me/preferencias', usuario_controller_1.default.obtenerPreferencias);
+router.put('/me/preferencias', (0, validate_middleware_1.validate)(usuario_validation_1.preferenciasValidation), usuario_controller_1.default.actualizarPreferencias);
 router.get('/', authMiddleware.authorize('ADMIN', 'RECTOR', 'COORDINADOR'), (0, simpleCache_1.cacheMiddleware)('usuarios'), usuario_controller_1.default.obtenerUsuarios);
 router.get('/buscar', authMiddleware.authorize('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'), usuario_controller_1.default.buscarUsuarios);
 router.get('/estudiantes', authMiddleware.authorize('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'), (0, simpleCache_1.cacheMiddleware)('usuarios-estudiantes'), (req, _res, next) => { req.query.tipo = 'ESTUDIANTE'; next(); }, usuario_controller_1.default.obtenerUsuarios);

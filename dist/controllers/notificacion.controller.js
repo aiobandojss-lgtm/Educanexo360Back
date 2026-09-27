@@ -12,6 +12,97 @@ const ApiError_1 = __importDefault(require("../utils/ApiError"));
 const INotificacion_1 = require("../interfaces/INotificacion");
 const paginacion_1 = require("../utils/paginacion");
 const logger_1 = require("../utils/logger");
+const MAX_DISPOSITIVOS = 5;
+const ultimoToken = { $arrayElemAt: ['$fcmTokens', -1] };
+const sincronizarCamposAntiguos = {
+    $set: {
+        fcmToken: { $ifNull: [{ $getField: { field: 'token', input: ultimoToken } }, null] },
+        platform: { $ifNull: [{ $getField: { field: 'platform', input: ultimoToken } }, '$$REMOVE'] },
+        fcmTokenUpdatedAt: '$$NOW',
+    },
+};
+const AGREGAR_TOKEN = (token, platform, deviceInfo) => [
+    {
+        $set: {
+            fcmTokens: {
+                $slice: [
+                    {
+                        $concatArrays: [
+                            {
+                                $cond: [
+                                    {
+                                        $and: [
+                                            { $eq: [{ $type: '$fcmToken' }, 'string'] },
+                                            { $ne: ['$fcmToken', token] },
+                                            { $not: [{ $in: ['$fcmToken', { $ifNull: ['$fcmTokens.token', []] }] }] },
+                                        ],
+                                    },
+                                    [
+                                        {
+                                            token: '$fcmToken',
+                                            platform: { $ifNull: ['$platform', 'android'] },
+                                            updatedAt: { $ifNull: ['$fcmTokenUpdatedAt', '$$NOW'] },
+                                        },
+                                    ],
+                                    [],
+                                ],
+                            },
+                            {
+                                $filter: {
+                                    input: { $ifNull: ['$fcmTokens', []] },
+                                    as: 'd',
+                                    cond: { $ne: ['$$d.token', token] },
+                                },
+                            },
+                            [{ token, platform, deviceInfo, updatedAt: '$$NOW' }],
+                        ],
+                    },
+                    -MAX_DISPOSITIVOS,
+                ],
+            },
+            deviceInfo,
+        },
+    },
+    sincronizarCamposAntiguos,
+];
+const QUITAR_TOKEN = (token) => [
+    {
+        $set: {
+            fcmTokens: {
+                $filter: { input: { $ifNull: ['$fcmTokens', []] }, as: 'd', cond: { $ne: ['$$d.token', token] } },
+            },
+            _resincronizar: {
+                $or: [
+                    { $eq: ['$fcmToken', token] },
+                    { $in: ['$fcmToken', { $ifNull: ['$fcmTokens.token', []] }] },
+                ],
+            },
+        },
+    },
+    {
+        $set: {
+            fcmToken: {
+                $cond: [
+                    '$_resincronizar',
+                    { $ifNull: [{ $getField: { field: 'token', input: ultimoToken } }, null] },
+                    '$fcmToken',
+                ],
+            },
+            platform: {
+                $cond: [
+                    '$_resincronizar',
+                    { $ifNull: [{ $getField: { field: 'platform', input: ultimoToken } }, '$$REMOVE'] },
+                    { $ifNull: ['$platform', '$$REMOVE'] },
+                ],
+            },
+            fcmTokenUpdatedAt: '$$NOW',
+        },
+    },
+    { $unset: '_resincronizar' },
+];
+const QUITAR_TODOS_LOS_TOKENS = () => [
+    { $set: { fcmTokens: [], fcmToken: null, fcmTokenUpdatedAt: '$$NOW', platform: '$$REMOVE' } },
+];
 class NotificacionController {
     async registrarTokenFCM(req, res, next) {
         try {
@@ -20,7 +111,7 @@ class NotificacionController {
             }
             const { fcmToken, deviceInfo } = req.body;
             if (fcmToken === null) {
-                await usuario_model_1.default.updateOne({ _id: req.user._id }, { $set: { fcmToken: null, fcmTokenUpdatedAt: new Date() }, $unset: { platform: '' } });
+                await usuario_model_1.default.updateOne({ _id: req.user._id }, QUITAR_TODOS_LOS_TOKENS());
                 res.json({ success: true, message: 'Token FCM eliminado', data: { tokenRegistered: false } });
                 return;
             }
@@ -32,15 +123,19 @@ class NotificacionController {
                 throw new ApiError_1.default(400, 'Platform debe ser "ios" o "android"');
             }
             logger_1.logger.debug(`📱 Registrando token FCM para usuario: ${req.user._id}`);
-            await usuario_model_1.default.updateMany({ fcmToken, _id: { $ne: req.user._id } }, { $set: { fcmToken: null, fcmTokenUpdatedAt: new Date() } });
-            const usuarioActualizado = await usuario_model_1.default.findByIdAndUpdate(req.user._id, {
-                $set: {
-                    fcmToken: fcmToken,
-                    platform: platform,
-                    deviceInfo: deviceInfo || {},
-                    fcmTokenUpdatedAt: new Date(),
-                },
-            }, { new: true }).select('_id nombre apellidos fcmToken platform');
+            const registrar = async () => {
+                await usuario_model_1.default.updateMany({ _id: { $ne: req.user._id }, $or: [{ 'fcmTokens.token': fcmToken }, { fcmToken }] }, QUITAR_TOKEN(fcmToken));
+                return usuario_model_1.default.findOneAndUpdate({ _id: req.user._id }, AGREGAR_TOKEN(fcmToken, platform, deviceInfo || {}), { new: true, projection: { _id: 1, nombre: 1, apellidos: 1 } }).lean();
+            };
+            let usuarioActualizado;
+            try {
+                usuarioActualizado = await registrar();
+            }
+            catch (error) {
+                if (error?.code !== 11000)
+                    throw error;
+                usuarioActualizado = await registrar();
+            }
             if (!usuarioActualizado) {
                 throw new ApiError_1.default(404, 'Usuario no encontrado');
             }
@@ -66,7 +161,9 @@ class NotificacionController {
                 throw new ApiError_1.default(401, 'No autorizado');
             }
             const { fcmToken } = req.body;
-            const resultado = await usuario_model_1.default.updateOne({ _id: req.user._id, fcmToken }, { $set: { fcmToken: null, fcmTokenUpdatedAt: new Date() }, $unset: { platform: '' } });
+            const resultado = fcmToken
+                ? await usuario_model_1.default.updateOne({ _id: req.user._id, $or: [{ 'fcmTokens.token': fcmToken }, { fcmToken }] }, QUITAR_TOKEN(fcmToken))
+                : await usuario_model_1.default.updateOne({ _id: req.user._id }, QUITAR_TODOS_LOS_TOKENS());
             res.json({
                 success: true,
                 message: 'Dispositivo desvinculado',
@@ -94,20 +191,22 @@ class NotificacionController {
                 const filtroDestino = { _id: usuarioId };
                 if (req.user.tipo !== 'SUPER_ADMIN')
                     filtroDestino.escuelaId = req.user.escuelaId;
-                targetUser = await usuario_model_1.default.findOne(filtroDestino).select('_id nombre apellidos fcmToken');
+                targetUser = await usuario_model_1.default.findOne(filtroDestino).select('_id nombre apellidos fcmToken fcmTokens');
                 if (!targetUser) {
                     throw new ApiError_1.default(404, 'Usuario objetivo no encontrado');
                 }
             }
             else {
-                targetUser = await usuario_model_1.default.findById(req.user._id).select('_id nombre apellidos fcmToken');
+                targetUser = await usuario_model_1.default.findById(req.user._id).select('_id nombre apellidos fcmToken fcmTokens');
             }
-            if (!targetUser?.fcmToken) {
+            const dispositivos = targetUser?.fcmTokens || [];
+            const tokenDestino = dispositivos.length > 0 ? dispositivos[dispositivos.length - 1].token : targetUser?.fcmToken || undefined;
+            if (!targetUser || !tokenDestino) {
                 throw new ApiError_1.default(400, 'El usuario no tiene token FCM registrado');
             }
             logger_1.logger.debug(`🧪 Enviando notificación de prueba a: ${targetUser.nombre} ${targetUser.apellidos}`);
             const resultado = await pushNotification_service_1.default.enviarNotificacion({
-                token: targetUser.fcmToken,
+                token: tokenDestino,
                 titulo,
                 mensaje,
                 data: {
@@ -141,90 +240,6 @@ class NotificacionController {
         }
         catch (error) {
             console.error('❌ Error enviando notificación de prueba:', error);
-            next(error);
-        }
-    }
-    async sendMessageNotification(req, res, next) {
-        try {
-            if (!req.user) {
-                throw new ApiError_1.default(401, 'No autorizado');
-            }
-            const { recipientIds, messageId, title, body, priority = 'NORMAL', hasAttachments = false, } = req.body;
-            logger_1.logger.debug('📤 Enviando notificaciones de mensaje:', {
-                recipientIds: recipientIds?.length,
-                messageId,
-                priority,
-            });
-            const recipients = await usuario_model_1.default.find({
-                _id: { $in: recipientIds },
-                fcmToken: { $exists: true, $ne: null },
-                estado: 'ACTIVO',
-            }).select('_id fcmToken tipo nombre apellidos');
-            if (recipients.length === 0) {
-                res.json({
-                    success: true,
-                    message: 'No hay destinatarios con tokens válidos',
-                    sent: 0,
-                });
-                return;
-            }
-            let successCount = 0;
-            let failureCount = 0;
-            for (const recipient of recipients) {
-                try {
-                    const resultado = await pushNotification_service_1.default.enviarNotificacion({
-                        token: recipient.fcmToken,
-                        titulo: title,
-                        mensaje: body,
-                        data: {
-                            type: 'message',
-                            messageId,
-                            senderId: req.user._id,
-                            senderName: `${req.user.nombre} ${req.user.apellidos}`,
-                            senderRole: req.user.tipo,
-                            recipientRole: recipient.tipo,
-                            priority,
-                            hasAttachments: hasAttachments.toString(),
-                            timestamp: Date.now().toString(),
-                        },
-                    });
-                    if (resultado.success) {
-                        successCount++;
-                    }
-                    else {
-                        failureCount++;
-                    }
-                    await notificacion_service_1.default.crearNotificacion({
-                        usuarioId: String(recipient._id),
-                        titulo: title,
-                        mensaje: body,
-                        tipo: INotificacion_1.TipoNotificacion.MENSAJE,
-                        escuelaId: req.user.escuelaId,
-                        entidadId: messageId,
-                        entidadTipo: 'Mensaje',
-                        metadata: {
-                            senderName: `${req.user.nombre} ${req.user.apellidos}`,
-                            senderRole: req.user.tipo,
-                            priority,
-                            hasAttachments,
-                        },
-                        enviarEmail: false,
-                    });
-                }
-                catch (error) {
-                    console.error(`Error enviando a ${recipient.nombre}:`, error);
-                    failureCount++;
-                }
-            }
-            res.json({
-                success: true,
-                sent: successCount,
-                failed: failureCount,
-                total: recipients.length,
-            });
-        }
-        catch (error) {
-            console.error('❌ Error enviando notificaciones de mensaje:', error);
             next(error);
         }
     }

@@ -14,6 +14,7 @@ exports.registrarTokenValidation = [
 ];
 exports.desregistrarTokenValidation = [
     (0, express_validator_1.body)('fcmToken')
+        .optional({ values: 'null' })
         .isString()
         .withMessage('Token FCM es requerido')
         .trim()
