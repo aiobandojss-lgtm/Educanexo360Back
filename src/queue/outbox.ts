@@ -37,18 +37,56 @@ const num = (clave: string, porDefecto: number): number => {
   return Number.isFinite(v) && v > 0 ? v : porDefecto;
 };
 
+/**
+ * Auditoría 4.S: tiempo máximo de un trabajo. Al vencer, el handler se CANCELA de forma cooperativa (ctx.signal,
+ * revisado antes de cada envío) y el trabajo queda PROCESANDO hasta que vence su lock; entonces se retoma desde
+ * `enviados`. Para que la ejecución cancelada termine SIEMPRE antes de que otro carril pueda tomarlo:
+ *     timeout + EMAIL_TIMEOUT_MS (el envío en curso) + margen <= lockMs
+ * Valor por defecto = el máximo seguro; si OUTBOX_TIMEOUT_TRABAJO_MS lo excede se registra un error y se corrige.
+ * Duplicado residual (conocido): si el proveedor YA aceptó un correo pero su respuesta llega después de
+ * EMAIL_TIMEOUT_MS, el envío se aborta como error, no queda en `enviados` y el reintento lo manda otra vez.
+ * EMAIL_TIMEOUT_MS se lee igual que en services/email/proveedores.ts (30 s por defecto).
+ */
+const calcularTimeoutTrabajo = (lockMs: number) => {
+  const envioMs = num('EMAIL_TIMEOUT_MS', 30 * 1000);
+  const margenMs = Math.min(5000, Math.floor(lockMs / 10));
+  const seguro = lockMs - envioMs - margenMs;
+  if (seguro <= 0) {
+    logger.error(
+      `[Outbox] OUTBOX_LOCK_MS (${lockMs}) debe ser mayor que EMAIL_TIMEOUT_MS (${envioMs}) + margen (${margenMs}); ` +
+        `se usa un timeout de trabajo de ${Math.floor(lockMs / 2)} ms`,
+    );
+    return { timeoutMs: Math.floor(lockMs / 2), envioMs, margenMs };
+  }
+  const configurado = parseInt(process.env.OUTBOX_TIMEOUT_TRABAJO_MS || '', 10);
+  if (Number.isFinite(configurado) && configurado > 0 && configurado > seguro) {
+    logger.error(
+      `[Outbox] OUTBOX_TIMEOUT_TRABAJO_MS=${configurado} excede el máximo seguro ${seguro} ms ` +
+        `(OUTBOX_LOCK_MS ${lockMs} - EMAIL_TIMEOUT_MS ${envioMs} - margen ${margenMs}); se usa ${seguro} ms`,
+    );
+    return { timeoutMs: seguro, envioMs, margenMs };
+  }
+  return { timeoutMs: Number.isFinite(configurado) && configurado > 0 ? configurado : seguro, envioMs, margenMs };
+};
+
+const LOCK_MS = num('OUTBOX_LOCK_MS', 2 * 60 * 1000);
+const TIMEOUT = calcularTimeoutTrabajo(LOCK_MS);
+
 const CFG = {
   intervaloMs: num('OUTBOX_INTERVAL_MS', 5000),
   lote: num('OUTBOX_BATCH', 20), // trabajos máximos por tick
   concurrencia: num('OUTBOX_CONCURRENCY', 5),
   maxIntentos: num('OUTBOX_MAX_INTENTOS', 5),
-  lockMs: num('OUTBOX_LOCK_MS', 2 * 60 * 1000),
+  lockMs: LOCK_MS,
   backoffBaseMs: num('OUTBOX_BACKOFF_MS', 30 * 1000),
-  // Auditoría 4.G: tiempo máximo de un trabajo; siempre MENOR que el lock para que otro proceso no lo retome
-  // mientras sigue corriendo. Un proveedor colgado ya no frena la cola.
-  timeoutTrabajoMs: Math.min(num('OUTBOX_TIMEOUT_TRABAJO_MS', 90 * 1000), num('OUTBOX_LOCK_MS', 2 * 60 * 1000) - 1000),
+  timeoutTrabajoMs: TIMEOUT.timeoutMs,
+  // Espera máxima a que el handler cancelado observe la cancelación (el envío en curso termina o vence)
+  esperaCancelacionMs: TIMEOUT.envioMs + TIMEOUT.margenMs,
   retencionMs: 7 * 24 * 60 * 60 * 1000,
 };
+
+/** Solo pruebas y diagnóstico: configuración efectiva del worker. */
+export const configuracionWorker = () => ({ ...CFG });
 
 export interface NuevoTrabajo {
   tipo: string;
@@ -64,6 +102,10 @@ export interface ContextoTrabajo {
   enviados: Set<string>;
   /** Registra ids atendidos dentro del trabajo, para no repetirlos si el lote falla a medias */
   marcarEnviados: (ids: string[]) => Promise<void>;
+  /** Auditoría 4.S: se aborta cuando el trabajo supera su tiempo máximo */
+  signal: AbortSignal;
+  /** Lanza TrabajoCancelado si el trabajo fue cancelado: llamarlo ANTES de cada envío (y de reservar cupo) */
+  comprobarCancelacion: () => void;
 }
 
 export type HandlerTrabajo = (trabajo: IOutbox, ctx: ContextoTrabajo) => Promise<void>;
@@ -88,6 +130,14 @@ export class FalloDefinitivo extends Error {
   constructor(motivo: string) {
     super(motivo);
     this.name = 'FalloDefinitivo';
+  }
+}
+
+/** Lanzada por comprobarCancelacion() cuando el trabajo superó su tiempo máximo (auditoría 4.S). */
+export class TrabajoCancelado extends Error {
+  constructor() {
+    super('Trabajo cancelado por tiempo agotado');
+    this.name = 'TrabajoCancelado';
   }
 }
 
@@ -175,8 +225,13 @@ const cerrarTrabajo = async (trabajo: IOutbox, update: Record<string, unknown>, 
 const ejecutarTrabajo = async (trabajo: IOutbox): Promise<void> => {
   const handler = handlers.get(trabajo.tipo);
   const enviados = new Set<string>(trabajo.enviados || []);
+  const cancelacion = new AbortController();
   const ctx: ContextoTrabajo = {
     enviados,
+    signal: cancelacion.signal,
+    comprobarCancelacion: () => {
+      if (cancelacion.signal.aborted) throw new TrabajoCancelado();
+    },
     marcarEnviados: async (ids: string[]) => {
       const nuevos = ids.map(String).filter((id) => !enviados.has(id));
       if (nuevos.length === 0) return;
@@ -188,24 +243,44 @@ const ejecutarTrabajo = async (trabajo: IOutbox): Promise<void> => {
 
   // 1. El handler (su error decide reintento/aplazamiento/FALLIDO)
   let errorHandler: any = null;
-  try {
-    if (!handler) throw new Error(`Sin handler para el tipo de trabajo '${trabajo.tipo}'`);
+  if (!handler) {
+    errorHandler = new Error(`Sin handler para el tipo de trabajo '${trabajo.tipo}'`);
+  } else {
+    const ejecucion = Promise.resolve().then(() => handler(trabajo, ctx));
     let reloj: NodeJS.Timeout | undefined;
-    try {
+    const resultado = await Promise.race([
+      ejecucion.then(
+        () => ({ vencido: false, error: null as any }),
+        (error: any) => ({ vencido: false, error: error ?? new Error('Error desconocido') }),
+      ),
+      new Promise<{ vencido: boolean; error: any }>((resolver) => {
+        reloj = setTimeout(() => resolver({ vencido: true, error: null }), CFG.timeoutTrabajoMs);
+      }),
+    ]);
+    if (reloj) clearTimeout(reloj);
+
+    if (resultado.vencido) {
+      // Auditoría 4.S: NO se devuelve a PENDIENTE (otro carril lo tomaría mientras esta ejecución sigue enviando).
+      // Se cancela, se espera a que el handler lo observe (a lo sumo el envío en curso) y el trabajo queda
+      // PROCESANDO hasta que venza su lock; al retomarlo, `enviados` evita repetir lo que ya salió.
+      cancelacion.abort();
+      const aviso = `Tiempo agotado (${CFG.timeoutTrabajoMs} ms): cancelado; se retoma al vencer el lock`;
+      logger.warn(`[Outbox] ${trabajo.tipo} ${trabajo._id}: ${aviso}`);
+      let espera: NodeJS.Timeout | undefined;
       await Promise.race([
-        handler(trabajo, ctx),
-        new Promise((_, rechazar) => {
-          reloj = setTimeout(
-            () => rechazar(new Error(`Tiempo agotado: el trabajo superó ${CFG.timeoutTrabajoMs} ms`)),
-            CFG.timeoutTrabajoMs,
-          );
+        ejecucion.catch(() => undefined),
+        new Promise((r) => {
+          espera = setTimeout(r, CFG.esperaCancelacionMs);
         }),
       ]);
-    } finally {
-      if (reloj) clearTimeout(reloj);
+      if (espera) clearTimeout(espera);
+      await Outbox.updateOne(
+        { _id: trabajo._id, estado: 'PROCESANDO', lockedUntil: trabajo.lockedUntil },
+        { $set: { error: aviso } },
+      ).catch(() => undefined);
+      return;
     }
-  } catch (error: any) {
-    errorHandler = error ?? new Error('Error desconocido');
+    errorHandler = resultado.error;
   }
 
   // 2. Cierre FUERA del try del handler (auditoría 4.F): un fallo al marcar HECHO no reejecuta el trabajo

@@ -45,6 +45,7 @@ registrarHandler('email', async (trabajo, ctx) => {
   for (const dest of destinatarios as { email: string; nombre?: string }[]) {
     const clave = String(dest?.email || '').trim().toLowerCase();
     if (!clave || ctx.enviados.has(clave)) continue;
+    ctx.comprobarCancelacion(); // auditoría 4.S: antes de reservar cupo y enviar
     if (esEmailFicticio(clave)) {
       await ctx.marcarEnviados([clave]);
       continue;
@@ -114,6 +115,7 @@ registrarHandler('push', async (trabajo, ctx) => {
     tokens = await pushNotificationService.obtenerTokens(pendientes);
   }
 
+  ctx.comprobarCancelacion(); // auditoría 4.S
   const { transitorios } = await pushNotificationService.enviarMulticast(tokens, contenido);
   if (transitorios.length > 0) {
     if (reintentoTokens < MAX_REINTENTOS_TOKENS) {
@@ -142,6 +144,7 @@ registrarHandler('copias-acudientes', async (trabajo, ctx) => {
   const { mensajeOriginalId, estudianteIds = [], datos, usuario } = trabajo.payload || {};
   for (const estudianteId of (estudianteIds as string[]).map(String)) {
     if (ctx.enviados.has(estudianteId)) continue;
+    ctx.comprobarCancelacion(); // auditoría 4.S
     const yaExiste = await Mensaje.exists({
       'copiaDe.mensajeId': mensajeOriginalId,
       'copiaDe.estudianteId': estudianteId,
@@ -192,8 +195,8 @@ registrarHandler('despachar-mensaje', async (trabajo) => {
 /**
  * 'correo-cuenta' (auditoría 4.E): reset/definir contraseña con prioridad crítica. El token se crea al enviar.
  */
-registrarHandler('correo-cuenta', async (trabajo) => {
-  await procesarCorreoCuenta(trabajo.payload || {});
+registrarHandler('correo-cuenta', async (trabajo, ctx) => {
+  await procesarCorreoCuenta(trabajo.payload || {}, ctx);
 });
 
 registrarHandler('resumen-diario', async (trabajo) => {

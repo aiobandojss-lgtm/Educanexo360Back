@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import mongoose from 'mongoose';
 import Usuario from '../../models/usuario.model';
 import config from '../../config/config';
-import { encolar, ReprogramarTrabajo, FalloDefinitivo } from '../../queue/outbox';
+import { encolar, ReprogramarTrabajo, FalloDefinitivo, ContextoTrabajo } from '../../queue/outbox';
 import { reservarCupo, liberarCupo } from './cupo';
 import { obtenerProveedor } from './proveedores';
 import { renderizarCorreo } from './plantillas';
@@ -86,7 +86,9 @@ const enviar = async (dia: string, para: { email: string; nombre?: string }, pla
  * - bienvenida: { acudienteId, estudiantes: [...] } → enlaces (72 h) para el acudiente y cada estudiante nuevo.
  * - definir:    { usuarioId, enviarA: [ids] }       → enlace (72 h) para usuarioId, enviado a cada id de enviarA.
  */
-export const procesarCorreoCuenta = async (payload: any): Promise<void> => {
+export const procesarCorreoCuenta = async (payload: any, ctx?: Pick<ContextoTrabajo, 'comprobarCancelacion'>): Promise<void> => {
+  // Auditoría 4.S: antes de cada envío se revisa si el trabajo fue cancelado por tiempo agotado
+  const comprobar = () => ctx?.comprobarCancelacion();
   const caducaEn = new Date(payload.caducaEn || Date.now() + 60 * 60 * 1000);
   if (Date.now() > caducaEn.getTime()) {
     throw new FalloDefinitivo('La solicitud venció antes de poder enviar el correo');
@@ -97,6 +99,7 @@ export const procesarCorreoCuenta = async (payload: any): Promise<void> => {
       .select('_id email nombre')
       .lean();
     if (!usuario?.email) throw new FalloDefinitivo('Usuario inexistente o inactivo');
+    comprobar();
     const dia = await reservarCritico(caducaEn);
     const resetUrl = await crearEnlaceContrasena(String(usuario._id), HORAS_ENLACE_RESET);
     await enviar(dia, usuario, 'reset', { nombre: usuario.nombre, resetUrl, expirationTime: '1 hora' });
@@ -106,6 +109,7 @@ export const procesarCorreoCuenta = async (payload: any): Promise<void> => {
   if (payload.tipo === 'bienvenida') {
     const acudiente: any = await Usuario.findById(payload.acudienteId).select('_id email nombre apellidos').lean();
     if (!acudiente?.email) throw new FalloDefinitivo('Acudiente inexistente');
+    comprobar();
     const dia = await reservarCritico(caducaEn);
     const enlace = await crearEnlaceContrasena(String(acudiente._id), HORAS_ENLACE_DEFINIR);
     const estudiantes = [];
@@ -147,6 +151,12 @@ export const procesarCorreoCuenta = async (payload: any): Promise<void> => {
     const nombreUsuario = `${usuario.nombre ?? ''} ${usuario.apellidos ?? ''}`.trim();
     for (let i = 0; i < conCorreo.length; i++) {
       const d = conCorreo[i];
+      try {
+        comprobar();
+      } catch (error) {
+        for (let j = i; j < conCorreo.length; j++) await liberarCupo('critica', 1, dias[j]);
+        throw error;
+      }
       const nombre = `${d.nombre ?? ''} ${d.apellidos ?? ''}`.trim();
       try {
         await enviar(dias[i], { email: d.email, nombre }, 'enlace-contrasena', {
