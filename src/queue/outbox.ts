@@ -153,10 +153,30 @@ export const registrarTareaPeriodica = (nombre: string, fn: () => Promise<void>)
 };
 
 /**
+ * La idempotencia depende del índice único de claveUnica. Mongoose crea los índices en segundo plano al arrancar:
+ * si se insertan claves repetidas ANTES de que exista (colección nueva, primer arranque), se duplican los trabajos
+ * y además la creación del índice falla por esos duplicados. Por eso el primer encolar espera a Outbox.init()
+ * (una vez por proceso). Si falla, se registra y la cola sigue (sin la garantía hasta corregirlo).
+ */
+let indicesListos: Promise<void> | null = null;
+const asegurarIndices = (): Promise<void> => {
+  if (!indicesListos) {
+    indicesListos = Outbox.init().then(
+      () => undefined,
+      (error: any) => {
+        logger.error(`[Outbox] No se pudieron crear los índices de outbox (claveUnica): ${textoError(error)}`);
+      },
+    );
+  }
+  return indicesListos;
+};
+
+/**
  * Encola uno o varios trabajos con un solo insertMany. Los duplicados por claveUnica se ignoran.
  * Devuelve cuántos quedaron encolados.
  */
 export const encolar = async (trabajos: NuevoTrabajo | NuevoTrabajo[]): Promise<number> => {
+  await asegurarIndices();
   const lista = (Array.isArray(trabajos) ? trabajos : [trabajos]).map((t) => ({
     tipo: t.tipo,
     payload: t.payload,

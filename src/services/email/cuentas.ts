@@ -50,17 +50,35 @@ export const crearEnlaceContrasena = async (usuarioId: string, horas: number): P
   return enlace.url;
 };
 
-/** Encola un correo de cuenta (prioridad crítica). Lanza si no se pudo encolar: el llamador decide (p. ej. 503). */
+/**
+ * Auditoría 4.U: un correo de cuenta por usuario y ventana. Sin esto, /forgot-password o el reenvío del enlace
+ * repetidos podían inundar a un padre y agotar EMAIL_RESERVA_CRITICA (y con ella los resets reales).
+ */
+export const VENTANA_RESET_MS = 10 * 60 * 1000;
+export const VENTANA_DEFINIR_MS = 5 * 60 * 1000;
+const claveCorreoCuenta = (payload: { tipo: TipoCorreoCuenta; [clave: string]: unknown }): string | undefined => {
+  const bloque = (ms: number) => Math.floor(Date.now() / ms);
+  if (payload.tipo === 'reset' && payload.usuarioId) return `reset:${payload.usuarioId}:${bloque(VENTANA_RESET_MS)}`;
+  if (payload.tipo === 'definir' && payload.usuarioId) return `definir:${payload.usuarioId}:${bloque(VENTANA_DEFINIR_MS)}`;
+  return undefined;
+};
+
+/**
+ * Encola un correo de cuenta (prioridad crítica). Devuelve 1 si quedó encolado y 0 si ya había uno para ese
+ * usuario en la ventana (4.U). Lanza si no se pudo encolar: el llamador decide (p. ej. 503).
+ */
 export const encolarCorreoCuenta = async (payload: {
   tipo: TipoCorreoCuenta;
   escuelaId?: string;
   [clave: string]: unknown;
 }): Promise<number> => {
   const horas = payload.tipo === 'reset' ? HORAS_ENLACE_RESET : HORAS_ENLACE_DEFINIR;
+  const claveUnica = claveCorreoCuenta(payload);
   return encolar({
     tipo: 'correo-cuenta',
     prioridad: 'critica',
     escuelaId: payload.escuelaId,
+    ...(claveUnica && { claveUnica }),
     payload: { ...payload, caducaEn: new Date(Date.now() + horas * 60 * 60 * 1000) },
   });
 };

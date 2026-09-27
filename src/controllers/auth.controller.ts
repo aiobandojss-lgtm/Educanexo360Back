@@ -139,6 +139,8 @@ export const authController = {
       // Auditoría 4.E: el token se genera AL ENVIAR (en el worker), nunca queda en claro en la cola. El trabajo
       // es de prioridad CRÍTICA (reserva propia de cupo) y caduca en 1 h: si no alcanza a salir, queda FALLIDO
       // registrado en vez de llegar con un enlace vencido. Si no se puede encolar → 503 (no se ignora).
+      // Auditoría 4.U: un solo correo por usuario cada 10 minutos (claveUnica); si ya había uno, la respuesta es
+      // la misma respuesta genérica (no revela nada).
       try {
         await encolarCorreoCuenta({
           tipo: 'reset',

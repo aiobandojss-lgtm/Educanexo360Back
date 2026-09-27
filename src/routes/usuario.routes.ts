@@ -10,6 +10,10 @@ import {
   reenviarEnlacePasswordValidation,
 } from '../validations/usuario.validation';
 import { cacheMiddleware } from '../cache/simpleCache';
+import { rateLimiter } from '../middleware/performance.middleware';
+
+// Auditoría 4.U: cada actor puede reenviar a lo sumo 20 enlaces por hora
+const limiteReenvioEnlace = rateLimiter(60 * 60 * 1000, 20, (req: any) => `reenviar-enlace:${req.user?._id || req.ip}`);
 
 const router = express.Router();
 
@@ -134,12 +138,16 @@ router.delete(
  *         description: Usuario no encontrado en el colegio o inactivo
  *       409:
  *         description: No hay a quién enviarlo (sin correo real o estudiante sin acudientes con correo)
+ *       429:
+ *         description: >
+ *           Ya se envió un enlace para ese usuario hace menos de 5 minutos, o el actor superó 20 reenvíos por hora
  *       503:
  *         description: No se pudo encolar el correo; intentar de nuevo
  */
 router.post(
   '/:id/reenviar-enlace-password',
   authMiddleware.authorize('ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO', 'SUPER_ADMIN'),
+  limiteReenvioEnlace,
   validate(reenviarEnlacePasswordValidation),
   usuarioController.reenviarEnlacePassword,
 );
