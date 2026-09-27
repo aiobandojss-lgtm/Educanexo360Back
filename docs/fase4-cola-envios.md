@@ -197,24 +197,57 @@ de inmediato con la misma forma de siempre.
   (`metadata.resumen`). A las **18:00 hora Colombia** (`RESUMEN_HORA`) el worker encola una vez el trabajo
   `resumen-diario` del día (`claveUnica resumen:YYYY-MM-DD`, idempotente aunque el proceso se reinicie), que manda
   un correo por usuario con **solo** esos mensajes y solo los que **siguen sin leer**. Nunca un resumen vacío.
+- Por **marcas**, no por día (auditoría 4.B): el resumen toma todo lo marcado de las últimas 48 h y, al encolar el
+  correo del usuario, quita la marca y guarda `metadata.resumenEnviadoEn`. Lo que llega después de las 18:00 va en
+  el resumen siguiente.
+- Recuperación (auditoría 4.C): antes de las 18:00 cada tick encola el resumen de **ayer** si no salió (proceso
+  dormido a la hora); la `claveUnica` evita duplicarlo.
 - El enlace para cambiar la preferencia usa `EMAIL_PREFERENCIAS_URL` (opcional). Si no está, el correo dice
   "desde tu perfil".
-- ⚠️ El resumen depende de que el proceso esté despierto a las 18:00: ver "Passenger dormido" (cron de ping).
+- ⚠️ Si el proceso duerme a las 18:00, el resumen sale en cuanto despierte (al día siguiente como tarde); con el
+  cron de ping sale a su hora.
 
 ## 4.7 Credenciales por correo
 
-- Al aprobar una solicitud de registro ya **no** se envían contraseñas en texto plano. Dentro de la misma
-  transacción que crea las cuentas se genera, para el acudiente y para cada estudiante nuevo, un token aleatorio
-  de 32 bytes. Solo se guarda su **hash** sha256 en `resetPasswordToken`, vence en **72 h** y es de **un solo uso**.
-- El correo de bienvenida (plantilla `credenciales`, prioridad alta, payload sensible) lleva los enlaces
+- Al aprobar una solicitud de registro ya **no** se envían contraseñas en texto plano. Para el acudiente y cada
+  estudiante nuevo se genera un token aleatorio de 32 bytes **al enviar el correo** (auditoría 4.E: nunca queda un
+  token en claro en `outbox`). Solo se guarda su **hash** sha256 en `resetPasswordToken`, vence en **72 h** y es de
+  **un solo uso**.
+- Los correos de cuenta (reset 1 h, bienvenida y reenvío 72 h) van con prioridad **crítica** (`correo-cuenta`),
+  con reserva de cupo propia (`EMAIL_RESERVA_CRITICA`) y `caducaEn`: si no pueden salir antes de que venza el
+  enlace, el trabajo queda `FALLIDO` registrado en vez de llegar tarde.
+- El correo de bienvenida (plantilla `credenciales`) lleva los enlaces
   `FRONTEND_URL/reset-password/<token>`, que abren la **página existente del React** (`/reset-password/:token`,
   `pages/auth/ResetPassword.tsx`). Esa página llama a `POST /api/auth/reset-password { token, password }`, el
   mismo flujo del reset. El acudiente recibe su enlace y uno por cada estudiante nuevo (los estudiantes tienen
   correo generado por el sistema). Los estudiantes que ya tenían cuenta solo aparecen como asociados.
-- Si el enlace vence, el usuario usa "¿Olvidaste tu contraseña?". Se quitó el dominio fijo
+- Si el enlace del acudiente vence, usa "¿Olvidaste tu contraseña?". El estudiante no recibe correos: el colegio
+  reenvía su enlace con `POST /api/usuarios/:id/reenviar-enlace-password` (auditoría 4.P; roles administrativos,
+  mismo colegio y rango inferior). El enlace nuevo va a sus acudientes e invalida los anteriores. Se quitó el dominio fijo
   (`educanexo360-web.vercel.app`): todo sale de `FRONTEND_URL`.
 - Para verificarlo en la web: aprobar una solicitud de prueba, abrir el enlace del correo
   (`https://<FRONTEND_URL>/reset-password/<token>`), definir la contraseña e iniciar sesión.
+
+## Correcciones de la auditoría (4.A–4.Q)
+
+| Ítem | Qué cambió |
+|---|---|
+| 4.A | Seguridad: token, platform y deviceInfo del usuario van como `$literal` en los pipelines FCM (un token `"$$ROOT"` copiaba el documento del usuario, con el hash de la contraseña). Validación del formato del token, deviceInfo acotado. El script de migración quita tokens no string. |
+| 4.B / 4.C | Resumen por marcas y recuperación del resumen de ayer (ver 4.5). |
+| 4.D | Crear/enviar mensaje encola UN trabajo `despachar-mensaje` idempotente (campanita + correo + push con reintentos). La campanita llega a los pocos segundos, no dentro del request. |
+| 4.E | Correos de cuenta con prioridad crítica, reserva propia y token creado al enviar (ver 4.7). |
+| 4.F | Cerrar un trabajo (HECHO/reintento) se reintenta 3 veces con filtro por lock; un error al marcarlo no reenvía. |
+| 4.G | Timeouts: proveedor de correo (`EMAIL_TIMEOUT_MS`) y por trabajo (`OUTBOX_TIMEOUT_TRABAJO_MS`, menor que el lock). |
+| 4.H | Rechazos permanentes (dirección inexistente) no se reintentan; correos enmascarados (`j***@x.com`) en logs y en `outbox.error`. |
+| 4.I | Push: los dispositivos con error transitorio de FCM se reintentan solos (máx. 3, backoff `PUSH_REINTENTO_BASE_MS`). |
+| 4.J | Si falla marcar un correo ya enviado no se reenvía ni se libera cupo. |
+| 4.K | El cupo se libera en el día en que se reservó (fallos cerca de medianoche). |
+| 4.L | El mensaje FCM ya no lleva `android.data` (reemplazaba a `data` en Android y se perdía `timestamp`). Mismos campos para la app. |
+| 4.M | Dos ADMIN eliminando su cuenta a la vez: se revierte y responde 409 (nadie deja al colegio sin ADMIN). |
+| 4.N | Las copias a acudientes siempre quedan con su despacho encolado. |
+| 4.O | Enviar un borrador masivo por curso no genera copias a acudientes (igual que al crearlo). |
+| 4.P | `POST /api/usuarios/:id/reenviar-enlace-password` (ver 4.7). |
+| 4.Q | Documentado: desvincular sin token (`unregister-token` sin `fcmToken`, `fcmToken: null`) quita **todos** los dispositivos del usuario, a propósito (APK 1.0.0). |
 
 ## 4.8 Pruebas y medición (seed de escala, MongoDB local, proveedores simulados)
 
@@ -241,6 +274,10 @@ mensaje masivo**, dentro de la semana de retención.
 | `EMAIL_PROVIDER` | `smtp` | `smtp` \| `ses` \| `brevo` (\| `simulado` solo pruebas) |
 | `EMAIL_DAILY_LIMIT` | 250 | Tope diario de correos |
 | `EMAIL_RESERVA_ALTA` | 20 | Cupo reservado para prioridad alta |
+| `EMAIL_RESERVA_CRITICA` | 20 | Cupo reservado para correos de cuenta (reset, bienvenida, reenvío de enlace) |
+| `EMAIL_TIMEOUT_MS` | 30000 | Tiempo máximo por envío al proveedor de correo |
+| `OUTBOX_TIMEOUT_TRABAJO_MS` | 90000 | Tiempo máximo por trabajo (siempre menor que `OUTBOX_LOCK_MS`) |
+| `PUSH_REINTENTO_BASE_MS` | 60000 | Base del backoff para reintentar dispositivos con error transitorio de FCM (x2, máx. 3) |
 | `EMAIL_SMTP_MAX_CONNECTIONS` / `EMAIL_SMTP_RATE_LIMIT` | 2 / 5 | Pool SMTP |
 | `AWS_SES_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SES_CONFIGURATION_SET` | — | Amazon SES |
 | `BREVO_API_KEY` | — | Brevo |
@@ -250,23 +287,28 @@ mensaje masivo**, dentro de la semana de retención.
 | `FRONTEND_URL` | (ya existía) | Base de todos los enlaces de correo (mensajes, reset, definir contraseña) |
 
 Solo para pruebas o mantenimiento (no definir en producción): `OUTBOX_DISABLED`, `PUSH_PROVIDER=simulado`,
-`EMAIL_SIMULADO_FALLA`, `EMAIL_SIMULADO_DEMORA_MS`, `RESUMEN_DIARIO_DESACTIVADO`.
+`EMAIL_SIMULADO_FALLA`, `EMAIL_SIMULADO_DEMORA_MS`, `RESUMEN_DIARIO_DESACTIVADO`, `BREVO_API_URL` (apunta Brevo a un
+servidor local en las pruebas).
 
 ## Plan de deploy de la Fase 4
 
-1. `mongodump` de Atlas (M0 sin backups).
+1. `mongodump` de Atlas (M0 sin backups). **Obligatorio**: al arrancar, Mongoose crea el índice TTL de 180 días de
+   `notificacions` y MongoDB **borra de inmediato y sin vuelta atrás** todas las notificaciones con más de 180 días.
+   El dump es la única forma de recuperarlas.
 2. En cPanel, agregar las variables nuevas. Mientras no se elija proveedor, basta con dejar el SMTP actual
    (`EMAIL_PROVIDER=smtp` o sin definir) y ajustar `EMAIL_DAILY_LIMIT` al límite del hosting.
 3. Configurar **PassengerMinInstances 1** o el **cron de ping** cada 5 minutos a `/api/health` (sin esto la cola y el
    resumen de las 18:00 se detienen cuando la app duerme).
 4. FTP de `dist/` y reinicio. En el log: `[Outbox] Worker iniciado ...`.
 5. Verificar `GET /api/system/outbox` (SUPER_ADMIN): `worker.activo = true` y `ultimoTick` reciente.
-6. Índices: `MONGODB_URI="..." node src/scripts/sync-indexes.js` (simulación). Esperado: el índice nuevo de
-   `usuarios` (`fcmTokens.token`) como faltante; los de `outbox`, `email_cupo`, `notificacions` (TTL 180 días y
-   `resumen_diario`) y `mensajes` (`copiaDe`, `adjuntos.fileId`) los crea Mongoose al arrancar.
-7. Migración de tokens: `node src/scripts/migrar-fcm-tokens.js` (simulación) → revisar → `--aplicar` (crea el índice
-   único al final). **Antes** de cualquier `sync-indexes --aplicar`.
-8. Pruebas de humo: enviar un mensaje a un curso (respuesta inmediata; correos y push en segundos), recuperar
-   contraseña, registrar un token desde la app, aprobar una solicitud de prueba y abrir su enlace de contraseña.
+6. Migración de tokens, en este orden: `node src/scripts/migrar-fcm-tokens.js` (simulación) → **revisar la salida**
+   (tokens no string, conflictos entre cuentas) → `--aplicar` (crea el índice único al final).
+7. Índices: `MONGODB_URI="..." node src/scripts/sync-indexes.js` (simulación) y **pasarle la salida al orquestador**
+   antes de cualquier `--aplicar`. Esperado: los de `outbox` (`estado_1_orden_1_nextRunAt_1` reemplaza al de
+   prioridad), `email_cupo`, `notificacions` (TTL 180 días y `resumen_diario`) y `mensajes` (`copiaDe`,
+   `adjuntos.fileId`) los crea Mongoose al arrancar; el de `outbox` por prioridad puede aparecer como sobrante.
+8. Pruebas de humo: enviar un mensaje a un curso (respuesta inmediata; campanita, correos y push en segundos),
+   recuperar contraseña, registrar un token desde la app, aprobar una solicitud de prueba y abrir su enlace de
+   contraseña, y reenviar el enlace de un estudiante (`POST /api/usuarios/:id/reenviar-enlace-password`).
 9. Opcional, con aprobación de Aymer: `node src/scripts/marcar-eventos-notificados.js --aplicar`.
 10. Cuando se elija proveedor: seguir "Configurar Brevo" o "Configurar Amazon SES", cambiar `EMAIL_PROVIDER` y reiniciar.
