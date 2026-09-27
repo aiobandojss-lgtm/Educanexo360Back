@@ -39,6 +39,8 @@ import dashboardRoutes from './routes/dashboard.routes';
 import tareaRoutes from './routes/tarea.routes';
 import perfilRolRoutes from './routes/perfilRol.routes';
 import { sanitizeNoSQL } from './middleware/sanitize.middleware';
+import { iniciarWorker, detenerWorker } from './queue/outbox';
+import './queue/handlers'; // registra los handlers de la cola (Fase 4)
 
 // Configuración de variables de entorno
 dotenv.config();
@@ -239,6 +241,10 @@ const PORT = process.env.PORT || 3000;
 const startServer = async () => {
   await connectDB();
 
+  // Worker de la cola de envíos (Fase 4.1): después de conectar Mongo. Si la conexión inicial falló y se
+  // está reintentando, cada tick se salta hasta que Mongo esté conectado.
+  iniciarWorker();
+
   const server = app.listen(PORT, () => {
     console.log(
       `✅ Servidor iniciado en puerto ${PORT} en modo ${process.env.NODE_ENV || 'development'}`,
@@ -255,6 +261,8 @@ const startServer = async () => {
       console.log('Servidor HTTP cerrado.');
 
       try {
+        // Deja de tomar trabajos y espera los que están en curso (lo PROCESANDO se retoma al reiniciar)
+        await detenerWorker();
         await mongoose.connection.close();
         console.log('Conexión a MongoDB cerrada correctamente.');
         process.exit(0);
