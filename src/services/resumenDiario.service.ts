@@ -3,7 +3,7 @@ import Notificacion from '../models/notificacion.model';
 import Usuario from '../models/usuario.model';
 import Mensaje from '../models/mensaje.model';
 import { TipoNotificacion } from '../interfaces/INotificacion';
-import { encolar, NuevoTrabajo } from '../queue/outbox';
+import { encolar, NuevoTrabajo, ContextoTrabajo } from '../queue/outbox';
 import { esEmailFicticio, DESTINATARIOS_POR_TRABAJO } from './email.service';
 import { preferenciaEmail } from '../utils/preferencias';
 import { fechaColombiaISO, horaColombia } from '../utils/fechas';
@@ -64,7 +64,13 @@ export const reiniciarEstadoResumen = (): void => {
  * Handler 'resumen-diario': arma y encola los correos de resumen pendientes. Devuelve cuántos correos encoló.
  * 'dia' identifica la corrida (claveUnica de los trabajos de correo); el contenido sale de las marcas.
  */
-export const procesarResumenDiario = async (dia: string, ahora: Date = new Date()): Promise<number> => {
+export const procesarResumenDiario = async (
+  dia: string,
+  ahora: Date = new Date(),
+  ctx?: Pick<ContextoTrabajo, 'comprobarCancelacion'>,
+): Promise<number> => {
+  // Auditoría 4.AJ: entre pasos se revisa si el trabajo fue cancelado por tiempo agotado
+  const comprobar = () => ctx?.comprobarCancelacion();
   // 1. Notificaciones aún marcadas para el resumen (últimas 48 h), agrupadas por usuario
   const grupos = await Notificacion.aggregate([
     {
@@ -84,6 +90,7 @@ export const procesarResumenDiario = async (dia: string, ahora: Date = new Date(
     },
   ]);
   if (grupos.length === 0) return 0;
+  comprobar();
 
   // 2. Usuarios activos y mensajes ya leídos (2 consultas)
   const usuarioIds = grupos.map((g: any) => g._id);
@@ -157,6 +164,7 @@ export const procesarResumenDiario = async (dia: string, ahora: Date = new Date(
       });
     }
   }
+  comprobar();
   if (trabajos.length > 0) await encolar(trabajos);
 
   // 5. Quitar las marcas SOLO después de encolar (si esto falla, el reintento encuentra las mismas marcas y los

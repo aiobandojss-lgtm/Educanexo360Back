@@ -198,9 +198,9 @@ registrarTareaPeriodica('resumen-diario', async () => {
 /**
  * 'despachar-mensaje' (auditoría 4.D): campanita + correo + push de un mensaje, idempotente y con reintentos.
  */
-registrarHandler('despachar-mensaje', async (trabajo) => {
+registrarHandler('despachar-mensaje', async (trabajo, ctx) => {
   const { mensajeId, remitente } = trabajo.payload || {};
-  await mensajeService.procesarDespacho(String(mensajeId), remitente || {});
+  await mensajeService.procesarDespacho(String(mensajeId), remitente || {}, ctx); // ctx: auditoría 4.AJ
 });
 
 /**
@@ -210,6 +210,6 @@ registrarHandler('correo-cuenta', async (trabajo, ctx) => {
   await procesarCorreoCuenta(trabajo.payload || {}, ctx);
 });
 
-registrarHandler('resumen-diario', async (trabajo) => {
-  await procesarResumenDiario(String(trabajo.payload?.dia));
+registrarHandler('resumen-diario', async (trabajo, ctx) => {
+  await procesarResumenDiario(String(trabajo.payload?.dia), new Date(), ctx); // ctx: auditoría 4.AJ
 });

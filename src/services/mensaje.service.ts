@@ -14,7 +14,7 @@ import { preferenciaEmail } from '../utils/preferencias';
 import pushNotificationService from './pushNotification.service';
 import Notificacion from '../models/notificacion.model';
 import { EstadoNotificacion } from '../interfaces/INotificacion';
-import { encolar, NuevoTrabajo } from '../queue/outbox';
+import { encolar, NuevoTrabajo, ContextoTrabajo } from '../queue/outbox';
 import {
   cache,
   invalidateCache,
@@ -546,7 +546,13 @@ class MensajeService {
    *   "urgente"/"emergencia"; si no, tipo 'mensaje' (mismos datos que antes para la app).
    * Los errores se propagan: el worker reintenta con backoff.
    */
-  async procesarDespacho(mensajeId: string, remitente: any): Promise<void> {
+  async procesarDespacho(
+    mensajeId: string,
+    remitente: any,
+    ctx?: Pick<ContextoTrabajo, 'comprobarCancelacion'>,
+  ): Promise<void> {
+    // Auditoría 4.AJ: entre pasos se revisa si el trabajo fue cancelado por tiempo agotado
+    const comprobar = () => ctx?.comprobarCancelacion();
     const mensaje: any = await Mensaje.findById(mensajeId)
       .select('destinatarios destinatariosCc asunto prioridad adjuntos escuelaId')
       .lean();
@@ -587,6 +593,7 @@ class MensajeService {
       ).map((n: any) => String(n.usuarioId)),
     );
     const faltan = usuarios.filter((u) => !yaNotificados.has(String(u._id)));
+    comprobar();
     if (faltan.length > 0) {
       const ahora = new Date();
       const escuelaObjId = new mongoose.Types.ObjectId(escuelaId);
@@ -665,6 +672,7 @@ class MensajeService {
         'push',
       ),
     ];
+    comprobar();
     if (trabajos.length > 0) await encolar(trabajos);
   }
 
