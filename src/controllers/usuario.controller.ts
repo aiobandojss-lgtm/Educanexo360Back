@@ -496,11 +496,32 @@ class UsuarioController {
         throw new ApiError(401, 'No autorizado');
       }
 
-      // Verificar que solo ADMIN, RECTOR o COORDINADOR puedan eliminar usuarios
-      const tieneRolAdministrativo = ['ADMIN', 'RECTOR', 'COORDINADOR'].includes(req.user.tipo);
-
-      if (!tieneRolAdministrativo) {
+      // Roles administrativos (incluye ADMINISTRATIVO, coherente con PUT); la jerarquía se valida abajo
+      if (!esRolAdministrativo(req.user.tipo)) {
         throw new ApiError(403, 'No tienes permiso para eliminar usuarios');
+      }
+
+      if (!mongoose.isValidObjectId(req.params.id)) {
+        throw new ApiError(400, 'ID de usuario inválido');
+      }
+
+      // Nadie se desactiva a sí mismo por esta ruta (auditoría 3.T)
+      if (String(req.params.id) === String(req.user._id)) {
+        throw new ApiError(403, 'No puedes desactivar tu propia cuenta');
+      }
+
+      const objetivo = await Usuario.findOne({ _id: req.params.id, escuelaId: req.user.escuelaId })
+        .select('tipo')
+        .lean();
+
+      if (!objetivo) {
+        throw new ApiError(404, 'Usuario no encontrado');
+      }
+
+      // Jerarquía 3.B: solo usuarios de rango estrictamente inferior (ADMIN: todo menos SUPER_ADMIN).
+      // Antes un COORDINADOR podía desactivar a un RECTOR o a un ADMIN (auditoría 3.T)
+      if (!puedeGestionarRol(req.user.tipo, objetivo.tipo)) {
+        throw new ApiError(403, 'No tienes permiso para desactivar este usuario');
       }
 
       const usuario = await Usuario.findOneAndUpdate(
