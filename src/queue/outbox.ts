@@ -66,6 +66,18 @@ export class ReprogramarTrabajo extends Error {
   }
 }
 
+/**
+ * Lanzada por un handler cuando reintentar no tiene sentido (p. ej. el enlace ya habría vencido): el trabajo
+ * pasa a FALLIDO de inmediato y se registra.
+ */
+export class FalloDefinitivo extends Error {
+  readonly definitivo = true;
+  constructor(motivo: string) {
+    super(motivo);
+    this.name = 'FalloDefinitivo';
+  }
+}
+
 const handlers = new Map<string, HandlerTrabajo>();
 const tareasPeriodicas: { nombre: string; fn: () => Promise<void> }[] = [];
 
@@ -119,6 +131,33 @@ const redactar = (trabajo: IOutbox) =>
 const retrasoBackoff = (intentos: number): number =>
   CFG.backoffBaseMs * Math.pow(2, Math.max(intentos - 1, 0));
 
+/**
+ * Cierre de un trabajo (auditoría 4.F): solo si SIGUE siendo nuestro (PROCESANDO con el mismo lockedUntil del
+ * claim). Si el lock venció y otro proceso lo retomó, este cierre tardío no pisa su estado.
+ * Se reintenta hasta 3 veces ante errores de red; si aun así falla se registra y el lock vencido lo retomará.
+ */
+const cerrarTrabajo = async (trabajo: IOutbox, update: Record<string, unknown>, que: string): Promise<boolean> => {
+  for (let intento = 1; intento <= 3; intento++) {
+    try {
+      const r = await Outbox.updateOne(
+        { _id: trabajo._id, estado: 'PROCESANDO', lockedUntil: trabajo.lockedUntil },
+        update,
+      );
+      if (r.matchedCount === 0) {
+        logger.warn(`[Outbox] ${trabajo.tipo} ${trabajo._id}: no se marcó ${que} (el lock venció y otro proceso lo retomó)`);
+      }
+      return r.matchedCount > 0;
+    } catch (error: any) {
+      if (intento === 3) {
+        logger.error(`[Outbox] ${trabajo.tipo} ${trabajo._id}: no se pudo marcar ${que}:`, error?.message || error);
+        return false;
+      }
+      await new Promise((r) => setTimeout(r, 200 * intento));
+    }
+  }
+  return false;
+};
+
 const ejecutarTrabajo = async (trabajo: IOutbox): Promise<void> => {
   const handler = handlers.get(trabajo.tipo);
   const enviados = new Set<string>(trabajo.enviados || []);
@@ -132,53 +171,67 @@ const ejecutarTrabajo = async (trabajo: IOutbox): Promise<void> => {
     },
   };
 
+  // 1. El handler (su error decide reintento/aplazamiento/FALLIDO)
+  let errorHandler: any = null;
   try {
     if (!handler) throw new Error(`Sin handler para el tipo de trabajo '${trabajo.tipo}'`);
     await handler(trabajo, ctx);
-    await Outbox.updateOne(
-      { _id: trabajo._id },
+  } catch (error: any) {
+    errorHandler = error ?? new Error('Error desconocido');
+  }
+
+  // 2. Cierre FUERA del try del handler (auditoría 4.F): un fallo al marcar HECHO no reejecuta el trabajo
+  if (!errorHandler) {
+    await cerrarTrabajo(
+      trabajo,
       {
         $set: { estado: 'HECHO', expireAt: new Date(Date.now() + CFG.retencionMs), ...redactar(trabajo) },
         $unset: { lockedUntil: 1, error: 1 },
       },
+      'HECHO',
     );
-  } catch (error: any) {
-    if (error instanceof ReprogramarTrabajo) {
-      // Aplazado sin gastar intento (se devuelve el que se sumó al tomarlo)
-      await Outbox.updateOne(
-        { _id: trabajo._id },
-        {
-          $set: { estado: 'PENDIENTE', nextRunAt: error.fecha, error: error.message },
-          $inc: { intentos: -1 },
-          $unset: { lockedUntil: 1 },
+    return;
+  }
+
+  if (errorHandler instanceof ReprogramarTrabajo) {
+    // Aplazado sin gastar intento (se devuelve el que se sumó al tomarlo)
+    await cerrarTrabajo(
+      trabajo,
+      {
+        $set: { estado: 'PENDIENTE', nextRunAt: errorHandler.fecha, error: errorHandler.message },
+        $inc: { intentos: -1 },
+        $unset: { lockedUntil: 1 },
+      },
+      'aplazado',
+    );
+    logger.warn(`[Outbox] ${trabajo.tipo} ${trabajo._id} aplazado hasta ${errorHandler.fecha.toISOString()}: ${errorHandler.message}`);
+    return;
+  }
+
+  const mensaje = String(errorHandler?.message || errorHandler).slice(0, 1000);
+  if (trabajo.intentos >= CFG.maxIntentos || errorHandler?.definitivo === true) {
+    await cerrarTrabajo(
+      trabajo,
+      {
+        $set: {
+          estado: 'FALLIDO',
+          error: mensaje,
+          expireAt: new Date(Date.now() + CFG.retencionMs),
+          ...redactar(trabajo),
         },
-      );
-      logger.warn(`[Outbox] ${trabajo.tipo} ${trabajo._id} aplazado hasta ${error.fecha.toISOString()}: ${error.message}`);
-      return;
-    }
-    const mensaje = String(error?.message || error).slice(0, 1000);
-    if (trabajo.intentos >= CFG.maxIntentos) {
-      await Outbox.updateOne(
-        { _id: trabajo._id },
-        {
-          $set: {
-            estado: 'FALLIDO',
-            error: mensaje,
-            expireAt: new Date(Date.now() + CFG.retencionMs),
-            ...redactar(trabajo),
-          },
-          $unset: { lockedUntil: 1 },
-        },
-      );
-      logger.error(`[Outbox] ${trabajo.tipo} ${trabajo._id} FALLIDO tras ${trabajo.intentos} intentos: ${mensaje}`);
-    } else {
-      const nextRunAt = new Date(Date.now() + retrasoBackoff(trabajo.intentos));
-      await Outbox.updateOne(
-        { _id: trabajo._id },
-        { $set: { estado: 'PENDIENTE', error: mensaje, nextRunAt }, $unset: { lockedUntil: 1 } },
-      );
-      logger.warn(`[Outbox] ${trabajo.tipo} ${trabajo._id} intento ${trabajo.intentos} falló (reintento ${nextRunAt.toISOString()}): ${mensaje}`);
-    }
+        $unset: { lockedUntil: 1 },
+      },
+      'FALLIDO',
+    );
+    logger.error(`[Outbox] ${trabajo.tipo} ${trabajo._id} FALLIDO tras ${trabajo.intentos} intento(s): ${mensaje}`);
+  } else {
+    const nextRunAt = new Date(Date.now() + retrasoBackoff(trabajo.intentos));
+    await cerrarTrabajo(
+      trabajo,
+      { $set: { estado: 'PENDIENTE', error: mensaje, nextRunAt }, $unset: { lockedUntil: 1 } },
+      'para reintento',
+    );
+    logger.warn(`[Outbox] ${trabajo.tipo} ${trabajo._id} intento ${trabajo.intentos} falló (reintento ${nextRunAt.toISOString()}): ${mensaje}`);
   }
 };
 
@@ -232,20 +285,31 @@ export const ejecutarTick = async (): Promise<void> => {
 
       // 3. Trabajos con concurrencia acotada: cada "carril" toma el siguiente hasta agotar el lote
       let tomados = 0;
+      // Auditoría 4.F: cada carril atrapa sus propios errores y se espera a TODOS (allSettled). Antes, si
+      // tomarSiguiente o un update lanzaba, Promise.all rechazaba y el tick terminaba con carriles vivos: el
+      // siguiente tick duplicaba la concurrencia y detenerWorker no los esperaba.
       const carril = async (): Promise<void> => {
         while (!deteniendo && tomados < CFG.lote) {
           tomados++;
-          const trabajo = await tomarSiguiente();
+          let trabajo: IOutbox | null = null;
+          try {
+            trabajo = await tomarSiguiente();
+          } catch (error) {
+            logger.error('[Outbox] Error tomando el siguiente trabajo:', error);
+            return;
+          }
           if (!trabajo) return;
           trabajosEnCurso++;
           try {
             await ejecutarTrabajo(trabajo);
+          } catch (error) {
+            logger.error(`[Outbox] Error inesperado en el trabajo ${trabajo._id}:`, error);
           } finally {
             trabajosEnCurso--;
           }
         }
       };
-      await Promise.all(Array.from({ length: CFG.concurrencia }, carril));
+      await Promise.allSettled(Array.from({ length: CFG.concurrencia }, carril));
     } catch (error) {
       logger.error('[Outbox] Error en el tick del worker:', error);
     }
