@@ -34,20 +34,21 @@ export const reservarCupo = async (prioridad: 'alta' | 'normal', cantidad = 1): 
   const tope = prioridad === 'alta' ? limite : limite - reservaAlta;
   if (cantidad > tope) return false;
   const dia = fechaColombiaISO();
+  const filtro = { _id: dia, enviados: { $lte: tope - cantidad } };
+  const inc = { $inc: { enviados: cantidad, ...(prioridad === 'alta' && { altaEnviados: cantidad }) } };
   try {
     await CupoCorreo.findOneAndUpdate(
-      { _id: dia, enviados: { $lte: tope - cantidad } },
-      {
-        $inc: { enviados: cantidad, ...(prioridad === 'alta' && { altaEnviados: cantidad }) },
-        $setOnInsert: { expireAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000) },
-      },
+      filtro,
+      { ...inc, $setOnInsert: { expireAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000) } },
       { upsert: true, new: true },
     );
     return true;
   } catch (error: any) {
-    // El documento del día existe pero sin cupo: el upsert intenta insertar el mismo _id → 11000
-    if (error?.code === 11000) return false;
-    throw error;
+    if (error?.code !== 11000) throw error;
+    // 11000 = el documento del día YA existe: o no hay cupo, o dos trabajos crearon el día a la vez (la primera
+    // reserva del día en paralelo). Se reintenta SIN upsert: solo es "sin cupo" si de verdad no cabe.
+    const r = await CupoCorreo.findOneAndUpdate(filtro, inc, { new: true });
+    return !!r;
   }
 };
 
