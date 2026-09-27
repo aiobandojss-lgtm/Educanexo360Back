@@ -2434,6 +2434,11 @@ export class MensajeController {
         throw new ApiError(400, 'ID de usuario inválido');
       }
 
+      // Cuentas sin colegio (SUPER_ADMIN con escuelaId '') no tienen mensajes: antes daba 500 (CastError)
+      if (!mongoose.isValidObjectId(req.user.escuelaId)) {
+        throw new ApiError(403, 'El usuario no tiene un colegio asociado');
+      }
+
       // Construir una consulta más segura
       const matchQuery = {
         _id: new mongoose.Types.ObjectId(id),

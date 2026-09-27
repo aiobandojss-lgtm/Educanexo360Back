@@ -203,6 +203,11 @@ class UsuarioController {
         throw new ApiError(403, 'No tienes permiso para modificar este perfil');
       }
 
+      // Cuentas sin colegio (SUPER_ADMIN con escuelaId ''): todo se filtra por escuelaId, antes daba 500 (CastError)
+      if (!mongoose.isValidObjectId(req.user.escuelaId)) {
+        throw new ApiError(403, 'El usuario no tiene un colegio asociado');
+      }
+
       // Si no tiene rol administrativo y está intentando cambiar el email, lo eliminamos de la solicitud
       if (!tieneRolAdministrativo && req.body.email !== req.user.email) {
         delete req.body.email; // Solo los roles administrativos pueden cambiar el email
