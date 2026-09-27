@@ -146,7 +146,13 @@ export const procesarCorreoCuenta = async (payload: any, ctx?: Pick<ContextoTrab
     const conCorreo = destinatarios.filter((d) => d.email && !esEmailFicticio(d.email));
     if (conCorreo.length === 0) throw new FalloDefinitivo('Sin destinatarios con correo real');
     const dias: string[] = [];
-    for (let i = 0; i < conCorreo.length; i++) dias.push(await reservarCritico(caducaEn));
+    try {
+      for (let i = 0; i < conCorreo.length; i++) dias.push(await reservarCritico(caducaEn));
+    } catch (error) {
+      // Auditoría 4.Z: si una reserva i>0 falla (sin cupo), se devuelven las que ya se habían tomado
+      for (const dia of dias) await liberarCupo('critica', 1, dia);
+      throw error;
+    }
     const enlace = await crearEnlaceContrasena(String(usuario._id), HORAS_ENLACE_DEFINIR);
     const nombreUsuario = `${usuario.nombre ?? ''} ${usuario.apellidos ?? ''}`.trim();
     for (let i = 0; i < conCorreo.length; i++) {
