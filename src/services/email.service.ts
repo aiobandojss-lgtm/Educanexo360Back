@@ -1,7 +1,7 @@
 // src/services/email.service.ts
 
 import { logger } from '../utils/logger';
-import { encolar } from '../queue/outbox';
+import { encolar, NuevoTrabajo } from '../queue/outbox';
 import { obtenerProveedor } from './email/proveedores';
 import { reservarCupo, liberarCupo } from './email/cupo';
 import { renderizarCorreo, DestinatarioCorreo } from './email/plantillas';
@@ -27,14 +27,25 @@ export function esEmailFicticio(email: string): boolean {
  * - `sensible`: el payload se borra del trabajo al terminar (p. ej. enlaces de reset con token).
  * Devuelve cuántos trabajos se encolaron. Lanza si no se pudo encolar (el llamador decide).
  */
-export const encolarCorreo = async (opciones: {
+export interface OpcionesCorreo {
   destinatarios: DestinatarioCorreo[];
   plantilla: string;
   datos: Record<string, any>;
   prioridad?: 'alta' | 'normal';
   escuelaId?: string;
   sensible?: boolean;
-}): Promise<number> => {
+}
+
+export const encolarCorreo = async (opciones: OpcionesCorreo): Promise<number> => {
+  const trabajos = construirTrabajosCorreo(opciones);
+  return trabajos.length === 0 ? 0 : encolar(trabajos);
+};
+
+/**
+ * Arma (sin insertar) los trabajos de correo en lotes de ~50. Permite encolar correos y push de un mensaje
+ * en UN solo insertMany (Fase 4.2).
+ */
+export const construirTrabajosCorreo = (opciones: OpcionesCorreo): NuevoTrabajo[] => {
   const vistos = new Set<string>();
   const validos = opciones.destinatarios.filter((d) => {
     const email = String(d?.email || '').trim().toLowerCase();
@@ -42,9 +53,9 @@ export const encolarCorreo = async (opciones: {
     vistos.add(email);
     return true;
   });
-  if (validos.length === 0) return 0;
+  if (validos.length === 0) return [];
 
-  const trabajos = [];
+  const trabajos: NuevoTrabajo[] = [];
   for (let i = 0; i < validos.length; i += DESTINATARIOS_POR_TRABAJO) {
     trabajos.push({
       tipo: 'email',
@@ -62,7 +73,7 @@ export const encolarCorreo = async (opciones: {
       },
     });
   }
-  return encolar(trabajos as any);
+  return trabajos;
 };
 
 /**

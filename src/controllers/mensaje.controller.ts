@@ -16,7 +16,6 @@ import { TipoNotificacion } from '../interfaces/INotificacion';
 import { TipoUsuario } from '../interfaces/IUsuario'; // Agregamos la importación
 import fs from 'fs';
 import path from 'path';
-import pushNotificationService from '../services/pushNotification.service';
 import { numeroPagina, numeroLimite } from '../utils/paginacion';
 import { logger } from '../utils/logger';
 import { subirAdjuntosGridFS, eliminarArchivosGridFS } from '../utils/adjuntosGridFS';
@@ -947,34 +946,49 @@ export class MensajeController {
         throw new ApiError(500, 'El mensaje no se actualizó correctamente');
       }
 
-      // Enviar copias a acudientes si hay estudiantes entre los destinatarios del borrador
+      // Fase 4.2: al enviarse, el borrador notifica a sus destinatarios como cualquier mensaje (antes no se
+      // avisaba a nadie: ni campanita, ni correo, ni push) y las copias a acudientes van por la cola.
       try {
-        const destinatariosIds = (mensajeEnviado.destinatarios as any[]).map((d: any) =>
-          typeof d === 'object' && d._id ? d._id.toString() : d.toString()
-        );
+        const destinatariosIds = (mensajeEnviado.destinatarios as any[]).map((d: any) => String(d?._id ?? d));
+        const ccIds = ((mensajeEnviado as any).destinatariosCc || []).map((d: any) => String(d?._id ?? d));
+        const usuariosDestino = await Usuario.find({
+          _id: { $in: [...destinatariosIds, ...ccIds] },
+          escuelaId: req.user.escuelaId,
+          estado: 'ACTIVO',
+        })
+          .select('_id email nombre tipo preferencias fcmToken fcmTokens.token')
+          .lean();
+        const setDest = new Set(destinatariosIds);
+        const setCc = new Set(ccIds);
 
-        if (destinatariosIds.length > 0) {
-          const estudiantesInfo = await Usuario.find({
-            _id: { $in: destinatariosIds },
-            tipo: 'ESTUDIANTE',
-            escuelaId: req.user.escuelaId,
-          }).select('_id');
+        await mensajeService.despacharMensaje({
+          mensajeId: String(mensajeEnviado._id),
+          asunto: mensajeEnviado.asunto,
+          prioridad: mensajeEnviado.prioridad,
+          remitente: req.user,
+          tieneAdjuntos: (mensajeEnviado.adjuntos || []).length > 0,
+          destinatarios: usuariosDestino.filter((u: any) => setDest.has(String(u._id))),
+          cc: usuariosDestino.filter((u: any) => setCc.has(String(u._id))),
+        });
 
-          const datosMensaje = {
+        const estudiantesIds = usuariosDestino
+          .filter((u: any) => u.tipo === 'ESTUDIANTE' && setDest.has(String(u._id)))
+          .map((u: any) => String(u._id));
+        await mensajeService.encolarCopiasAcudientes(
+          String(mensajeEnviado._id),
+          estudiantesIds,
+          {
             asunto: mensajeEnviado.asunto,
             contenido: mensajeEnviado.contenido,
             adjuntos: mensajeEnviado.adjuntos || [],
             tipo: mensajeEnviado.tipo,
             prioridad: mensajeEnviado.prioridad,
             etiquetas: mensajeEnviado.etiquetas || [],
-          };
-
-          for (const est of estudiantesInfo) {
-            await mensajeService.enviarCopiaAcudientes((est._id as any).toString(), datosMensaje, req.user);
-          }
-        }
-      } catch (errorCopia) {
-        console.error('[ERROR] enviarCopiaAcudientes en borrador falló pero el mensaje fue enviado:', errorCopia);
+          },
+          req.user,
+        );
+      } catch (errorDespacho) {
+        console.error('[ERROR] Notificaciones/copias del borrador enviado fallaron (el mensaje sí se envió):', errorDespacho);
       }
 
       res.status(200).json({
@@ -2036,65 +2050,10 @@ export class MensajeController {
         throw crearError;
       }
 
-      // 🔥 NUEVA FUNCIONALIDAD: ENVIAR NOTIFICACIONES PUSH AUTOMÁTICAMENTE
-      if (estado !== EstadoMensaje.BORRADOR) {
-        try {
-          logger.debug('📱 Enviando notificaciones push automáticas...');
-          
-          const senderName = `${req.user.nombre} ${req.user.apellidos}`;
-          const isUrgent = prioridad === PrioridadMensaje.ALTA || 
-                          asunto.toLowerCase().includes('urgente') ||
-                          asunto.toLowerCase().includes('emergencia');
-          
-          // Destinatarios finales YA validados por el servicio (mismo colegio, activos,
-          // incluye estudiantes y acudientes de los cursos). No se usan los arrays crudos del body.
-          let allRecipients: string[] = ((nuevoMensaje as any).destinatarios || []).map(
-            (d: any) => String(d?._id ?? d),
-          );
-
-          // Eliminar duplicados
-          allRecipients = [...new Set(allRecipients)];
-          
-          // Enviar notificaciones
-          let pushEnviadas = 0;
-          for (const recipientId of allRecipients) {
-            try {
-              let resultado;
-              if (isUrgent) {
-                resultado = await pushNotificationService.notificarMensajeUrgente(
-                  recipientId,
-                  senderName,
-                  asunto,
-                  nuevoMensaje._id.toString()
-                );
-              } else {
-                resultado = await pushNotificationService.notificarNuevoMensaje(
-                  recipientId,
-                  senderName,
-                  asunto,
-                  nuevoMensaje._id.toString(),
-                  prioridad as any
-                );
-              }
-              
-              if (resultado) pushEnviadas++;
-            } catch (error) {
-              console.error(`❌ Error enviando push a ${recipientId}:`, error);
-            }
-          }
-          
-          logger.debug(`✅ Notificaciones push enviadas: ${pushEnviadas}/${allRecipients.length}`);
-        } catch (error) {
-          console.error('❌ Error enviando notificaciones push:', error);
-          // No lanzar error para no afectar la creación del mensaje
-        }
-      }
-
-
-      // Enviar copias a acudientes si hay estudiantes en los destinatarios
-      // Esto solo es necesario si no se han incluido cursos, ya que el servicio
-      // ya incluye a los acudientes cuando se seleccionan cursos
-      if (cursoIdsArray.length === 0 && destinatariosArray.length > 0) {
+      // Fase 4.2: las notificaciones (campanita, correo y push) ya quedaron encoladas en crearMensaje.
+      // Copias a acudientes de los estudiantes destinatarios: por la cola (el request no las espera).
+      // Solo si no hay cursos (con cursos el servicio ya incluye a los acudientes) y no es un borrador.
+      if (estado !== EstadoMensaje.BORRADOR && cursoIdsArray.length === 0 && destinatariosArray.length > 0) {
         try {
           const estudiantesInfo = await Usuario.find({
             _id: { $in: destinatariosArray },
@@ -2102,14 +2061,15 @@ export class MensajeController {
             escuelaId: req.user.escuelaId,
           }).select('_id');
 
-          const estudiantesIds = estudiantesInfo.map((est: any) => est._id.toString());
-
-          for (const estudianteId of estudiantesIds) {
-            await mensajeService.enviarCopiaAcudientes(estudianteId, datosMensaje, req.user);
-          }
+          await mensajeService.encolarCopiasAcudientes(
+            nuevoMensaje._id.toString(),
+            estudiantesInfo.map((est: any) => est._id.toString()),
+            datosMensaje,
+            req.user,
+          );
         } catch (errorCopia) {
           // El mensaje principal ya fue guardado — no bloquear la respuesta por un error en la copia
-          console.error('[ERROR] enviarCopiaAcudientes falló pero el mensaje principal fue enviado:', errorCopia);
+          console.error('[ERROR] No se pudieron encolar las copias a acudientes (el mensaje sí se envió):', errorCopia);
         }
       }
 
@@ -3268,37 +3228,22 @@ export class MensajeController {
         throw crearError;
       }
       
-      // 🔥 ENVIAR NOTIFICACIÓN PUSH PARA RESPUESTA
+      // Fase 4.2: notificaciones ya encoladas en crearMensaje. Copias a acudientes por la cola.
       try {
-        const senderName = `${req.user.nombre} ${req.user.apellidos}`;
-        
-        for (const recipientId of destinatarios) {
-          await pushNotificationService.notificarNuevoMensaje(
-            recipientId,
-            senderName,
-            datosRespuesta.asunto,
-            respuesta._id.toString(),
-            'NORMAL'
-          );
-        }
-        
-        logger.debug('✅ Notificaciones push enviadas para respuesta');
-      } catch (error) {
-        console.error('❌ Error enviando push para respuesta:', error);
-      }
+        const estudiantesInfo = await Usuario.find({
+          _id: { $in: destinatarios },
+          tipo: 'ESTUDIANTE',
+          escuelaId: req.user.escuelaId,
+        }).select('_id');
 
-      // Verificar si hay estudiantes en los destinatarios para enviar copias a acudientes
-      const estudiantesInfo = await Usuario.find({
-        _id: { $in: destinatarios },
-        tipo: 'ESTUDIANTE',
-        escuelaId: req.user.escuelaId,
-      }).select('_id');
-
-      const estudiantesIds = estudiantesInfo.map((est: any) => est._id.toString());
-
-      // Enviar mensajes a acudientes para cada estudiante
-      for (const estudianteId of estudiantesIds) {
-        await mensajeService.enviarCopiaAcudientes(estudianteId, datosRespuesta, req.user);
+        await mensajeService.encolarCopiasAcudientes(
+          respuesta._id.toString(),
+          estudiantesInfo.map((est: any) => est._id.toString()),
+          datosRespuesta,
+          req.user,
+        );
+      } catch (errorCopia) {
+        console.error('[ERROR] No se pudieron encolar las copias a acudientes de la respuesta:', errorCopia);
       }
 
       res.status(201).json({

@@ -179,8 +179,19 @@ class PushNotificationService {
     prioridad?: 'alta' | 'normal';
     escuelaId?: string;
   }): Promise<number> {
+    const trabajos = this.construirTrabajosPush(opciones);
+    return trabajos.length === 0 ? 0 : encolar(trabajos);
+  }
+
+  /** Arma (sin insertar) los trabajos de push en lotes de ~50 usuarios (Fase 4.2: un solo insertMany). */
+  construirTrabajosPush(opciones: {
+    usuarioIds: (string | mongoose.Types.ObjectId)[];
+    contenido: ContenidoPush;
+    prioridad?: 'alta' | 'normal';
+    escuelaId?: string;
+  }): NuevoTrabajo[] {
     const ids = [...new Set(opciones.usuarioIds.map(String))].filter((id) => mongoose.isValidObjectId(id));
-    if (ids.length === 0) return 0;
+    if (ids.length === 0) return [];
     const trabajos: NuevoTrabajo[] = [];
     for (let i = 0; i < ids.length; i += USUARIOS_POR_TRABAJO_PUSH) {
       trabajos.push({
@@ -196,7 +207,7 @@ class PushNotificationService {
         },
       });
     }
-    return encolar(trabajos);
+    return trabajos;
   }
 
   /**

@@ -9,6 +9,9 @@ import { reservarCupo, liberarCupo, cupoDeHoy } from '../services/email/cupo';
 import { renderizarCorreo } from '../services/email/plantillas';
 import { inicioDiaSiguienteColombia } from '../utils/fechas';
 import pushNotificationService from '../services/pushNotification.service';
+import mensajeService from '../services/mensaje.service';
+import Mensaje from '../models/mensaje.model';
+import { logger } from '../utils/logger';
 
 /**
  * 'email': un lote de hasta ~50 destinatarios con la misma plantilla.
@@ -72,4 +75,34 @@ registrarHandler('push', async (trabajo, ctx) => {
   const tokens = await pushNotificationService.obtenerTokens(pendientes);
   await pushNotificationService.enviarMulticast(tokens, { titulo, mensaje, data, sound });
   await ctx.marcarEnviados(pendientes);
+});
+
+/**
+ * 'copias-acudientes': genera las copias a acudientes de un mensaje (Fase 4.2), hasta ~50 estudiantes por
+ * trabajo. Idempotente: si la copia de (mensaje, estudiante) ya existe (copiaDe + índice único) se omite, así
+ * un reintento no la duplica. Cada copia pasa por crearMensaje, que encola sus propias notificaciones.
+ */
+registrarHandler('copias-acudientes', async (trabajo, ctx) => {
+  const { mensajeOriginalId, estudianteIds = [], datos, usuario } = trabajo.payload || {};
+  for (const estudianteId of (estudianteIds as string[]).map(String)) {
+    if (ctx.enviados.has(estudianteId)) continue;
+    const yaExiste = await Mensaje.exists({
+      'copiaDe.mensajeId': mensajeOriginalId,
+      'copiaDe.estudianteId': estudianteId,
+    });
+    if (!yaExiste) {
+      try {
+        await mensajeService.enviarCopiaAcudientes(estudianteId, datos, usuario, {
+          mensajeId: mensajeOriginalId,
+          estudianteId,
+        });
+      } catch (error: any) {
+        const duplicada = /E11000/.test(String(error?.message || ''));
+        const permanente = error?.statusCode >= 400 && error?.statusCode < 500; // p. ej. sin acudientes válidos
+        if (!duplicada && !permanente) throw error; // temporal: el trabajo se reintenta sin repetir los hechos
+        if (permanente) logger.warn(`[Copias] Estudiante ${estudianteId}: ${error.message} (se omite)`);
+      }
+    }
+    await ctx.marcarEnviados([estudianteId]);
+  }
 });

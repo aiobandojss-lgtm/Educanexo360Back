@@ -164,3 +164,23 @@ declarado en el schema con `_autoIndex: false`: **no** se crea al arrancar. Paso
   borran solas, leídas o no. El índice `{ usuarioId, createdAt: -1 }` no es redundante y se queda.
 - En el deploy Mongoose crea el índice al arrancar. La **primera pasada** del monitor TTL borra de golpe todas
   las notificaciones de más de 180 días (en lotes, cada 60 s).
+
+## 4.2 Mensajes sin trabajo pesado en el request
+
+`crearMensaje`, `responder`, `enviarBorrador` y las copias a acudientes: se guarda el mensaje, se hace **un**
+`insertMany` de notificaciones y **un** `insertMany` en la cola (correos y push en lotes de ~50), y se responde
+de inmediato con la misma forma de siempre.
+
+- Se eliminaron los envíos en loop dentro del request: `enviarNotificacionesEnBatch` (notificación + correo
+  por destinatario, en lotes de 20 con pausas) y los bloques de push por destinatario de `crear` y `responder`.
+- **Copias a acudientes** por la cola (trabajo `copias-acudientes`, ~50 estudiantes por trabajo). Aparecen unos
+  segundos después del mensaje. Son idempotentes: campo `copiaDe { mensajeId, estudianteId }` con índice único
+  parcial, así un reintento no duplica copias.
+- `enviarBorrador` **ahora notifica** a los destinatarios (campanita, correo y push); antes no avisaba a nadie.
+- Un mensaje creado como `BORRADOR` por `POST /mensajes` ya no genera copias a acudientes (antes sí).
+- Push: prioridad ALTA o asunto con "urgente"/"emergencia" → `tipo: 'urgente'` con sonido `emergency`; si no,
+  `tipo: 'mensaje'` (los mismos datos que antes). Solo se encolan push para usuarios con algún dispositivo.
+- Medición (seed de escala, mensaje a los 60 cursos = 4.600 destinatarios, local): **respuesta 201 en ~680 ms**
+  (antes: minutos, con envíos en el request); el worker completa 184 trabajos (4.600 correos simulados y 92
+  llamadas a FCM con 4.467 tokens) en ~5,6 s a velocidad máxima. En producción, con el intervalo de 5 s y 20
+  trabajos por tick, son ~10 ticks (~50 s).

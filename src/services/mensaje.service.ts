@@ -9,8 +9,11 @@ import ApiError from '../utils/ApiError';
 import { TipoMensaje, EstadoMensaje, PrioridadMensaje } from '../interfaces/IMensaje';
 import { TipoNotificacion } from '../interfaces/INotificacion';
 import { escapeRegex } from '../utils/escapeRegex';
-import emailService, { esEmailFicticio } from './email.service';
-import notificacionService from './notificacion.service';
+import { construirTrabajosCorreo } from './email.service';
+import pushNotificationService from './pushNotification.service';
+import Notificacion from '../models/notificacion.model';
+import { EstadoNotificacion } from '../interfaces/INotificacion';
+import { encolar, NuevoTrabajo } from '../queue/outbox';
 import {
   cache,
   invalidateCache,
@@ -301,6 +304,7 @@ class MensajeService {
         esRespuesta = false,
         mensajeOriginalId = null,
         esCopiaAcudiente = false,
+        copiaDe = undefined,
       } = datos;
 
       // Verificar permisos básicos
@@ -362,7 +366,7 @@ class MensajeService {
         escuelaId: user.escuelaId,
         estado: 'ACTIVO',
       })
-        .select('_id')
+        .select('_id email nombre tipo preferencias fcmToken fcmTokens.token')
         .lean();
       const idsValidos = new Set(validos.map((u: any) => String(u._id)));
       destinatariosFinales = destinatariosFinales.filter((id) => idsValidos.has(id));
@@ -398,20 +402,26 @@ class MensajeService {
         mensajeOriginalId,
         lecturas: [],
         esCopiaAcudiente,
+        ...(copiaDe && { copiaDe }),
         cursoIds: cursoIdsValidos
           .map((id: string) => this.safeObjectId(id))
           .filter((id: any) => id !== null),
       })) as mongoose.Document & { _id: mongoose.Types.ObjectId };
 
-      // 🚀 OPTIMIZACIÓN: Envío de notificaciones en BATCH
+      // Fase 4.2: sin trabajo pesado en el request. Notificaciones (1 insertMany) y correos + push
+      // (1 insertMany en la cola); el worker hace los envíos.
       if (estado !== EstadoMensaje.BORRADOR) {
-        await this.enviarNotificacionesEnBatch(
-          nuevoMensaje._id.toString(),
-          [...destinatariosFinales, ...destinatariosCcFinales],
+        const setDest = new Set(destinatariosFinales);
+        const setCc = new Set(destinatariosCcFinales);
+        await this.despacharMensaje({
+          mensajeId: nuevoMensaje._id.toString(),
           asunto,
-          user,
-          adjuntos.length > 0,
-        );
+          prioridad,
+          remitente: user,
+          tieneAdjuntos: adjuntos.length > 0,
+          destinatarios: validos.filter((u: any) => setDest.has(String(u._id))),
+          cc: validos.filter((u: any) => setCc.has(String(u._id))),
+        });
       }
 
       // ✅ POPULATE OPTIMIZADO (solo campos necesarios)
@@ -492,92 +502,140 @@ class MensajeService {
   }
 
   /**
-   * 🚀 NUEVA FUNCIÓN: Envío de notificaciones optimizado EN BATCH
+   * Despacho de un mensaje enviado (Fase 4.2). Sin envíos dentro del request:
+   * - Campanita: UN insertMany de notificaciones (destinatarios + CC).
+   * - Correos (destinatarios + CC con correo real) y push (destinatarios) en UN insertMany en la cola,
+   *   en lotes de ~50. El worker los envía con reintentos y cupo diario.
+   * - Push urgente (tipo 'urgente', sonido emergency) si la prioridad es ALTA o el asunto dice
+   *   "urgente"/"emergencia"; si no, tipo 'mensaje' (mismos datos que antes para la app).
+   * Si algo falla se registra y NO se lanza: el mensaje ya quedó guardado.
    */
-  private async enviarNotificacionesEnBatch(
-    mensajeId: string,
-    destinatariosIds: string[],
-    asunto: string,
-    remitente: any,
-    tieneAdjuntos: boolean,
-  ): Promise<void> {
+  async despacharMensaje(p: {
+    mensajeId: string;
+    asunto: string;
+    prioridad?: string;
+    remitente: any;
+    tieneAdjuntos: boolean;
+    destinatarios: any[]; // usuarios validados: { _id, email, nombre, tipo, preferencias }
+    cc: any[];
+  }): Promise<void> {
     try {
-      const validDestinatariosIds = destinatariosIds
-        .map((id) => this.safeObjectId(id))
-        .filter((id) => id !== null);
+      const todos = [...new Map([...p.destinatarios, ...p.cc].map((u: any) => [String(u._id), u])).values()];
+      if (todos.length === 0) return;
 
-      if (validDestinatariosIds.length === 0) return;
+      const nombreRemitente = `${p.remitente.nombre ?? ''} ${p.remitente.apellidos ?? ''}`.trim();
+      const url = `${config.frontendUrl}/mensajes/${p.mensajeId}`;
+      const escuelaId = String(p.remitente.escuelaId);
 
-      // ✅ UNA SOLA QUERY para obtener TODOS los destinatarios
-      const usuarios = await Usuario.find({
-        _id: { $in: validDestinatariosIds },
-        escuelaId: remitente.escuelaId,
-        estado: 'ACTIVO',
-      }).select('_id email nombre apellidos');
+      // 1. Campanita: un solo insertMany. lean: sin hidratar miles de documentos de Mongoose (en un mensaje a
+      //    todo el colegio era la mitad del tiempo de respuesta); por eso tipos y timestamps van explícitos.
+      const ahora = new Date();
+      const escuelaObjId = new mongoose.Types.ObjectId(escuelaId);
+      await Notificacion.insertMany(
+        todos.map((u: any) => ({
+          usuarioId: new mongoose.Types.ObjectId(String(u._id)),
+          titulo: `Nuevo mensaje: ${p.asunto}`,
+          mensaje: `Has recibido un nuevo mensaje de ${nombreRemitente}`,
+          tipo: TipoNotificacion.MENSAJE,
+          estado: EstadoNotificacion.PENDIENTE,
+          escuelaId: escuelaObjId,
+          entidadId: new mongoose.Types.ObjectId(p.mensajeId),
+          entidadTipo: 'Mensaje',
+          metadata: { remitente: nombreRemitente, tieneAdjuntos: p.tieneAdjuntos, mensajeId: p.mensajeId, url },
+          createdAt: ahora,
+          updatedAt: ahora,
+        })),
+        { ordered: false, lean: true },
+      );
 
-      const nombreRemitente = `${remitente.nombre} ${remitente.apellidos}`.trim();
-
-      // 🚀 PROCESAR NOTIFICACIONES EN PARALELO CON LÍMITE
-      const batchSize = 20; // Procesar de 20 en 20 para no sobrecargar
-
-      for (let i = 0; i < usuarios.length; i += batchSize) {
-        const batch = usuarios.slice(i, i + batchSize);
-
-        const promesasBatch = batch.map(async (destinatario: any) => {
-          const destId = destinatario._id.toString();
-
-          // Notificación interna y email en paralelo
-          const [,] = await Promise.all([
-            notificacionService.crearNotificacion({
-              usuarioId: destId,
-              titulo: `Nuevo mensaje: ${asunto}`,
-              mensaje: `Has recibido un nuevo mensaje de ${nombreRemitente}`,
-              tipo: TipoNotificacion.MENSAJE,
-              escuelaId: remitente.escuelaId,
-              entidadId: mensajeId,
-              entidadTipo: 'Mensaje',
-              metadata: {
-                remitente: nombreRemitente,
-                tieneAdjuntos,
-                mensajeId,
-                url: `${config.frontendUrl}/mensajes/${mensajeId}`,
+      // 2. Correos + push en un solo insertMany en la cola
+      const correoInmediato = todos.filter((u: any) => this.correoInmediato(u, p.prioridad));
+      const urgente =
+        p.prioridad === PrioridadMensaje.ALTA || /urgente|emergencia/i.test(String(p.asunto || ''));
+      const trabajos: NuevoTrabajo[] = [
+        ...construirTrabajosCorreo({
+          destinatarios: correoInmediato.map((u: any) => ({ email: u.email, nombre: u.nombre, usuarioId: String(u._id) })),
+          plantilla: 'mensaje',
+          datos: { remitente: nombreRemitente, asunto: p.asunto, fecha: new Date(), tieneAdjuntos: p.tieneAdjuntos, url },
+          prioridad: p.prioridad === PrioridadMensaje.ALTA ? 'alta' : 'normal',
+          escuelaId,
+        }),
+        ...pushNotificationService.construirTrabajosPush({
+          // Solo quienes tienen algún dispositivo (si no se trae el dato, se encola igual: el worker filtra)
+          usuarioIds: p.destinatarios
+            .filter((u: any) => !('fcmToken' in u || 'fcmTokens' in u) || u.fcmToken || (u.fcmTokens || []).length > 0)
+            .map((u: any) => String(u._id)),
+          contenido: urgente
+            ? {
+                titulo: `🚨 URGENTE: ${nombreRemitente}`,
+                mensaje: p.asunto,
+                data: { tipo: 'urgente', mensajeId: p.mensajeId, prioridad: 'ALTA', remitente: nombreRemitente },
+                sound: 'emergency',
+              }
+            : {
+                titulo: `💬 Nuevo mensaje de ${nombreRemitente}`,
+                mensaje: p.asunto,
+                data: { tipo: 'mensaje', mensajeId: p.mensajeId, prioridad: p.prioridad || 'NORMAL', remitente: nombreRemitente },
               },
-              enviarEmail: false,
-            }),
-
-            // Email solo si tiene correo real (excluye correos ficticios de estudiantes)
-            destinatario.email && !esEmailFicticio(destinatario.email)
-              ? emailService.sendMensajeNotification(destinatario.email, {
-                  remitente: nombreRemitente,
-                  asunto,
-                  fecha: new Date(),
-                  tieneAdjuntos,
-                  url: `${config.frontendUrl}/mensajes/${mensajeId}`,
-                })
-              : Promise.resolve(),
-          ]);
-        });
-
-        // Esperar que termine el batch antes del siguiente
-        await Promise.all(promesasBatch);
-
-        // Pequeña pausa entre batches para no sobrecargar
-        if (i + batchSize < usuarios.length) {
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        }
-      }
-
-      logger.debug(`✅ Notificaciones enviadas a ${usuarios.length} destinatarios`);
+          prioridad: urgente ? 'alta' : 'normal',
+          escuelaId,
+        }),
+      ];
+      if (trabajos.length > 0) await encolar(trabajos);
     } catch (error) {
-      console.error('Error enviando notificaciones en batch:', error);
-      // No lanzar error para no afectar la creación del mensaje
+      console.error('[Mensajes] Error despachando notificaciones del mensaje', p.mensajeId, error);
     }
+  }
+
+  /**
+   * ¿Este destinatario recibe el correo del mensaje de inmediato? (4.5 agrega la preferencia de resumen)
+   */
+  correoInmediato(usuario: any, _prioridad?: string): boolean {
+    return !!usuario?.email;
+  }
+
+  /**
+   * Encola la generación de las copias a acudientes (Fase 4.2): el request responde sin esperarlas.
+   * Un trabajo por cada ~50 estudiantes; el handler es idempotente (copiaDe + índice único).
+   */
+  async encolarCopiasAcudientes(
+    mensajeOriginalId: string,
+    estudianteIds: string[],
+    datos: any,
+    usuarioOrigen: any,
+  ): Promise<number> {
+    const ids = [...new Set(estudianteIds.map(String))].filter((id) => mongoose.isValidObjectId(id));
+    if (ids.length === 0) return 0;
+    const usuario = {
+      _id: String(usuarioOrigen._id),
+      escuelaId: String(usuarioOrigen.escuelaId),
+      tipo: usuarioOrigen.tipo,
+      nombre: usuarioOrigen.nombre,
+      apellidos: usuarioOrigen.apellidos,
+    };
+    const datosCopia = {
+      asunto: datos.asunto,
+      contenido: datos.contenido,
+      adjuntos: datos.adjuntos || [],
+      tipo: datos.tipo,
+      prioridad: datos.prioridad,
+      etiquetas: datos.etiquetas || [],
+    };
+    const trabajos: NuevoTrabajo[] = [];
+    for (let i = 0; i < ids.length; i += 50) {
+      trabajos.push({
+        tipo: 'copias-acudientes',
+        escuelaId: usuario.escuelaId,
+        payload: { mensajeOriginalId: String(mensajeOriginalId), estudianteIds: ids.slice(i, i + 50), datos: datosCopia, usuario },
+      });
+    }
+    return encolar(trabajos);
   }
 
   /**
    * 🚀 OPTIMIZADO: Enviar copia a acudientes con cache
    */
-  async enviarCopiaAcudientes(estudianteId: string, datos: any, usuarioOrigen: any) {
+  async enviarCopiaAcudientes(estudianteId: string, datos: any, usuarioOrigen: any, copiaDe?: { mensajeId: string; estudianteId: string }) {
     try {
       if (!mongoose.isValidObjectId(estudianteId)) {
         logger.debug(`[WARNING] ID de estudiante inválido: ${estudianteId}`);
@@ -648,6 +706,12 @@ class MensajeService {
         etiquetas: datos.etiquetas || [],
         esRespuesta: false,
         esCopiaAcudiente: true,
+        ...(copiaDe && {
+          copiaDe: {
+            mensajeId: new mongoose.Types.ObjectId(copiaDe.mensajeId),
+            estudianteId: new mongoose.Types.ObjectId(copiaDe.estudianteId),
+          },
+        }),
       };
 
       return this.crearMensaje(mensajeAcudientes, usuarioOrigen);

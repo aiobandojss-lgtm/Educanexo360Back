@@ -145,6 +145,18 @@ const MensajeSchema = new Schema(
       type: Boolean,
       default: false,
     },
+    // Fase 4.2: de qué mensaje y estudiante es esta copia a acudientes (las copias se generan en la cola;
+    // el índice único evita duplicarlas si el trabajo se reintenta). Sin default: ausente en los demás.
+    copiaDe: {
+      type: new Schema(
+        {
+          mensajeId: { type: Schema.Types.ObjectId, ref: 'Mensaje' },
+          estudianteId: { type: Schema.Types.ObjectId, ref: 'Usuario' },
+        },
+        { _id: false },
+      ),
+      default: undefined,
+    },
     cursoIds: {
       type: [
         {
@@ -271,6 +283,11 @@ MensajeSchema.index({ asunto: 'text', contenido: 'text' });
 // Nuevos índices para estadosUsuarios
 // {estadosUsuarios.usuarioId} y {estadosUsuarios.estado} sueltos quitados: cubiertos por este compuesto
 MensajeSchema.index({ 'estadosUsuarios.usuarioId': 1, 'estadosUsuarios.estado': 1 });
+// Fase 4.2: una sola copia a acudientes por (mensaje original, estudiante). Parcial: solo las copias nuevas.
+MensajeSchema.index(
+  { 'copiaDe.mensajeId': 1, 'copiaDe.estudianteId': 1 },
+  { unique: true, partialFilterExpression: { 'copiaDe.mensajeId': { $exists: true } } },
+);
 
 const Mensaje = mongoose.model<IMensaje>('Mensaje', MensajeSchema);
 

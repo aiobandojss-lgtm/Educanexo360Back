@@ -70,6 +70,7 @@ export interface IMensajeBase {
   fechaEliminacion?: Date; // Fecha de eliminación (para compatibilidad)
   esCopiaAcudiente?: boolean;
   cursoIds?: Types.ObjectId[];
+  copiaDe?: { mensajeId: Types.ObjectId; estudianteId: Types.ObjectId }; // Fase 4.2
 }
 
 // Interfaz para documentos de Mongoose
