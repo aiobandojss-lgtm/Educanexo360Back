@@ -1,6 +1,16 @@
 import mongoose from 'mongoose';
 import Outbox, { IOutbox, PrioridadTrabajo, ORDEN_PRIORIDAD } from '../models/outbox.model';
 import { logger } from '../utils/logger';
+import { enmascararEmailsEnTexto } from '../utils/enmascarar';
+
+/**
+ * Auditoría 4.W: todo error que se guarda en outbox.error o va al log pasa por aquí. Los proveedores (nodemailer,
+ * Brevo) y los handlers pueden incluir direcciones (<usuario@dominio>): quedan enmascaradas (u***@dominio).
+ */
+const textoError = (error: any, max = 1000): string =>
+  enmascararEmailsEnTexto(String(error?.message || error)).slice(0, max);
+/** Igual, con el stack (errores inesperados del worker, solo al log). */
+const textoErrorConStack = (error: any): string => enmascararEmailsEnTexto(String(error?.stack || error?.message || error));
 
 /**
  * Cola de envíos (outbox) y su worker (Fase 4.1).
@@ -153,7 +163,7 @@ const cerrarTrabajo = async (trabajo: IOutbox, update: Record<string, unknown>, 
       return r.matchedCount > 0;
     } catch (error: any) {
       if (intento === 3) {
-        logger.error(`[Outbox] ${trabajo.tipo} ${trabajo._id}: no se pudo marcar ${que}:`, error?.message || error);
+        logger.error(`[Outbox] ${trabajo.tipo} ${trabajo._id}: no se pudo marcar ${que}: ${textoError(error)}`);
         return false;
       }
       await new Promise((r) => setTimeout(r, 200 * intento));
@@ -216,17 +226,17 @@ const ejecutarTrabajo = async (trabajo: IOutbox): Promise<void> => {
     await cerrarTrabajo(
       trabajo,
       {
-        $set: { estado: 'PENDIENTE', nextRunAt: errorHandler.fecha, error: errorHandler.message },
+        $set: { estado: 'PENDIENTE', nextRunAt: errorHandler.fecha, error: textoError(errorHandler) },
         $inc: { intentos: -1 },
         $unset: { lockedUntil: 1 },
       },
       'aplazado',
     );
-    logger.warn(`[Outbox] ${trabajo.tipo} ${trabajo._id} aplazado hasta ${errorHandler.fecha.toISOString()}: ${errorHandler.message}`);
+    logger.warn(`[Outbox] ${trabajo.tipo} ${trabajo._id} aplazado hasta ${errorHandler.fecha.toISOString()}: ${textoError(errorHandler)}`);
     return;
   }
 
-  const mensaje = String(errorHandler?.message || errorHandler).slice(0, 1000);
+  const mensaje = textoError(errorHandler);
   if (trabajo.intentos >= CFG.maxIntentos || errorHandler?.definitivo === true) {
     await cerrarTrabajo(
       trabajo,
@@ -298,7 +308,7 @@ export const ejecutarTick = async (): Promise<void> => {
       // 2. Tareas periódicas (baratas: cada una decide si le toca)
       for (const tarea of tareasPeriodicas) {
         if (deteniendo) break;
-        await tarea.fn().catch((err) => logger.error(`[Outbox] tarea periódica ${tarea.nombre}:`, err));
+        await tarea.fn().catch((err) => logger.error(`[Outbox] tarea periódica ${tarea.nombre}: ${textoError(err)}`));
       }
 
       // 3. Trabajos con concurrencia acotada: cada "carril" toma el siguiente hasta agotar el lote
@@ -313,7 +323,7 @@ export const ejecutarTick = async (): Promise<void> => {
           try {
             trabajo = await tomarSiguiente();
           } catch (error) {
-            logger.error('[Outbox] Error tomando el siguiente trabajo:', error);
+            logger.error(`[Outbox] Error tomando el siguiente trabajo: ${textoErrorConStack(error)}`);
             return;
           }
           if (!trabajo) return;
@@ -321,7 +331,7 @@ export const ejecutarTick = async (): Promise<void> => {
           try {
             await ejecutarTrabajo(trabajo);
           } catch (error) {
-            logger.error(`[Outbox] Error inesperado en el trabajo ${trabajo._id}:`, error);
+            logger.error(`[Outbox] Error inesperado en el trabajo ${trabajo._id}: ${textoErrorConStack(error)}`);
           } finally {
             trabajosEnCurso--;
           }
@@ -329,7 +339,7 @@ export const ejecutarTick = async (): Promise<void> => {
       };
       await Promise.allSettled(Array.from({ length: CFG.concurrencia }, carril));
     } catch (error) {
-      logger.error('[Outbox] Error en el tick del worker:', error);
+      logger.error(`[Outbox] Error en el tick del worker: ${textoErrorConStack(error)}`);
     }
   })().finally(() => {
     tickEnCurso = null;
@@ -342,7 +352,7 @@ export const iniciarWorker = (): void => {
   if (timer || process.env.OUTBOX_DISABLED === 'true') return;
   deteniendo = false;
   timer = setInterval(() => {
-    ejecutarTick().catch((err) => logger.error('[Outbox] tick:', err));
+    ejecutarTick().catch((err) => logger.error(`[Outbox] tick: ${textoErrorConStack(err)}`));
   }, CFG.intervaloMs);
   timer.unref();
   logger.info(`[Outbox] Worker iniciado (cada ${CFG.intervaloMs} ms, concurrencia ${CFG.concurrencia})`);
