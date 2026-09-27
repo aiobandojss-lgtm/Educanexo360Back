@@ -97,13 +97,16 @@ async function obtenerPeriodoVigente(
     : // hasta el FIN del día de fecha_fin (hora Colombia): el último día del periodo no cae en 'sin-periodo'
       periodos.find((p) => new Date(p.fecha_inicio) <= hoy && hoy <= finDelDiaColombia(new Date(p.fecha_fin)));
   if (!periodo) return { id: periodoId || 'sin-periodo' };
-  // Las asistencias guardan la fecha como medianoche UTC: el rango termina (exclusivo) en la medianoche UTC
-  // del día siguiente a fecha_fin. Con finDelDiaColombia (05:00 UTC del día siguiente) entraba el primer día
-  // del periodo siguiente (auditoría 3.N); ese helper solo decide arriba si "hoy" cae en el periodo.
+  // Las asistencias guardan la fecha como medianoche UTC, pero la web guarda los periodos en hora local
+  // (new Date(año, 3, 1) = 05:00Z). Ambos límites se normalizan por FECHA CALENDARIO con las partes UTC,
+  // así sirve si el periodo se guardó a 00:00Z o a 05:00Z (auditoría 3.V; antes el primer día de cada
+  // periodo no caía en ninguno). El rango termina (exclusivo) en la medianoche UTC del día siguiente a
+  // fecha_fin (3.N); finDelDiaColombia solo decide arriba si "hoy" cae en el periodo.
+  const inicio = new Date(periodo.fecha_inicio);
   const fin = new Date(periodo.fecha_fin);
   return {
     id: String(periodo._id),
-    desde: new Date(periodo.fecha_inicio),
+    desde: new Date(Date.UTC(inicio.getUTCFullYear(), inicio.getUTCMonth(), inicio.getUTCDate())),
     hastaExclusivo: new Date(Date.UTC(fin.getUTCFullYear(), fin.getUTCMonth(), fin.getUTCDate() + 1)),
   };
 }
