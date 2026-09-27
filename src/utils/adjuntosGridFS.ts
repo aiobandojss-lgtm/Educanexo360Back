@@ -63,6 +63,12 @@ export const subirAdjuntosGridFS = async (
     }
     return subidos;
   } catch (error) {
+    // Nota (auditoría 3.S): el archivo en curso aún no tiene documento en uploads.files (se escribe al
+    // terminar el stream); bucket.delete borra igual sus chunks por files_id, pero lanza "File not found",
+    // que se ignora. Si ese borrado falla (p. ej. se cae la conexión) o un chunk termina de escribirse
+    // después, puede quedar un chunk parcial huérfano en uploads.chunks sin archivo en uploads.files.
+    // Se acepta: es raro y pequeño (≤ 255 KB por chunk). Se limpia con mantenimiento: chunks cuyo
+    // files_id no existe en uploads.files.
     const aBorrar = [...subidos.map((a) => a.fileId), ...(enCurso ? [enCurso] : [])];
     await Promise.all(aBorrar.map((id) => bucket.delete(id).catch(() => undefined)));
     throw error;
