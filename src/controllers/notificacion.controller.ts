@@ -223,7 +223,8 @@ export class NotificacionController {
     }
   }
 
-  // Desvincular al cerrar sesión (idempotente). Con token: quita SOLO ese dispositivo. Sin token: todos.
+  // Desvincular al cerrar sesión (idempotente). Con token: quita SOLO ese dispositivo. Sin token: TODOS, a propósito
+  // (auditoría 4.Q): las APK 1.0.0 cierran sesión sin enviar el token. La app nueva debe enviar siempre el suyo.
   async desregistrarTokenFCM(req: RequestWithUser, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!req.user) {

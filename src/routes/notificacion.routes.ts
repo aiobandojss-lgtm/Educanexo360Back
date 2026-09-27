@@ -28,7 +28,9 @@ const registrarToken = [
  *     description: >
  *       Fase 4.3: AGREGA el token al arreglo de dispositivos del usuario (máx. 5; al pasar de 5 sale el más
  *       viejo). Un token pertenece a un solo usuario: se quita de cualquier otra cuenta. fcmToken null
- *       desvincula TODOS los dispositivos (así cierran sesión las APK 1.0.0). platform opcional (android).
+ *       desvincula TODOS los dispositivos del usuario (INTENCIONAL, auditoría 4.Q: así cierran sesión las APK
+ *       1.0.0 y sin token no se sabe cuál dispositivo cerró sesión; sus otros dispositivos dejan de recibir push
+ *       hasta que vuelvan a abrir la app). platform opcional (android).
  *     tags: [Notificaciones]
  *     security:
  *       - bearerAuth: []
@@ -80,8 +82,10 @@ router.post('/fcm-token', ...registrarToken);
  *   post:
  *     summary: Desvincula el token FCM del usuario al cerrar sesión
  *     description: >
- *       Idempotente (responde 200 aunque no coincida). Con fcmToken quita SOLO ese dispositivo; sin
- *       fcmToken (Fase 4.3) desvincula todos los dispositivos del usuario.
+ *       Idempotente (responde 200 aunque no coincida). Con fcmToken quita SOLO ese dispositivo. Sin
+ *       fcmToken desvincula TODOS los dispositivos del usuario: INTENCIONAL (auditoría 4.Q), por compatibilidad
+ *       con las APK 1.0.0, que cierran sesión sin enviar el token; los otros dispositivos vuelven a registrarse
+ *       al abrir la app. La app nueva debe enviar siempre su fcmToken.
  *     tags: [Notificaciones]
  *     security:
  *       - bearerAuth: []
@@ -97,7 +101,7 @@ router.post('/fcm-token', ...registrarToken);
  *       200:
  *         description: '{ success: true, message: "Dispositivo desvinculado", data: { tokenRemoved: boolean } }'
  *       400:
- *         description: fcmToken ausente o inválido
+ *         description: fcmToken con formato inválido
  *       401:
  *         description: No autenticado
  */
