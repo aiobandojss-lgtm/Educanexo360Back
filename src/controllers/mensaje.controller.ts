@@ -963,9 +963,13 @@ export class MensajeController {
         // Auditoría 4.D: el despacho (campanita, correo, push) va en un trabajo idempotente de la cola
         await mensajeService.encolarDespacho(String(mensajeEnviado._id), req.user, mensajeEnviado.prioridad);
 
-        const estudiantesIds = usuariosDestino
-          .filter((u: any) => u.tipo === 'ESTUDIANTE' && setDest.has(String(u._id)))
-          .map((u: any) => String(u._id));
+        // Auditoría 4.O: como al crear, un mensaje masivo por curso (cursoIds) NO genera copias a acudientes
+        const esMasivoPorCurso = ((mensajeEnviado as any).cursoIds || []).length > 0;
+        const estudiantesIds = esMasivoPorCurso
+          ? []
+          : usuariosDestino
+              .filter((u: any) => u.tipo === 'ESTUDIANTE' && setDest.has(String(u._id)))
+              .map((u: any) => String(u._id));
         await mensajeService.encolarCopiasAcudientes(
           String(mensajeEnviado._id),
           estudiantesIds,
