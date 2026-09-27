@@ -8,6 +8,7 @@ import { obtenerProveedor } from './proveedores';
 import { renderizarCorreo } from './plantillas';
 import { inicioDiaSiguienteColombia } from '../../utils/fechas';
 import { enmascararEmail } from '../../utils/enmascarar';
+import { esEmailFicticio } from '../email.service';
 import { logger } from '../../utils/logger';
 
 /**
@@ -128,8 +129,41 @@ export const procesarCorreoCuenta = async (payload: any): Promise<void> => {
   }
 
   if (payload.tipo === 'definir') {
-    // Implementado con el reenvío de enlaces (auditoría 4.P)
-    throw new FalloDefinitivo('Tipo de correo de cuenta aún no soportado: definir');
+    // Reenvío del enlace (auditoría 4.P): UN token nuevo (invalida los anteriores) enviado a cada destinatario.
+    // Si un envío falla de forma temporal, el reintento genera otro token y reenvía a todos (el último vale).
+    const usuario: any = await Usuario.findOne({ _id: payload.usuarioId, estado: 'ACTIVO' })
+      .select('_id email nombre apellidos')
+      .lean();
+    if (!usuario) throw new FalloDefinitivo('Usuario inexistente o inactivo');
+    const ids = (Array.isArray(payload.enviarA) ? payload.enviarA : []).filter((id: any) => mongoose.isValidObjectId(id));
+    const destinatarios: any[] = await Usuario.find({ _id: { $in: ids }, estado: 'ACTIVO' })
+      .select('_id email nombre apellidos')
+      .lean();
+    const conCorreo = destinatarios.filter((d) => d.email && !esEmailFicticio(d.email));
+    if (conCorreo.length === 0) throw new FalloDefinitivo('Sin destinatarios con correo real');
+    const dias: string[] = [];
+    for (let i = 0; i < conCorreo.length; i++) dias.push(await reservarCritico(caducaEn));
+    const enlace = await crearEnlaceContrasena(String(usuario._id), HORAS_ENLACE_DEFINIR);
+    const nombreUsuario = `${usuario.nombre ?? ''} ${usuario.apellidos ?? ''}`.trim();
+    for (let i = 0; i < conCorreo.length; i++) {
+      const d = conCorreo[i];
+      const nombre = `${d.nombre ?? ''} ${d.apellidos ?? ''}`.trim();
+      try {
+        await enviar(dias[i], { email: d.email, nombre }, 'enlace-contrasena', {
+          nombre,
+          nombreUsuario,
+          usuario: usuario.email,
+          esPropio: String(d._id) === String(usuario._id),
+          enlace,
+          horas: HORAS_ENLACE_DEFINIR,
+        });
+      } catch (error) {
+        // Los cupos reservados de los que no alcanzaron a salir se devuelven (el de este ya lo liberó enviar)
+        for (let j = i + 1; j < conCorreo.length; j++) await liberarCupo('critica', 1, dias[j]);
+        throw error;
+      }
+    }
+    return;
   }
 
   throw new FalloDefinitivo(`Tipo de correo de cuenta desconocido: ${payload.tipo}`);

@@ -9,6 +9,8 @@ import notificacionService from '../services/notificacion.service';
 import { TipoNotificacion } from '../interfaces/INotificacion';
 import { esRolAdministrativo, puedeGestionarRol } from '../utils/accesoAcademico';
 import { preferenciaEmail, PREFERENCIAS_EMAIL } from '../utils/preferencias';
+import { esEmailFicticio } from '../services/email.service';
+import { encolarCorreoCuenta } from '../services/email/cuentas';
 
 // Extender el tipo Request para incluir el usuario
 interface RequestWithUser extends Request {
@@ -594,6 +596,79 @@ class UsuarioController {
         success: true,
         message:
           'Solicitud de eliminación registrada. Tu cuenta ha sido desactivada y será eliminada por el colegio.',
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Reenvía el enlace para definir contraseña (auditoría 4.P). Mismo colegio (salvo SUPER_ADMIN), rango inferior
+   * (puedeGestionarRol) y usuario ACTIVO. ESTUDIANTE → el enlace va a sus acudientes activos con correo real.
+   */
+  async reenviarEnlacePassword(req: RequestWithUser, res: Response, next: NextFunction) {
+    try {
+      if (!req.user) {
+        throw new ApiError(401, 'No autorizado');
+      }
+      const esSuperAdmin = req.user.tipo === 'SUPER_ADMIN';
+      if (!esSuperAdmin && !mongoose.isValidObjectId(req.user.escuelaId)) {
+        throw new ApiError(403, 'No tiene permisos para esta acción');
+      }
+      const objetivo: any = await Usuario.findOne({
+        _id: req.params.id,
+        ...(!esSuperAdmin && { escuelaId: req.user.escuelaId }),
+        estado: 'ACTIVO',
+      })
+        .select('_id tipo email escuelaId')
+        .lean();
+      if (!objetivo) {
+        throw new ApiError(404, 'Usuario no encontrado');
+      }
+      if (!puedeGestionarRol(req.user.tipo, objetivo.tipo)) {
+        throw new ApiError(403, 'No tiene permisos para gestionar usuarios de este rol');
+      }
+
+      let enviarA: string[] = [];
+      if (objetivo.tipo === 'ESTUDIANTE') {
+        const acudientes = await Usuario.find({
+          escuelaId: objetivo.escuelaId,
+          tipo: 'ACUDIENTE',
+          estado: 'ACTIVO',
+          'info_academica.estudiantes_asociados': objetivo._id,
+        })
+          .select('_id email')
+          .lean();
+        enviarA = acudientes.filter((a: any) => a.email && !esEmailFicticio(a.email)).map((a: any) => String(a._id));
+        if (enviarA.length === 0) {
+          throw new ApiError(409, 'El estudiante no tiene acudientes activos con correo para enviarle el enlace');
+        }
+      } else {
+        if (!objetivo.email || esEmailFicticio(objetivo.email)) {
+          throw new ApiError(409, 'El usuario no tiene un correo real para enviarle el enlace');
+        }
+        enviarA = [String(objetivo._id)];
+      }
+
+      try {
+        await encolarCorreoCuenta({
+          tipo: 'definir',
+          usuarioId: String(objetivo._id),
+          enviarA,
+          escuelaId: String(objetivo.escuelaId),
+        });
+      } catch (errorCola) {
+        console.error('[Usuarios] No se pudo encolar el reenvío del enlace:', errorCola);
+        throw new ApiError(503, 'No se pudo enviar el enlace en este momento; intente de nuevo');
+      }
+
+      res.json({
+        success: true,
+        data: { destinatarios: enviarA.length },
+        message:
+          objetivo.tipo === 'ESTUDIANTE'
+            ? 'El enlace para definir la contraseña se envió a los acudientes del estudiante'
+            : 'El enlace para definir la contraseña se envió al correo del usuario',
       });
     } catch (error) {
       next(error);

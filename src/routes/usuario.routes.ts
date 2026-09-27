@@ -7,6 +7,7 @@ import {
   cambiarPasswordValidation,
   asociarEstudianteValidation,
   preferenciasValidation,
+  reenviarEnlacePasswordValidation,
 } from '../validations/usuario.validation';
 import { cacheMiddleware } from '../cache/simpleCache';
 
@@ -102,6 +103,45 @@ router.delete(
   '/:id',
   authMiddleware.authorize('ADMIN', 'RECTOR', 'COORDINADOR'),
   usuarioController.eliminarUsuario,
+);
+
+/**
+ * @swagger
+ * /usuarios/{id}/reenviar-enlace-password:
+ *   post:
+ *     summary: Reenvía el enlace para definir la contraseña de un usuario
+ *     description: >
+ *       Roles administrativos (ADMIN, RECTOR, COORDINADOR, ADMINISTRATIVO) y SUPER_ADMIN, sobre usuarios ACTIVOS de
+ *       su colegio con rango inferior (misma regla que la gestión de usuarios). Genera un enlace nuevo de un solo uso
+ *       (vence en 72 h) e invalida los anteriores. Si el usuario es ESTUDIANTE (su correo es ficticio), el enlace se
+ *       envía a sus acudientes activos. El correo sale por la cola con prioridad crítica.
+ *     tags: [Usuarios]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: '{ success, data: { destinatarios: número de correos encolados }, message }'
+ *       400:
+ *         description: ID inválido
+ *       403:
+ *         description: Sin permiso sobre ese rol
+ *       404:
+ *         description: Usuario no encontrado en el colegio o inactivo
+ *       409:
+ *         description: No hay a quién enviarlo (sin correo real o estudiante sin acudientes con correo)
+ *       503:
+ *         description: No se pudo encolar el correo; intentar de nuevo
+ */
+router.post(
+  '/:id/reenviar-enlace-password',
+  authMiddleware.authorize('ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO', 'SUPER_ADMIN'),
+  validate(reenviarEnlacePasswordValidation),
+  usuarioController.reenviarEnlacePassword,
 );
 
 // Ruta para cambiar contraseña (el usuario solo puede cambiar su propia contraseña)

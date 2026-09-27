@@ -1,4 +1,9 @@
-import { body } from 'express-validator';
+import { body, param } from 'express-validator';
+
+// Reenvío del enlace para definir contraseña (auditoría 4.P)
+export const reenviarEnlacePasswordValidation = [
+  param('id').isMongoId().withMessage('ID de usuario inválido'),
+];
 
 // Validación para actualizar usuario
 export const actualizarUsuarioValidation = [
