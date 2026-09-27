@@ -38,6 +38,25 @@ const tomarCamposEvento = (body) => {
     return datos;
 };
 const archivoSubido = (req) => req.file || (Array.isArray(req.files) && req.files.length > 0 ? req.files[0] : undefined);
+const notificarEventoPublicado = (evento, escuelaId) => {
+    const titulo = evento.titulo || 'Nuevo evento';
+    const fechaStr = evento.fechaInicio ? new Date(evento.fechaInicio).toLocaleDateString('es-CO') : '';
+    usuario_model_1.default.find({ escuelaId, fcmToken: { $exists: true, $ne: null } }, { fcmToken: 1 })
+        .then((usuarios) => {
+        const tokens = usuarios.map((u) => u.fcmToken).filter(Boolean);
+        if (tokens.length > 0) {
+            pushNotification_service_1.default
+                .enviarNotificacionMasiva({
+                tokens,
+                titulo: `Nuevo evento: ${titulo}`,
+                mensaje: fechaStr ? `Fecha: ${fechaStr}` : 'Se ha creado un nuevo evento en el calendario',
+                data: { tipo: 'evento', eventoId: String(evento._id) },
+            })
+                .catch(() => { });
+        }
+    })
+        .catch(() => { });
+};
 class CalendarioController {
     async crearEvento(req, res, next) {
         try {
@@ -123,25 +142,9 @@ class CalendarioController {
                 success: true,
                 data: eventoPopulado,
             });
-            if (evento.estado !== ICalendario_1.EstadoEvento.ACTIVO) {
-                return;
+            if (evento.estado === ICalendario_1.EstadoEvento.ACTIVO) {
+                notificarEventoPublicado(evento, req.user.escuelaId);
             }
-            const escuelaId = req.user.escuelaId;
-            const titulo = eventoData.titulo || 'Nuevo evento';
-            const fechaStr = eventoData.fechaInicio
-                ? new Date(eventoData.fechaInicio).toLocaleDateString('es-CO')
-                : '';
-            usuario_model_1.default.find({ escuelaId, fcmToken: { $exists: true, $ne: null } }, { fcmToken: 1 }).then((usuarios) => {
-                const tokens = usuarios.map((u) => u.fcmToken).filter(Boolean);
-                if (tokens.length > 0) {
-                    pushNotification_service_1.default.enviarNotificacionMasiva({
-                        tokens,
-                        titulo: `Nuevo evento: ${titulo}`,
-                        mensaje: fechaStr ? `Fecha: ${fechaStr}` : 'Se ha creado un nuevo evento en el calendario',
-                        data: { tipo: 'evento', eventoId: evento._id.toString() },
-                    }).catch(() => { });
-                }
-            }).catch(() => { });
         }
         catch (error) {
             next(error);
@@ -430,6 +433,9 @@ class CalendarioController {
                 success: true,
                 data: eventoActualizado,
             });
+            if (datosActualizacion.estado === ICalendario_1.EstadoEvento.ACTIVO && evento.estado !== ICalendario_1.EstadoEvento.ACTIVO) {
+                notificarEventoPublicado(eventoActualizado, req.user.escuelaId);
+            }
         }
         catch (error) {
             next(error);
@@ -566,6 +572,9 @@ class CalendarioController {
                 data: eventoActualizado,
                 message: `Estado del evento cambiado a ${estado} exitosamente`,
             });
+            if (eventoActualizado && estado === ICalendario_1.EstadoEvento.ACTIVO && evento.estado !== ICalendario_1.EstadoEvento.ACTIVO) {
+                notificarEventoPublicado(eventoActualizado, req.user.escuelaId);
+            }
         }
         catch (error) {
             next(error);

@@ -4,6 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.obtenerInvitacionesEscuela = exports.obtenerInvitacionPorId = exports.revocarInvitacion = exports.obtenerInvitacionesPorCurso = exports.validarCodigo = exports.crearInvitacion = void 0;
+const mongoose_1 = __importDefault(require("mongoose"));
 const invitacion_service_1 = __importDefault(require("../services/invitacion.service"));
 const catchAsync_1 = require("../utils/catchAsync");
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
@@ -79,6 +80,9 @@ exports.obtenerInvitacionPorId = (0, catchAsync_1.catchAsync)(async (req, res, n
 });
 exports.obtenerInvitacionesEscuela = (0, catchAsync_1.catchAsync)(async (req, res, next) => {
     const escuelaId = req.user?.escuelaId;
+    if (!mongoose_1.default.isValidObjectId(escuelaId)) {
+        return next(new ApiError_1.default(400, 'El usuario no tiene un colegio asociado'));
+    }
     const estado = typeof req.query.estado === 'string' ? req.query.estado : undefined;
     const pagina = (0, paginacion_1.numeroPagina)(req.query.pagina);
     const limite = (0, paginacion_1.numeroLimite)(req.query.limite, 10);

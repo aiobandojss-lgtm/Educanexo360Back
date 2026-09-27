@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.MensajeController = exports.ROLES_CON_BORRADORES = void 0;
+exports.idsDestinatariosValidos = exports.ROLES_CON_BORRADORES = void 0;
 const mongoose_1 = __importDefault(require("mongoose"));
 const mensaje_model_1 = __importDefault(require("../models/mensaje.model"));
 const usuario_model_1 = __importDefault(require("../models/usuario.model"));
@@ -18,6 +18,16 @@ const logger_1 = require("../utils/logger");
 const adjuntosGridFS_1 = require("../utils/adjuntosGridFS");
 const contentDisposition_1 = require("../utils/contentDisposition");
 exports.ROLES_CON_BORRADORES = ['ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO', 'DOCENTE'];
+const idsDestinatariosValidos = async (ids, escuelaId) => {
+    const lista = ids.map((d) => String(d?._id ?? d)).filter((d) => mongoose_1.default.isValidObjectId(d));
+    if (lista.length === 0 || !mongoose_1.default.isValidObjectId(escuelaId))
+        return new Set();
+    const validos = await usuario_model_1.default.find({ _id: { $in: lista }, escuelaId, estado: 'ACTIVO' })
+        .select('_id')
+        .lean();
+    return new Set(validos.map((u) => String(u._id)));
+};
+exports.idsDestinatariosValidos = idsDestinatariosValidos;
 class MensajeController {
     async getPosiblesDestinatarios(req, res, next) {
         try {
@@ -406,6 +416,13 @@ class MensajeController {
                     }
                 }
             }
+            const validosBorrador = await (0, exports.idsDestinatariosValidos)([...destinatariosObjectIds, ...destinatariosCcObjectIds], String(req.user.escuelaId));
+            const filtrarValidos = (lista) => {
+                const filtrados = lista.filter((id) => validosBorrador.has(String(id)));
+                lista.splice(0, lista.length, ...filtrados);
+            };
+            filtrarValidos(destinatariosObjectIds);
+            filtrarValidos(destinatariosCcObjectIds);
             logger_1.logger.debug('Destinatarios ObjectId finales:', destinatariosObjectIds.length);
             logger_1.logger.debug('Destinatarios CC ObjectId finales:', destinatariosCcObjectIds.length);
             const { asunto = '(Sin asunto)', contenido = '', prioridad = IMensaje_1.PrioridadMensaje.NORMAL, etiquetas = [], } = req.body;
@@ -431,23 +448,10 @@ class MensajeController {
                 borrador.destinatarios = destinatariosObjectIds;
                 borrador.destinatariosCc = destinatariosCcObjectIds;
                 borrador.etiquetas = Array.isArray(etiquetas) ? etiquetas : [etiquetas].filter(Boolean);
+                let adjuntosAnteriores = [];
+                let idsNuevos = [];
                 if (req.files && req.files.length > 0) {
                     logger_1.logger.debug('Se enviaron nuevos adjuntos, reemplazando adjuntos anteriores...');
-                    if (borrador.adjuntos && borrador.adjuntos.length > 0) {
-                        const bucket = gridfs_1.default.getBucket();
-                        if (bucket) {
-                            logger_1.logger.debug(`Eliminando ${borrador.adjuntos.length} adjuntos anteriores...`);
-                            for (const adjuntoAnterior of borrador.adjuntos) {
-                                try {
-                                    await bucket.delete(adjuntoAnterior.fileId);
-                                    logger_1.logger.debug(`Adjunto eliminado: ${adjuntoAnterior.nombre}`);
-                                }
-                                catch (deleteError) {
-                                    console.warn(`No se pudo eliminar adjunto ${adjuntoAnterior.nombre}:`, deleteError);
-                                }
-                            }
-                        }
-                    }
                     const nuevosAdjuntos = [];
                     const totalSize = req.files.reduce((sum, file) => sum + file.size, 0);
                     const MAX_TOTAL_SIZE = 15 * 1024 * 1024;
@@ -459,13 +463,36 @@ class MensajeController {
                         throw new ApiError_1.default(500, 'Servicio de archivos no disponible');
                     }
                     nuevosAdjuntos.push(...(await (0, adjuntosGridFS_1.subirAdjuntosGridFS)(req.files, bucket, String(req.user._id))));
+                    idsNuevos = nuevosAdjuntos.map((a) => a.fileId);
+                    adjuntosAnteriores = (borrador.adjuntos || []).map((a) => ({ fileId: a.fileId, nombre: a.nombre }));
                     borrador.adjuntos = nuevosAdjuntos;
                     logger_1.logger.debug(`Adjuntos reemplazados: ${nuevosAdjuntos.length} nuevos adjuntos`);
                 }
                 else {
                     logger_1.logger.debug('No se enviaron nuevos adjuntos, manteniendo adjuntos existentes:', borrador.adjuntos?.length || 0);
                 }
-                await borrador.save();
+                try {
+                    await borrador.save();
+                }
+                catch (saveError) {
+                    await (0, adjuntosGridFS_1.eliminarArchivosGridFS)(gridfs_1.default.getBucket(), idsNuevos);
+                    throw saveError;
+                }
+                if (adjuntosAnteriores.length > 0) {
+                    const bucket = gridfs_1.default.getBucket();
+                    if (bucket) {
+                        logger_1.logger.debug(`Eliminando ${adjuntosAnteriores.length} adjuntos anteriores...`);
+                        for (const adjuntoAnterior of adjuntosAnteriores) {
+                            try {
+                                await bucket.delete(adjuntoAnterior.fileId);
+                                logger_1.logger.debug(`Adjunto eliminado: ${adjuntoAnterior.nombre}`);
+                            }
+                            catch (deleteError) {
+                                console.warn(`No se pudo eliminar adjunto ${adjuntoAnterior.nombre}:`, deleteError);
+                            }
+                        }
+                    }
+                }
             }
             else {
                 logger_1.logger.debug('Creando nuevo borrador con destinatarios:', destinatariosObjectIds.length);
@@ -510,6 +537,7 @@ class MensajeController {
                         await borradorBasico.save();
                     }
                     catch (adjuntosError) {
+                        await (0, adjuntosGridFS_1.eliminarArchivosGridFS)(bucket, adjuntos.map((a) => a.fileId));
                         await mensaje_model_1.default.deleteOne({ _id: borradorBasico._id });
                         throw adjuntosError;
                     }
@@ -555,14 +583,18 @@ class MensajeController {
             const borrador = await mensaje_model_1.default.findOne({
                 _id: id,
                 remitente: req.user._id,
+                escuelaId: req.user.escuelaId,
                 tipo: IMensaje_1.TipoMensaje.BORRADOR,
                 estado: IMensaje_1.EstadoMensaje.BORRADOR,
             });
             if (!borrador) {
                 throw new ApiError_1.default(404, 'Borrador no encontrado');
             }
+            const validosEnvio = await (0, exports.idsDestinatariosValidos)([...(borrador.destinatarios || []), ...(borrador.destinatariosCc || [])], String(req.user.escuelaId));
+            borrador.destinatarios = (borrador.destinatarios || []).filter((d) => validosEnvio.has(String(d?._id ?? d)));
+            borrador.destinatariosCc = (borrador.destinatariosCc || []).filter((d) => validosEnvio.has(String(d?._id ?? d)));
             if (!borrador.destinatarios || borrador.destinatarios.length === 0) {
-                throw new ApiError_1.default(400, 'El mensaje debe tener al menos un destinatario');
+                throw new ApiError_1.default(400, 'El mensaje debe tener al menos un destinatario válido');
             }
             const usuarios = new Set();
             usuarios.add(borrador.remitente.toString());
@@ -594,6 +626,8 @@ class MensajeController {
                     tipo: IMensaje_1.TipoMensaje.INDIVIDUAL,
                     estado: IMensaje_1.EstadoMensaje.ENVIADO,
                     estadosUsuarios: estadosUsuarios,
+                    destinatarios: borrador.destinatarios,
+                    destinatariosCc: borrador.destinatariosCc,
                     fechaAccion: ahora,
                 },
             });
@@ -1361,7 +1395,14 @@ class MensajeController {
                 esRespuesta: esRespuesta === 'true' || esRespuesta === true,
                 mensajeOriginalId: mensajeOriginalId || null,
             };
-            const nuevoMensaje = await mensaje_service_1.default.crearMensaje(datosMensaje, req.user);
+            let nuevoMensaje;
+            try {
+                nuevoMensaje = await mensaje_service_1.default.crearMensaje(datosMensaje, req.user);
+            }
+            catch (crearError) {
+                await (0, adjuntosGridFS_1.eliminarArchivosGridFS)(gridfs_1.default.getBucket(), adjuntos.map((a) => a.fileId));
+                throw crearError;
+            }
             if (estado !== IMensaje_1.EstadoMensaje.BORRADOR) {
                 try {
                     logger_1.logger.debug('📱 Enviando notificaciones push automáticas...');
@@ -1683,6 +1724,7 @@ class MensajeController {
             }
             const matchQuery = {
                 _id: new mongoose_1.default.Types.ObjectId(id),
+                escuelaId: req.user.escuelaId,
                 $or: [
                     { remitente: userObjId },
                     { destinatarios: userObjId },
@@ -2286,7 +2328,14 @@ class MensajeController {
                 esRespuesta: true,
                 mensajeOriginalId: mensajeId,
             };
-            const respuesta = await mensaje_service_1.default.crearMensaje(datosRespuesta, req.user);
+            let respuesta;
+            try {
+                respuesta = await mensaje_service_1.default.crearMensaje(datosRespuesta, req.user);
+            }
+            catch (crearError) {
+                await (0, adjuntosGridFS_1.eliminarArchivosGridFS)(gridfs_1.default.getBucket(), adjuntos.map((a) => a.fileId));
+                throw crearError;
+            }
             try {
                 const senderName = `${req.user.nombre} ${req.user.apellidos}`;
                 for (const recipientId of destinatarios) {
@@ -2366,7 +2415,6 @@ class MensajeController {
         }
     }
 }
-exports.MensajeController = MensajeController;
 const mensajeController = new MensajeController();
 exports.default = mensajeController;
 //# sourceMappingURL=mensaje.controller.js.map

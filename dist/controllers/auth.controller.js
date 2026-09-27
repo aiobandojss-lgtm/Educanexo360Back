@@ -11,6 +11,7 @@ const crypto_1 = __importDefault(require("crypto"));
 const usuario_model_1 = __importDefault(require("../models/usuario.model"));
 const config_1 = __importDefault(require("../config/config"));
 const logger_1 = require("../utils/logger");
+const accesoAcademico_1 = require("../utils/accesoAcademico");
 exports.authController = {
     async login(req, res, next) {
         try {
@@ -38,10 +39,7 @@ exports.authController = {
             if (!email || !password || !nombre || !apellidos || !tipo) {
                 throw new ApiError_1.default(400, 'Todos los campos son requeridos');
             }
-            if (tipo === 'SUPER_ADMIN' && !esSuperAdmin) {
-                throw new ApiError_1.default(403, 'No tiene permisos para crear este tipo de usuario');
-            }
-            if (tipo === 'ADMIN' && !['ADMIN', 'SUPER_ADMIN'].includes(req.user.tipo)) {
+            if (!(0, accesoAcademico_1.puedeGestionarRol)(req.user.tipo, tipo)) {
                 throw new ApiError_1.default(403, 'No tiene permisos para crear este tipo de usuario');
             }
             const escuelaId = esSuperAdmin ? req.body.escuelaId : req.user.escuelaId;

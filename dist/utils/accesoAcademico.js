@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.queryString = exports.aArregloDeIds = exports.puedeVerEstudiante = exports.docenteTieneCurso = exports.obtenerAsignaturasDocente = exports.obtenerCursosDocente = exports.obtenerHijosIds = exports.esRolAdministrativo = exports.ROLES_ADMINISTRATIVOS = void 0;
+exports.queryString = exports.aArregloDeIds = exports.puedeVerEstudiante = exports.docenteTieneCurso = exports.obtenerAsignaturasDocente = exports.obtenerCursosDocente = exports.obtenerHijosIds = exports.puedeGestionarRol = exports.RANGO_ROL = exports.esRolAdministrativo = exports.ROLES_ADMINISTRATIVOS = void 0;
 const mongoose_1 = __importDefault(require("mongoose"));
 const usuario_model_1 = __importDefault(require("../models/usuario.model"));
 const curso_model_1 = __importDefault(require("../models/curso.model"));
@@ -11,6 +11,26 @@ const asignatura_model_1 = __importDefault(require("../models/asignatura.model")
 exports.ROLES_ADMINISTRATIVOS = ['ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO'];
 const esRolAdministrativo = (tipo) => !!tipo && exports.ROLES_ADMINISTRATIVOS.includes(tipo);
 exports.esRolAdministrativo = esRolAdministrativo;
+exports.RANGO_ROL = {
+    SUPER_ADMIN: 6,
+    ADMIN: 5,
+    RECTOR: 4,
+    COORDINADOR: 3,
+    ADMINISTRATIVO: 2,
+    DOCENTE: 1,
+    ESTUDIANTE: 1,
+    ACUDIENTE: 1,
+};
+const puedeGestionarRol = (actor, objetivo) => {
+    if (!actor || !objetivo || exports.RANGO_ROL[objetivo] === undefined)
+        return false;
+    if (actor === 'SUPER_ADMIN')
+        return true;
+    if (actor === 'ADMIN')
+        return exports.RANGO_ROL[objetivo] < exports.RANGO_ROL.SUPER_ADMIN;
+    return (0, exports.esRolAdministrativo)(actor) && exports.RANGO_ROL[actor] > exports.RANGO_ROL[objetivo];
+};
+exports.puedeGestionarRol = puedeGestionarRol;
 const esIdValido = (id) => typeof id === 'string' && mongoose_1.default.isValidObjectId(id);
 const obtenerHijosIds = async (user) => {
     if (user.tipo !== 'ACUDIENTE' || !user.escuelaId)

@@ -3,10 +3,16 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.subirAdjuntosGridFS = void 0;
+exports.subirAdjuntosGridFS = exports.eliminarArchivosGridFS = void 0;
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const promises_1 = require("stream/promises");
+const eliminarArchivosGridFS = async (bucket, ids) => {
+    if (!bucket || ids.length === 0)
+        return;
+    await Promise.all(ids.map((id) => bucket.delete(id).catch(() => undefined)));
+};
+exports.eliminarArchivosGridFS = eliminarArchivosGridFS;
 const subirAdjuntosGridFS = async (files, bucket, usuarioId) => {
     const subidos = [];
     let enCurso = null;
@@ -38,9 +44,6 @@ const subirAdjuntosGridFS = async (files, bucket, usuarioId) => {
         const aBorrar = [...subidos.map((a) => a.fileId), ...(enCurso ? [enCurso] : [])];
         await Promise.all(aBorrar.map((id) => bucket.delete(id).catch(() => undefined)));
         throw error;
-    }
-    finally {
-        await Promise.all(files.map((f) => fs_1.default.promises.unlink(f.path).catch(() => undefined)));
     }
 };
 exports.subirAdjuntosGridFS = subirAdjuntosGridFS;

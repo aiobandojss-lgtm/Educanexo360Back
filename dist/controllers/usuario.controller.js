@@ -11,6 +11,7 @@ const escapeRegex_1 = require("../utils/escapeRegex");
 const paginacion_1 = require("../utils/paginacion");
 const notificacion_service_1 = __importDefault(require("../services/notificacion.service"));
 const INotificacion_1 = require("../interfaces/INotificacion");
+const accesoAcademico_1 = require("../utils/accesoAcademico");
 const perfilPorRutas = (perfil) => {
     const datos = {};
     if (perfil && typeof perfil === 'object') {
@@ -135,7 +136,7 @@ class UsuarioController {
                 throw new ApiError_1.default(401, 'No autorizado');
             }
             const actualizandoPropioUsuario = req.params.id === req.user._id;
-            const tieneRolAdministrativo = ['ADMIN', 'RECTOR', 'COORDINADOR'].includes(req.user.tipo);
+            const tieneRolAdministrativo = (0, accesoAcademico_1.esRolAdministrativo)(req.user.tipo);
             if (!actualizandoPropioUsuario && !tieneRolAdministrativo) {
                 throw new ApiError_1.default(403, 'No tienes permiso para modificar este perfil');
             }
@@ -159,7 +160,15 @@ class UsuarioController {
                 }
             }
             let datosPermitidos = {};
-            if (tieneRolAdministrativo) {
+            if (tieneRolAdministrativo && actualizandoPropioUsuario) {
+                datosPermitidos = {
+                    nombre: req.body.nombre,
+                    apellidos: req.body.apellidos,
+                    email: req.body.email,
+                    ...perfilPorRutas(req.body.perfil),
+                };
+            }
+            else if (tieneRolAdministrativo) {
                 const usuarioObjetivo = await usuario_model_1.default.findOne({
                     _id: req.params.id,
                     escuelaId: req.user.escuelaId,
@@ -167,15 +176,14 @@ class UsuarioController {
                 if (!usuarioObjetivo) {
                     throw new ApiError_1.default(404, 'Usuario no encontrado');
                 }
-                const esAdmin = req.user.tipo === 'ADMIN';
-                if (usuarioObjetivo.tipo === 'ADMIN' && !esAdmin) {
+                if (!(0, accesoAcademico_1.puedeGestionarRol)(req.user.tipo, usuarioObjetivo.tipo)) {
                     throw new ApiError_1.default(403, 'No tienes permiso para modificar este perfil');
                 }
                 const { nombre, apellidos, email, estado, perfil, tipo, info_academica } = req.body;
                 datosPermitidos = { nombre, apellidos, email, estado };
                 Object.assign(datosPermitidos, perfilPorRutas(perfil));
                 if (tipo !== undefined && tipo !== usuarioObjetivo.tipo) {
-                    if (!esAdmin) {
+                    if (!(0, accesoAcademico_1.puedeGestionarRol)(req.user.tipo, tipo)) {
                         throw new ApiError_1.default(403, 'No tienes permiso para cambiar el tipo de usuario');
                     }
                     datosPermitidos.tipo = tipo;
@@ -288,6 +296,9 @@ class UsuarioController {
             const { password, motivo } = req.body;
             if (!password) {
                 throw new ApiError_1.default(400, 'La contraseña es requerida para eliminar la cuenta');
+            }
+            if (!mongoose_1.default.isValidObjectId(req.user.escuelaId)) {
+                throw new ApiError_1.default(403, 'Esta cuenta no pertenece a un colegio; su eliminación se gestiona con soporte');
             }
             const usuario = await usuario_model_1.default.findOne({
                 _id: req.user._id,

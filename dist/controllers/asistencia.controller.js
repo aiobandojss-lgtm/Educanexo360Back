@@ -26,7 +26,7 @@ const crearAsistencia = async (req, res, next) => {
         if (!req.user) {
             return next(new ApiError_1.default(401, 'No autorizado'));
         }
-        const { fecha, cursoId, asignaturaId, tipoSesion, horaInicio, horaFin, observacionesGenerales, estudiantes, } = req.body;
+        const { fecha, cursoId, asignaturaId, tipoSesion, horaInicio, horaFin, observacionesGenerales, estudiantes, periodoId, } = req.body;
         const existeAsistencia = await asistencia_model_1.default.findOne({
             escuelaId: req.user.escuelaId,
             fecha: new Date(fecha),
@@ -39,11 +39,13 @@ const crearAsistencia = async (req, res, next) => {
         if (req.user.tipo === 'DOCENTE') {
             const curso = await curso_model_1.default.findOne({
                 _id: cursoId,
+                escuelaId: req.user.escuelaId,
                 director_grupo: req.user._id,
             });
             if (!curso) {
                 const tieneAsignatura = await mongoose_1.default.model('Asignatura').findOne({
                     cursoId: cursoId,
+                    escuelaId: req.user.escuelaId,
                     docenteId: req.user._id,
                     estado: 'ACTIVO',
                 });
@@ -52,22 +54,45 @@ const crearAsistencia = async (req, res, next) => {
                 }
             }
         }
-        if (!estudiantes || estudiantes.length === 0) {
-            const curso = await curso_model_1.default.findOne({ _id: cursoId, escuelaId: req.user.escuelaId });
-            if (!curso) {
-                return next(new ApiError_1.default(404, 'Curso no encontrado'));
-            }
-            const estudiantesRegistro = curso.estudiantes.map((estudianteId) => ({
+        const curso = await curso_model_1.default.findOne({ _id: cursoId, escuelaId: req.user.escuelaId })
+            .select('estudiantes')
+            .lean();
+        if (!curso) {
+            return next(new ApiError_1.default(404, 'Curso no encontrado'));
+        }
+        const idsCurso = new Set((curso.estudiantes || []).map((e) => String(e)));
+        const ahora = new Date();
+        const estudiantesRegistro = Array.isArray(estudiantes) && estudiantes.length > 0
+            ? estudiantes
+                .filter((est) => est && est.estudianteId && idsCurso.has(idDe(est.estudianteId)))
+                .map((est) => ({
+                estudianteId: idDe(est.estudianteId),
+                estado: est.estado || IAsistencia_1.EstadoAsistencia.PRESENTE,
+                justificacion: est.justificacion,
+                observaciones: est.observaciones,
+                registradoPor: req.user._id,
+                fechaRegistro: ahora,
+            }))
+            : [...idsCurso].map((estudianteId) => ({
                 estudianteId,
                 estado: IAsistencia_1.EstadoAsistencia.PRESENTE,
-                fechaRegistro: new Date(),
                 registradoPor: req.user._id,
+                fechaRegistro: ahora,
             }));
-            req.body.estudiantes = estudiantesRegistro;
-        }
-        req.body.docenteId = req.user._id;
-        req.body.escuelaId = req.user.escuelaId;
-        const nuevaAsistencia = await asistencia_model_1.default.create(req.body);
+        const nuevaAsistencia = await asistencia_model_1.default.create({
+            fecha,
+            cursoId,
+            ...(asignaturaId && { asignaturaId }),
+            ...(periodoId && { periodoId }),
+            tipoSesion,
+            horaInicio,
+            horaFin,
+            observacionesGenerales,
+            estudiantes: estudiantesRegistro,
+            docenteId: req.user._id,
+            escuelaId: req.user.escuelaId,
+            finalizado: false,
+        });
         return res.status(201).json({
             success: true,
             data: nuevaAsistencia,
@@ -215,17 +240,35 @@ const actualizarAsistencia = async (req, res, next) => {
             const curso = await curso_model_1.default.findOne({ _id: asistencia.cursoId, escuelaId: req.user.escuelaId })
                 .select('estudiantes')
                 .lean();
-            const idsCurso = new Set((curso?.estudiantes || []).map((e) => String(e)));
-            estudiantes = estudiantes.filter((est) => idsCurso.has(String(est?.estudianteId)));
-            const estudiantesActualizados = estudiantes.map((est) => ({
-                estudianteId: est.estudianteId,
+            const idsPermitidos = new Set([
+                ...(curso?.estudiantes || []).map((e) => String(e)),
+                ...(asistencia.estudiantes || []).map((e) => idDe(e.estudianteId)),
+            ]);
+            estudiantes = estudiantes
+                .filter((est) => est && est.estudianteId && idsPermitidos.has(idDe(est.estudianteId)))
+                .map((est) => ({ ...est, estudianteId: idDe(est.estudianteId) }));
+            const enviados = new Map(estudiantes.map((est) => [est.estudianteId, est]));
+            const ahora = new Date();
+            const actualizar = (est) => ({
                 estado: est.estado,
                 justificacion: est.justificacion,
                 observaciones: est.observaciones,
                 registradoPor: req.user._id,
-                fechaRegistro: new Date(),
-            }));
-            asistencia.estudiantes = estudiantesActualizados;
+                fechaRegistro: ahora,
+            });
+            const existentes = new Set();
+            (asistencia.estudiantes || []).forEach((entrada) => {
+                const k = idDe(entrada.estudianteId);
+                existentes.add(k);
+                const est = enviados.get(k);
+                if (est)
+                    Object.assign(entrada, actualizar(est));
+            });
+            estudiantes
+                .filter((est) => !existentes.has(est.estudianteId))
+                .forEach((est) => {
+                asistencia.estudiantes.push({ estudianteId: est.estudianteId, ...actualizar(est) });
+            });
         }
         if (observacionesGenerales !== undefined) {
             asistencia.observacionesGenerales = observacionesGenerales;

@@ -76,10 +76,11 @@ async function obtenerPeriodoVigente(escuelaId, periodoId) {
             periodos.find((p) => new Date(p.fecha_inicio) <= hoy && hoy <= (0, fechas_1.finDelDiaColombia)(new Date(p.fecha_fin)));
     if (!periodo)
         return { id: periodoId || 'sin-periodo' };
+    const fin = new Date(periodo.fecha_fin);
     return {
         id: String(periodo._id),
         desde: new Date(periodo.fecha_inicio),
-        hasta: (0, fechas_1.finDelDiaColombia)(new Date(periodo.fecha_fin)),
+        hastaExclusivo: new Date(Date.UTC(fin.getUTCFullYear(), fin.getUTCMonth(), fin.getUTCDate() + 1)),
     };
 }
 async function enviarNotificacionesAlerta(params) {
@@ -188,8 +189,8 @@ async function procesarAlertasAsistenciaCurso(params) {
         cursoId: new mongoose_1.default.Types.ObjectId(cursoId),
         escuelaId: new mongoose_1.default.Types.ObjectId(escuelaId),
     };
-    if (periodo.desde && periodo.hasta)
-        match.fecha = { $gte: periodo.desde, $lte: periodo.hasta };
+    if (periodo.desde && periodo.hastaExclusivo)
+        match.fecha = { $gte: periodo.desde, $lt: periodo.hastaExclusivo };
     const conteos = await asistencia_model_1.default.aggregate([
         { $match: match },
         { $project: { estudiantes: { estudianteId: 1, estado: 1 } } },

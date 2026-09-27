@@ -32,7 +32,10 @@ exports.crearAsistenciaValidation = [
     (0, express_validator_1.body)('estudiantes').optional().isArray().withMessage('Los estudiantes deben ser un array'),
     (0, express_validator_1.body)('estudiantes.*.estudianteId')
         .optional()
-        .isMongoId()
+        .custom((valor) => {
+        const id = valor && typeof valor === 'object' ? valor._id : valor;
+        return typeof id === 'string' && /^[a-f\d]{24}$/i.test(id);
+    })
         .withMessage('ID de estudiante inválido'),
     (0, express_validator_1.body)('estudiantes.*.estado')
         .optional()
@@ -42,7 +45,12 @@ exports.crearAsistenciaValidation = [
 ];
 exports.actualizarAsistenciaValidation = [
     (0, express_validator_1.body)('estudiantes').optional().isArray().withMessage('Los estudiantes deben ser un array'),
-    (0, express_validator_1.body)('estudiantes.*.estudianteId').isMongoId().withMessage('ID de estudiante inválido'),
+    (0, express_validator_1.body)('estudiantes.*.estudianteId')
+        .custom((valor) => {
+        const id = valor && typeof valor === 'object' ? valor._id : valor;
+        return typeof id === 'string' && /^[a-f\d]{24}$/i.test(id);
+    })
+        .withMessage('ID de estudiante inválido'),
     (0, express_validator_1.body)('estudiantes.*.estado')
         .isIn(Object.values(IAsistencia_1.EstadoAsistencia))
         .withMessage('Estado de asistencia inválido'),
