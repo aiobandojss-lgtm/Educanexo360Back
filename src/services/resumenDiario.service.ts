@@ -14,7 +14,8 @@ import { logger } from '../utils/logger';
  * Resumen diario de mensajes por correo (Fase 4.5).
  *
  * - Todos los días a las RESUMEN_HORA (18 por defecto, hora Colombia) el worker encola UNA vez el trabajo
- *   'resumen-diario' del día (claveUnica 'resumen:YYYY-MM-DD'; idempotente aunque el proceso se reinicie).
+ *   'resumen-diario' del día (claveUnica 'resumen:YYYY-MM-DD'; idempotente aunque el proceso se reinicie). Antes
+ *   de esa hora recupera el de ayer si no alcanzó a salir (auditoría 4.C).
  * - Incluye SOLO los mensajes cuyo correo inmediato se OMITIÓ por la preferencia 'resumen' (notificaciones
  *   marcadas con metadata.resumen) y que el usuario todavía no ha leído. Auditoría 4.B: se toma por MARCAS, no
  *   por día calendario: todo lo marcado de las últimas 48 h, y al encolar el correo del usuario sus marcas se
@@ -30,22 +31,32 @@ const horaResumen = (): number => {
   return Number.isFinite(h) && h >= 0 && h <= 23 ? h : 18;
 };
 
-let ultimoDiaEncolado: string | null = null;
+const diasEncolados = new Set<string>();
 
-/** Tarea periódica del worker: encola el resumen del día a partir de la hora configurada (una vez). */
+/**
+ * Tarea periódica del worker. Desde la hora configurada encola el resumen de HOY; antes de esa hora encola el de
+ * AYER (auditoría 4.C): si el proceso estuvo dormido (Passenger sin tráfico) de las 17:00 a las 07:00 del día
+ * siguiente, el resumen que no salió a las 18:00 sale en el primer tick. Idempotente por claveUnica
+ * 'resumen:YYYY-MM-DD' (si ya se encoló, encolar lo ignora); en memoria se recuerda para no escribir cada tick.
+ * Devuelve true si intentó encolar un día que no tenía registrado.
+ */
 export const encolarResumenSiCorresponde = async (ahora: Date = new Date()): Promise<boolean> => {
   // Solo pruebas o mantenimiento: sin resumen automático (los acudientes con 'resumen' no recibirían nada)
   if (process.env.RESUMEN_DIARIO_DESACTIVADO === 'true') return false;
-  const dia = fechaColombiaISO(ahora);
-  if (ultimoDiaEncolado === dia || horaColombia(ahora) < horaResumen()) return false;
+  const dia =
+    horaColombia(ahora) >= horaResumen()
+      ? fechaColombiaISO(ahora)
+      : fechaColombiaISO(new Date(ahora.getTime() - 24 * 60 * 60 * 1000));
+  if (diasEncolados.has(dia)) return false;
   await encolar({ tipo: 'resumen-diario', payload: { dia }, claveUnica: `resumen:${dia}` });
-  ultimoDiaEncolado = dia; // si ya existía (reinicio), encolar lo ignoró por claveUnica
+  diasEncolados.add(dia);
+  if (diasEncolados.size > 7) diasEncolados.delete(diasEncolados.values().next().value as string);
   return true;
 };
 
-/** Solo pruebas: olvida el día encolado en memoria. */
+/** Solo pruebas: olvida los días encolados en memoria. */
 export const reiniciarEstadoResumen = (): void => {
-  ultimoDiaEncolado = null;
+  diasEncolados.clear();
 };
 
 /**
