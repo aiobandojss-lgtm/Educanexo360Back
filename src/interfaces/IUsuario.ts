@@ -62,6 +62,8 @@ export interface IUsuarioBase {
     appVersion?: string;
   };
   fcmTokenUpdatedAt?: Date;
+  // Fase 4.5: preferencia de correo de mensajes (si falta: por rol)
+  preferencias?: { email?: 'inmediato' | 'resumen' | 'ninguno' };
   // Fase 4.3: varios dispositivos (máx. 5)
   fcmTokens?: {
     token: string;

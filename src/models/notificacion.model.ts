@@ -74,5 +74,10 @@ NotificacionSchema.index(
   { createdAt: 1 },
   { name: 'ttl_180_dias', expireAfterSeconds: 180 * 24 * 60 * 60 },
 );
+// Fase 4.5: resumen diario — solo las notificaciones cuyo correo se omitió por la preferencia 'resumen'
+NotificacionSchema.index(
+  { 'metadata.resumen': 1, createdAt: 1 },
+  { name: 'resumen_diario', partialFilterExpression: { 'metadata.resumen': true } },
+);
 
 export default mongoose.model<INotificacion>('Notificacion', NotificacionSchema);

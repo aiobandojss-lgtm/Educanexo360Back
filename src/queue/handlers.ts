@@ -2,7 +2,8 @@
  * Registro de los handlers de la cola de envíos (Fase 4). Se importa una vez desde app.ts.
  * Cada tipo de trabajo registra aquí su handler con registrarHandler(tipo, fn) de ./outbox.
  */
-import { registrarHandler, ReprogramarTrabajo } from './outbox';
+import { registrarHandler, registrarTareaPeriodica, ReprogramarTrabajo } from './outbox';
+import { encolarResumenSiCorresponde, procesarResumenDiario } from '../services/resumenDiario.service';
 import { esEmailFicticio } from '../services/email.service';
 import { obtenerProveedor } from '../services/email/proveedores';
 import { reservarCupo, liberarCupo, cupoDeHoy } from '../services/email/cupo';
@@ -105,4 +106,15 @@ registrarHandler('copias-acudientes', async (trabajo, ctx) => {
     }
     await ctx.marcarEnviados([estudianteId]);
   }
+});
+
+/**
+ * Resumen diario (Fase 4.5): la tarea periódica encola una vez al día 'resumen-diario' desde las 18:00
+ * (hora Colombia); el handler arma los correos (solo lo omitido por la preferencia 'resumen', nunca vacíos).
+ */
+registrarTareaPeriodica('resumen-diario', async () => {
+  await encolarResumenSiCorresponde();
+});
+registrarHandler('resumen-diario', async (trabajo) => {
+  await procesarResumenDiario(String(trabajo.payload?.dia));
 });

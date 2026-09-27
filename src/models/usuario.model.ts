@@ -108,6 +108,16 @@ const UsuarioSchema = new Schema(
       default: undefined,
     },
     
+    // Fase 4.5: preferencia de correo de mensajes. SIN default (enum con default null rompe create/save):
+    // si falta, se usa el valor por rol (ACUDIENTE → 'resumen', resto → 'inmediato'); ver utils/preferencias.
+    preferencias: {
+      type: new mongoose.Schema(
+        { email: { type: String, enum: ['inmediato', 'resumen', 'ninguno'] } },
+        { _id: false },
+      ),
+      default: undefined,
+    },
+
     // Campos para RBAC — perfil de rol personalizado por escuela (opcional)
     rolBase: {
       type: String,

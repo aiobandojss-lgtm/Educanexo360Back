@@ -110,6 +110,35 @@ export const PLANTILLAS: Record<string, Plantilla> = {
     ),
   }),
 
+  // Resumen diario de mensajes no leídos (Fase 4.5). Cada destinatario trae sus propios items.
+  resumen: (d, dest: any) => {
+    const items: any[] = Array.isArray(dest.items) ? dest.items : [];
+    const total = Number(dest.total) || items.length;
+    const faltan = total - items.length;
+    const cambiar = d.urlPreferencias
+      ? `<p style="font-size: 12px; color: #666;">¿Prefieres otra frecuencia? <a href="${urlSegura(d.urlPreferencias)}">Cambia tu preferencia de correo</a>.</p>`
+      : '<p style="font-size: 12px; color: #666;">Puedes cambiar la frecuencia de estos correos desde tu perfil en EducaNexo360.</p>';
+    return {
+      subject: `Tienes ${total} mensaje${total === 1 ? '' : 's'} sin leer en EducaNexo360`,
+      text:
+        `Hola ${dest.nombre || ''},\n\nEstos son tus mensajes sin leer de hoy:\n\n` +
+        items.map((i) => `- ${i.remitente}: ${i.asunto} (${i.url})`).join('\n') +
+        (faltan > 0 ? `\n... y ${faltan} más.` : '') +
+        `\n\nVer mensajes: ${d.urlMensajes}`,
+      html: layout(
+        'Resumen de mensajes',
+        `<p>Hola ${e(dest.nombre || '')},</p>
+         <p>Estos son tus mensajes sin leer de hoy:</p>
+         <ul>${items
+           .map((i) => `<li><strong>${e(i.remitente)}</strong>: <a href="${urlSegura(i.url)}">${e(i.asunto)}</a></li>`)
+           .join('')}</ul>
+         ${faltan > 0 ? `<p>... y ${faltan} más.</p>` : ''}
+         ${boton(d.urlMensajes, 'Ver mis mensajes')}
+         ${cambiar}`,
+      ),
+    };
+  },
+
   // Solo texto (avisos de registro): sin HTML, no hay nada que escapar
   texto: (d) => ({ subject: asuntoSeguro(d.subject), text: String(d.text ?? '') }),
 };

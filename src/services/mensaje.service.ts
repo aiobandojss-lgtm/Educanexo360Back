@@ -9,7 +9,8 @@ import ApiError from '../utils/ApiError';
 import { TipoMensaje, EstadoMensaje, PrioridadMensaje } from '../interfaces/IMensaje';
 import { TipoNotificacion } from '../interfaces/INotificacion';
 import { escapeRegex } from '../utils/escapeRegex';
-import { construirTrabajosCorreo } from './email.service';
+import { construirTrabajosCorreo, esEmailFicticio } from './email.service';
+import { preferenciaEmail } from '../utils/preferencias';
 import pushNotificationService from './pushNotification.service';
 import Notificacion from '../models/notificacion.model';
 import { EstadoNotificacion } from '../interfaces/INotificacion';
@@ -531,6 +532,13 @@ class MensajeService {
       //    todo el colegio era la mitad del tiempo de respuesta); por eso tipos y timestamps van explícitos.
       const ahora = new Date();
       const escuelaObjId = new mongoose.Types.ObjectId(escuelaId);
+      // Fase 4.5: a quienes prefieren 'resumen' NO se les manda el correo inmediato; su notificación queda
+      // marcada (metadata.resumen) y el resumen diario incluye SOLO esos mensajes (si siguen sin leer).
+      const alResumen = new Set(
+        todos
+          .filter((u: any) => this.correoAlResumen(u, p.prioridad))
+          .map((u: any) => String(u._id)),
+      );
       await Notificacion.insertMany(
         todos.map((u: any) => ({
           usuarioId: new mongoose.Types.ObjectId(String(u._id)),
@@ -541,7 +549,13 @@ class MensajeService {
           escuelaId: escuelaObjId,
           entidadId: new mongoose.Types.ObjectId(p.mensajeId),
           entidadTipo: 'Mensaje',
-          metadata: { remitente: nombreRemitente, tieneAdjuntos: p.tieneAdjuntos, mensajeId: p.mensajeId, url },
+          metadata: {
+            remitente: nombreRemitente,
+            tieneAdjuntos: p.tieneAdjuntos,
+            mensajeId: p.mensajeId,
+            url,
+            ...(alResumen.has(String(u._id)) && { resumen: true }),
+          },
           createdAt: ahora,
           updatedAt: ahora,
         })),
@@ -588,10 +602,20 @@ class MensajeService {
   }
 
   /**
-   * ¿Este destinatario recibe el correo del mensaje de inmediato? (4.5 agrega la preferencia de resumen)
+   * ¿Este destinatario recibe el correo del mensaje de inmediato? (Fase 4.5)
+   * Prioridad ALTA → siempre. Si no, solo con preferencia 'inmediato'. Nunca a correos ficticios.
    */
-  correoInmediato(usuario: any, _prioridad?: string): boolean {
-    return !!usuario?.email;
+  correoInmediato(usuario: any, prioridad?: string): boolean {
+    if (!usuario?.email || esEmailFicticio(usuario.email)) return false;
+    if (prioridad === PrioridadMensaje.ALTA) return true;
+    return preferenciaEmail(usuario) === 'inmediato';
+  }
+
+  /** ¿El correo de este mensaje se omite ahora para ir en el resumen diario? (preferencia 'resumen') */
+  correoAlResumen(usuario: any, prioridad?: string): boolean {
+    if (!usuario?.email || esEmailFicticio(usuario.email)) return false;
+    if (prioridad === PrioridadMensaje.ALTA) return false;
+    return preferenciaEmail(usuario) === 'resumen';
   }
 
   /**

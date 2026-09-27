@@ -8,6 +8,7 @@ import { numeroPagina, numeroLimite } from '../utils/paginacion';
 import notificacionService from '../services/notificacion.service';
 import { TipoNotificacion } from '../interfaces/INotificacion';
 import { esRolAdministrativo, puedeGestionarRol } from '../utils/accesoAcademico';
+import { preferenciaEmail, PREFERENCIAS_EMAIL } from '../utils/preferencias';
 
 // Extender el tipo Request para incluir el usuario
 interface RequestWithUser extends Request {
@@ -400,6 +401,48 @@ class UsuarioController {
       res.json({
         success: true,
         message: 'Contraseña actualizada exitosamente',
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /usuarios/me/preferencias (Fase 4.5): preferencia de correo del usuario autenticado.
+   * Si nunca la eligió, se devuelve la de su rol (ACUDIENTE → resumen; resto → inmediato).
+   */
+  async obtenerPreferencias(req: RequestWithUser, res: Response, next: NextFunction) {
+    try {
+      if (!req.user) throw new ApiError(401, 'No autorizado');
+      const usuario: any = await Usuario.findById(req.user._id).select('tipo preferencias').lean();
+      if (!usuario) throw new ApiError(404, 'Usuario no encontrado');
+      res.json({
+        success: true,
+        data: {
+          email: preferenciaEmail(usuario),
+          porDefecto: !usuario.preferencias?.email,
+          opciones: PREFERENCIAS_EMAIL,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * PUT /usuarios/me/preferencias (Fase 4.5): cambia la preferencia de correo del usuario autenticado.
+   * Prioridad ALTA, alertas y correos de cuenta salen siempre, sin importar la preferencia.
+   */
+  async actualizarPreferencias(req: RequestWithUser, res: Response, next: NextFunction) {
+    try {
+      if (!req.user) throw new ApiError(401, 'No autorizado');
+      const { email } = req.body;
+      const r = await Usuario.updateOne({ _id: req.user._id }, { $set: { 'preferencias.email': email } });
+      if (r.matchedCount === 0) throw new ApiError(404, 'Usuario no encontrado');
+      res.json({
+        success: true,
+        data: { email, porDefecto: false, opciones: PREFERENCIAS_EMAIL },
+        message: 'Preferencia de correo actualizada',
       });
     } catch (error) {
       next(error);

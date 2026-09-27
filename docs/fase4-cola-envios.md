@@ -184,3 +184,19 @@ de inmediato con la misma forma de siempre.
   (antes: minutos, con envíos en el request); el worker completa 184 trabajos (4.600 correos simulados y 92
   llamadas a FCM con 4.467 tokens) en ~5,6 s a velocidad máxima. En producción, con el intervalo de 5 s y 20
   trabajos por tick, son ~10 ticks (~50 s).
+
+## 4.5 Resumen diario para acudientes
+
+- `Usuario.preferencias.email`: `inmediato` | `resumen` | `ninguno` (sin default en el schema). Si no la ha
+  elegido: **ACUDIENTE → `resumen`**, los demás roles → `inmediato`.
+- `GET /api/usuarios/me/preferencias` y `PUT /api/usuarios/me/preferencias` (`{ "email": "resumen" }`),
+  autenticados. La pantalla web/app es de una fase posterior.
+- Siempre salen de inmediato: mensajes de **prioridad ALTA**, **alertas** de asistencia y correos de cuenta
+  (reset, credenciales, registro). `ninguno` solo suprime los correos de mensajes normales.
+- Con `resumen`, el correo inmediato del mensaje se **omite** y la notificación queda marcada
+  (`metadata.resumen`). A las **18:00 hora Colombia** (`RESUMEN_HORA`) el worker encola una vez el trabajo
+  `resumen-diario` del día (`claveUnica resumen:YYYY-MM-DD`, idempotente aunque el proceso se reinicie), que manda
+  un correo por usuario con **solo** esos mensajes y solo los que **siguen sin leer**. Nunca un resumen vacío.
+- El enlace para cambiar la preferencia usa `EMAIL_PREFERENCIAS_URL` (opcional). Si no está, el correo dice
+  "desde tu perfil".
+- ⚠️ El resumen depende de que el proceso esté despierto a las 18:00: ver "Passenger dormido" (cron de ping).

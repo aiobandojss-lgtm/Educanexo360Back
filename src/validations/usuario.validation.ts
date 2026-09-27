@@ -49,3 +49,12 @@ export const asociarEstudianteValidation = [
     .isMongoId()
     .withMessage('ID de estudiante no válido'),
 ];
+
+// Fase 4.5: preferencia de correo de mensajes
+export const preferenciasValidation = [
+  body('email')
+    .exists()
+    .withMessage('La preferencia de correo es requerida')
+    .isIn(['inmediato', 'resumen', 'ninguno'])
+    .withMessage('La preferencia de correo debe ser inmediato, resumen o ninguno'),
+];

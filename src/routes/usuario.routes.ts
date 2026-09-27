@@ -6,6 +6,7 @@ import {
   actualizarUsuarioValidation,
   cambiarPasswordValidation,
   asociarEstudianteValidation,
+  preferenciasValidation,
 } from '../validations/usuario.validation';
 import { cacheMiddleware } from '../cache/simpleCache';
 
@@ -18,6 +19,45 @@ router.use(authMiddleware.authenticate);
 // de su PROPIA cuenta (requisito de Play Store / App Store).
 // Debe ir ANTES de las rutas con /:id para no interpretarse como un ID.
 router.post('/eliminar-cuenta', usuarioController.solicitarEliminacionCuenta);
+
+/**
+ * @swagger
+ * /usuarios/me/preferencias:
+ *   get:
+ *     summary: Preferencia de correo de mensajes del usuario autenticado
+ *     description: >
+ *       inmediato (un correo por mensaje), resumen (un correo diario a las 18:00 hora Colombia con los
+ *       mensajes no leídos) o ninguno. Si nunca la eligió: ACUDIENTE → resumen, resto → inmediato
+ *       (porDefecto = true). Prioridad ALTA, alertas y correos de cuenta salen siempre.
+ *     tags: [Usuarios]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: '{ success, data: { email, porDefecto, opciones } }'
+ *   put:
+ *     summary: Cambia la preferencia de correo de mensajes del usuario autenticado
+ *     tags: [Usuarios]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [email]
+ *             properties:
+ *               email: { type: string, enum: [inmediato, resumen, ninguno] }
+ *     responses:
+ *       200:
+ *         description: '{ success, data: { email, porDefecto: false, opciones }, message }'
+ *       400:
+ *         description: Valor inválido
+ */
+// Rutas /me: ANTES de /:id para que Express no interprete "me" como un ID
+router.get('/me/preferencias', usuarioController.obtenerPreferencias);
+router.put('/me/preferencias', validate(preferenciasValidation), usuarioController.actualizarPreferencias);
 
 // Rutas para administradores y roles administrativos (RECTOR y COORDINADOR incluidos)
 router.get(
