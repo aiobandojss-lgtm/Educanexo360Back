@@ -113,13 +113,21 @@ const marcarPermanente = (proveedor: string, error: any, destinatario?: string) 
   return error;
 };
 
-/** Ejecuta fn con un AbortSignal que se aborta al vencer el timeout de correo. */
+/**
+ * Ejecuta fn con un AbortSignal que se aborta al vencer el timeout de correo. Auditoría 4.AH: rechaza al vencer
+ * AUNQUE fn no observe la señal (nodemailer no la acepta): el timeout es TOTAL por envío, incluida la cola del pool
+ * y un servidor que responde a cuentagotas (tarpit). Premisa de 4.S: un envío nunca dura más que EMAIL_TIMEOUT_MS.
+ */
 const conTimeout = async <T>(nombre: string, fn: (signal: AbortSignal) => Promise<T>): Promise<T> => {
   const ms = timeoutCorreoMs();
   const control = new AbortController();
   const reloj = setTimeout(() => control.abort(), ms);
+  const vencido = new Promise<never>((_, rechazar) => {
+    control.signal.addEventListener('abort', () => rechazar(new Error(`${nombre}: tiempo agotado (${ms} ms)`)), { once: true });
+  });
+  vencido.catch(() => undefined); // si fn termina antes, la promesa vencida no queda sin atender
   try {
-    return await fn(control.signal);
+    return await Promise.race([fn(control.signal), vencido]);
   } catch (error: any) {
     if (control.signal.aborted) throw new Error(`${nombre}: tiempo agotado (${ms} ms)`);
     throw error;
@@ -156,13 +164,16 @@ const crearSmtp = (): EmailProvider => {
     async send(m) {
       const r = remitente();
       try {
-        const info = await transporter.sendMail({
-          from: `"${r.nombre}" <${r.email}>`,
-          to: m.to,
-          subject: m.subject,
-          text: m.text || '',
-          html: m.html || undefined,
-        });
+        // 4.AH: timeout TOTAL del envío (los timeouts de nodemailer son de conexión/saludo/inactividad)
+        const info: any = await conTimeout('SMTP', () =>
+          transporter.sendMail({
+            from: `"${r.nombre}" <${r.email}>`,
+            to: m.to,
+            subject: m.subject,
+            text: m.text || '',
+            html: m.html || undefined,
+          }),
+        );
         return { id: info.messageId };
       } catch (error) {
         throw marcarPermanente('smtp', error, m.to);
