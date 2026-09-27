@@ -5,8 +5,12 @@
  * la idempotencia en la base quedaría sin efecto.
  *
  * - Sin --aplicar (por defecto): SIMULACIÓN, solo cuenta y muestra ejemplos.
- * - Con --aplicar: de cada grupo repetido conserva UNA (la LEIDA si alguna lo está; si no, la más antigua) y
- *   borra las demás. Hacer mongodump ANTES.
+ * - Con --aplicar: de cada grupo repetido conserva UNA y borra las demás. Auditoría 4.AM: se prefiere cualquier
+ *   estado distinto de PENDIENTE (ARCHIVADA antes que LEIDA, para no des-archivar ni volver a mostrar como no
+ *   leída); si todas están PENDIENTE, la más antigua. Hacer mongodump ANTES.
+ *
+ * En el deploy: correrlo INMEDIATAMENTE antes del reinicio con la versión nueva y verificar después que el índice
+ * mensaje_usuario_unico existe (sync-indexes.js en simulación o db.notificacions.getIndexes()).
  *
  * NO lee el .env: MONGODB_URI va explícita.
  *
@@ -53,10 +57,12 @@ async function main() {
 
   if (APLICAR && grupos.length > 0) {
     let borradas = 0;
+    // ARCHIVADA > LEIDA > PENDIENTE (cualquier otro estado cuenta como no pendiente); empate → la más antigua
+    const peso = (estado) => (estado === 'ARCHIVADA' ? 3 : estado === 'LEIDA' ? 2 : estado === 'PENDIENTE' ? 0 : 1);
     for (const g of grupos) {
       const orden = g.docs.sort(
         (a, b) =>
-          (b.estado === 'LEIDA') - (a.estado === 'LEIDA') ||
+          peso(b.estado) - peso(a.estado) ||
           new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime(),
       );
       const borrar = orden.slice(1).map((d) => d._id);
