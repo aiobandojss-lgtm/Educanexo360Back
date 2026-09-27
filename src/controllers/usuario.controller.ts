@@ -37,6 +37,12 @@ const perfilPorRutas = (perfil: unknown): Record<string, string> => {
   return datos;
 };
 
+/**
+ * ¿Queda al menos un ADMIN ACTIVO en el colegio? (extra auditoría 3.T: un colegio nunca queda sin administrador)
+ */
+const quedaAdminActivo = async (escuelaId: string): Promise<boolean> =>
+  !!(await Usuario.exists({ escuelaId, tipo: 'ADMIN', estado: 'ACTIVO' }));
+
 class UsuarioController {
   async obtenerUsuarios(req: RequestWithUser, res: Response, next: NextFunction) {
     try {
@@ -243,6 +249,8 @@ class UsuarioController {
 
       // Permitir campos específicos para usuarios no administrativos
       let datosPermitidos: Record<string, unknown> = {};
+      // Si el objetivo es un ADMIN: su tipo/estado previos, por si hay que revertir (último ADMIN activo)
+      let adminAntes: { tipo: string; estado: string } | null = null;
 
       if (tieneRolAdministrativo && actualizandoPropioUsuario) {
         // Cuenta propia: datos personales (y email, como antes); nunca su propio tipo ni estado
@@ -256,7 +264,10 @@ class UsuarioController {
         const usuarioObjetivo = await Usuario.findOne({
           _id: req.params.id,
           escuelaId: req.user.escuelaId,
-        }).select('tipo');
+        }).select('tipo estado');
+        if (usuarioObjetivo?.tipo === 'ADMIN') {
+          adminAntes = { tipo: usuarioObjetivo.tipo, estado: usuarioObjetivo.estado };
+        }
 
         if (!usuarioObjetivo) {
           throw new ApiError(404, 'Usuario no encontrado');
@@ -336,6 +347,14 @@ class UsuarioController {
 
       if (!usuario) {
         throw new ApiError(404, 'Usuario no encontrado');
+      }
+
+      // Último ADMIN activo (extra auditoría 3.T): si el cambio deja al colegio sin ningún ADMIN ACTIVO se
+      // revierte y responde 409. Re-chequeo DESPUÉS de escribir: con dos cambios simultáneos al menos uno
+      // se revierte, así nunca quedan los dos aplicados.
+      if (adminAntes && (usuario.tipo !== 'ADMIN' || usuario.estado !== 'ACTIVO') && !(await quedaAdminActivo(req.user.escuelaId))) {
+        await Usuario.updateOne({ _id: usuario._id }, { $set: adminAntes });
+        throw new ApiError(409, 'No se puede dejar al colegio sin ningún administrador activo');
       }
 
       res.json({
@@ -492,6 +511,19 @@ class UsuarioController {
         throw new ApiError(400, 'La contraseña es incorrecta');
       }
 
+      // Último ADMIN activo (extra auditoría 3.T): el único ADMIN no puede desactivar su propia cuenta
+      if (
+        usuario.tipo === 'ADMIN' &&
+        !(await Usuario.exists({
+          escuelaId: req.user.escuelaId,
+          tipo: 'ADMIN',
+          estado: 'ACTIVO',
+          _id: { $ne: usuario._id },
+        }))
+      ) {
+        throw new ApiError(409, 'Eres el único administrador activo del colegio; asigna otro antes de eliminar tu cuenta');
+      }
+
       // Desactivar de inmediato (bloquea el login), limpiar token push
       // y registrar la solicitud de eliminación
       usuario.estado = 'INACTIVO';
@@ -561,7 +593,7 @@ class UsuarioController {
       }
 
       const objetivo = await Usuario.findOne({ _id: req.params.id, escuelaId: req.user.escuelaId })
-        .select('tipo')
+        .select('tipo estado')
         .lean();
 
       if (!objetivo) {
@@ -585,6 +617,13 @@ class UsuarioController {
 
       if (!usuario) {
         throw new ApiError(404, 'Usuario no encontrado');
+      }
+
+      // Último ADMIN activo (extra auditoría 3.T): re-chequeo después de escribir; si el colegio quedó sin
+      // ningún ADMIN ACTIVO se revierte → 409 (dos ADMIN desactivándose mutuamente: al menos uno se revierte)
+      if (objetivo.tipo === 'ADMIN' && !(await quedaAdminActivo(req.user.escuelaId))) {
+        await Usuario.updateOne({ _id: usuario._id }, { $set: { estado: objetivo.estado } });
+        throw new ApiError(409, 'No se puede desactivar al último administrador activo del colegio');
       }
 
       res.json({
