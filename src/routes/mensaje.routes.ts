@@ -11,6 +11,7 @@ import { TipoUsuario } from '../interfaces/IUsuario';
 
 import { invalidateOnMensaje } from '../middleware/dashboardCacheInvalidation.middleware';
 import { sanitizeNoSQL } from '../middleware/sanitize.middleware';
+import { limpiarTemporales } from '../middleware/limpiarTemporales.middleware';
 
 const router = express.Router();
 
@@ -67,6 +68,7 @@ router.use(authenticate);
 // Guardar borrador (nuevo o actualizar existente)
 router.post(
   '/borradores',
+  limpiarTemporales, // borra los temporales de multer al terminar la respuesta (3.Q)
   upload.array('adjuntos', 5),
   sanitizeNoSQL, // multer arma objetos anidados con campo[$ne]
   verificarPermisoBorradores,
@@ -78,6 +80,7 @@ router.post(
 // Nueva ruta para actualizar un borrador existente
 router.post(
   '/borradores/:id',
+  limpiarTemporales, // borra los temporales de multer al terminar la respuesta (3.Q)
   upload.array('adjuntos', 5),
   sanitizeNoSQL, // multer arma objetos anidados con campo[$ne]
   verificarPermisoBorradores,
@@ -157,6 +160,7 @@ router.get(
 // Rutas para mensajes
 router.post(
   '/',
+  limpiarTemporales, // borra los temporales de multer al terminar la respuesta (3.Q)
   upload.array('adjuntos', 5),
   sanitizeNoSQL, // multer arma objetos anidados con campo[$ne]
   invalidateOnMensaje,
@@ -319,6 +323,7 @@ router.put('/:id/leer', (req: any, res: Response, next: NextFunction) => {
 
 router.post(
   '/:mensajeId/responder',
+  limpiarTemporales, // borra los temporales de multer al terminar la respuesta (3.Q)
   upload.array('adjuntos', 5),
   sanitizeNoSQL, // multer arma objetos anidados con campo[$ne]
   (req: any, res: Response, next: NextFunction) => {

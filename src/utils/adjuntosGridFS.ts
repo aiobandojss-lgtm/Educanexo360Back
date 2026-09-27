@@ -25,7 +25,8 @@ export const eliminarArchivosGridFS = async (
 
 /**
  * Sube a GridFS los archivos temporales que dejó multer.
- * - Siempre borra los temporales del disco (también los que no alcanzaron a subirse).
+ * - Los temporales del disco NO se borran aquí: los borra el middleware limpiarTemporales al terminar la
+ *   respuesta (un solo lugar, auditoría 3.Q), también cuando el controlador falla antes de subir.
  * - Si una subida falla, elimina de GridFS los archivos ya subidos y el parcial del que falló
  *   (no quedan huérfanos) y relanza el error.
  */
@@ -65,7 +66,5 @@ export const subirAdjuntosGridFS = async (
     const aBorrar = [...subidos.map((a) => a.fileId), ...(enCurso ? [enCurso] : [])];
     await Promise.all(aBorrar.map((id) => bucket.delete(id).catch(() => undefined)));
     throw error;
-  } finally {
-    await Promise.all(files.map((f) => fs.promises.unlink(f.path).catch(() => undefined)));
   }
 };

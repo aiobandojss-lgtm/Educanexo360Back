@@ -669,7 +669,7 @@ class MensajeController {
             throw new ApiError(500, 'Servicio de archivos no disponible');
           }
 
-          // Sube a GridFS; siempre borra los temporales y, si falla, no deja archivos huérfanos
+          // Sube a GridFS; si falla, no deja archivos huérfanos (los temporales los borra limpiarTemporales)
           nuevosAdjuntos.push(...(await subirAdjuntosGridFS(req.files as any[], bucket, String(req.user._id))));
 
           idsNuevos = nuevosAdjuntos.map((a) => a.fileId);
@@ -764,7 +764,7 @@ class MensajeController {
           }
 
           try {
-            // Sube a GridFS; siempre borra los temporales y, si falla, no deja archivos huérfanos
+            // Sube a GridFS; si falla, no deja archivos huérfanos (los temporales los borra limpiarTemporales)
             adjuntos.push(...(await subirAdjuntosGridFS(req.files as any[], bucket, String(req.user._id))));
 
             borradorBasico.adjuntos = adjuntos;
@@ -1946,7 +1946,7 @@ class MensajeController {
           throw new ApiError(500, 'Servicio de archivos no disponible');
         }
 
-        // Sube a GridFS; siempre borra los temporales y, si falla, no deja archivos huérfanos
+        // Sube a GridFS; si falla, no deja archivos huérfanos (los temporales los borra limpiarTemporales)
         adjuntos.push(...(await subirAdjuntosGridFS(req.files as any[], bucket, String(req.user._id))));
       }
 
@@ -3209,7 +3209,7 @@ class MensajeController {
           throw new ApiError(500, 'Servicio de archivos no disponible');
         }
 
-        // Sube a GridFS; siempre borra los temporales y, si falla, no deja archivos huérfanos
+        // Sube a GridFS; si falla, no deja archivos huérfanos (los temporales los borra limpiarTemporales)
         adjuntos.push(...(await subirAdjuntosGridFS(req.files as any[], bucket, String(req.user._id))));
       }
 
