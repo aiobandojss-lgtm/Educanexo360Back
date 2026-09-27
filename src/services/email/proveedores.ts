@@ -34,22 +34,34 @@ const timeoutCorreoMs = (): number => {
  * fue rechazada. Los errores de cuenta/credenciales (535, 401/403, cuenta de SES pausada) NO son permanentes por
  * destinatario: se reintentan y terminan en FALLIDO registrado (hay que corregir la configuración).
  */
+// Auditoría 4.AF: Exim/cPanel aplica sus ACL en RCPT (sender verify, RBL, MagicSpam, "max emails per hour") y
+// responde 550 igual que a una dirección inexistente. Permanente SOLO con código mejorado 5.1.1/5.1.2/5.1.10 o texto
+// claro de destinatario inexistente; cualquier 5.7.x o texto de política/spam/límite/remitente/relay es transitorio.
+const CODIGO_DESTINATARIO_INEXISTENTE = /\b5\.1\.(1|2|10)\b/;
+const TEXTO_DESTINATARIO_INEXISTENTE = /user unknown|unknown user|no such user|does not exist|mailbox unavailable/i;
+const TEXTO_TRANSITORIO = /\b5\.7\.\d+|policy|spam|blacklist|blocked|\brate\b|exceeded|sender|relay/i;
+
 export const esErrorPermanente = (proveedor: string, error: any): boolean => {
   if (!error) return false;
+  // Texto que da el proveedor (respuesta SMTP, cuerpo de Brevo, mensaje de SES)
+  const texto = String(error.response ?? error.detalle ?? error.message ?? '');
+  // 4.AF: el mismo criterio de texto para todos los proveedores: política, spam o límite nunca es permanente
+  if (TEXTO_TRANSITORIO.test(texto)) return false;
   if (proveedor === 'smtp') {
     // Auditoría 4.R: nodemailer pone code 'EENVELOPE' también en rechazos de MAIL FROM, en RCPT con 4xx y en DATA.
     // Greylisting (451), "exceeded max emails per hour" de cPanel o el remitente rechazado son TEMPORALES o de
-    // configuración: se reintentan. Permanente SOLO el RCPT TO rechazado con 550-554.
+    // configuración: se reintentan. Solo el RCPT TO rechazado con 550-554 PUEDE ser permanente y, por 4.AF,
+    // únicamente si el código mejorado o el texto dicen que el destinatario no existe.
     const rcpt = /^RCPT TO$/i.test(String(error.command || '').trim());
     const codigo = Number(error.responseCode);
-    return rcpt && codigo >= 550 && codigo <= 554;
+    if (!rcpt || codigo < 550 || codigo > 554) return false;
+    return CODIGO_DESTINATARIO_INEXISTENTE.test(texto) || TEXTO_DESTINATARIO_INEXISTENTE.test(texto);
   }
   // Auditoría 4.T: solo el rechazo de la DIRECCIÓN del destinatario es permanente. Remitente inválido o inactivo,
   // dominio sin verificar o sandbox son errores de CONFIGURACIÓN: se reintentan y terminan en FALLIDO registrado.
-  const texto = String(error.detalle ?? error.message ?? '');
   if (proveedor === 'brevo') {
     if (error.status !== 400 && error.status !== 422) return false;
-    if (/sender|remitente/i.test(texto)) return false;
+    if (/remitente/i.test(texto)) return false;
     return /(invalid|not valid).{0,40}(\bto\b|recipient|email)|(\bto\b|recipient|email).{0,40}(invalid|not valid)/i.test(texto);
   }
   if (proveedor === 'ses') {
@@ -61,8 +73,43 @@ export const esErrorPermanente = (proveedor: string, error: any): boolean => {
   return false;
 };
 
-const marcarPermanente = (proveedor: string, error: any) => {
-  if (error && typeof error === 'object' && esErrorPermanente(proveedor, error)) error.permanente = true;
+/**
+ * Cortocircuito (auditoría 4.AF): si en 10 min hay "permanentes" a >= 5 dominios distintos, lo más probable es un
+ * bloqueo del proveedor (RBL, MagicSpam, cuenta suspendida), no cinco direcciones inexistentes: durante 30 min
+ * todos esos rechazos se tratan como TRANSITORIOS (se reintentan) en vez de darse por atendidos y perderse.
+ */
+const VENTANA_CORTOCIRCUITO_MS = 10 * 60 * 1000;
+const DURACION_CORTOCIRCUITO_MS = 30 * 60 * 1000;
+const DOMINIOS_CORTOCIRCUITO = 5;
+let permanentesRecientes: { dominio: string; t: number }[] = [];
+let cortocircuitoHasta = 0;
+
+/** Solo pruebas y diagnóstico: estado del cortocircuito. */
+export const estadoCortocircuito = () => ({ activoHasta: cortocircuitoHasta > Date.now() ? new Date(cortocircuitoHasta) : null });
+/** Solo pruebas. */
+export const reiniciarCortocircuito = (): void => {
+  permanentesRecientes = [];
+  cortocircuitoHasta = 0;
+};
+
+const marcarPermanente = (proveedor: string, error: any, destinatario?: string) => {
+  if (!error || typeof error !== 'object' || !esErrorPermanente(proveedor, error)) return error;
+  const ahora = Date.now();
+  if (cortocircuitoHasta > ahora) return error; // cortocircuito activo: transitorio
+  const dominio = String(destinatario || '').split('@')[1]?.toLowerCase() || '';
+  permanentesRecientes = permanentesRecientes.filter((p) => ahora - p.t < VENTANA_CORTOCIRCUITO_MS);
+  permanentesRecientes.push({ dominio, t: ahora });
+  const dominios = new Set(permanentesRecientes.map((p) => p.dominio));
+  if (dominios.size >= DOMINIOS_CORTOCIRCUITO) {
+    cortocircuitoHasta = ahora + DURACION_CORTOCIRCUITO_MS;
+    permanentesRecientes = [];
+    logger.error(
+      `[Email] ${dominios.size} rechazos "permanentes" a dominios distintos en 10 min: posible bloqueo del proveedor. ` +
+        `Durante 30 min se tratan como transitorios (se reintentan).`,
+    );
+    return error;
+  }
+  error.permanente = true;
   return error;
 };
 
@@ -118,7 +165,7 @@ const crearSmtp = (): EmailProvider => {
         });
         return { id: info.messageId };
       } catch (error) {
-        throw marcarPermanente('smtp', error);
+        throw marcarPermanente('smtp', error, m.to);
       }
     },
   };
@@ -156,7 +203,7 @@ const crearSes = (): EmailProvider => {
         }),
         { abortSignal },
       )).catch((error: any) => {
-        throw marcarPermanente('ses', error);
+        throw marcarPermanente('ses', error, m.to);
       });
       return { id: salida.MessageId };
     },
@@ -189,7 +236,7 @@ const crearBrevo = (): EmailProvider => {
         const error: any = new Error(`Brevo respondió ${resp.status}: ${detalle}`);
         error.status = resp.status;
         error.detalle = detalle;
-        throw marcarPermanente('brevo', error);
+        throw marcarPermanente('brevo', error, m.to);
       }
       const json: any = await resp.json().catch(() => ({}));
       return { id: json.messageId };
