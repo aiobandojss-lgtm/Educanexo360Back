@@ -74,6 +74,14 @@ NotificacionSchema.index(
   { createdAt: 1 },
   { name: 'ttl_180_dias', expireAfterSeconds: 180 * 24 * 60 * 60 },
 );
+// Auditoría 4.Y: una campanita por (mensaje, usuario). Sirve la verificación de idempotencia del despacho (antes
+// recorría todas las notificaciones de cada destinatario) y hace la inserción idempotente en la BASE: un reintento
+// o dos ejecuciones solapadas no duplican. Solo entidadTipo 'Mensaje' (único flujo que las crea: procesarDespacho).
+// ⚠️ Deploy: si ya hay duplicados el índice no se crea → correr antes scripts/verificar-notificaciones-duplicadas.js
+NotificacionSchema.index(
+  { entidadId: 1, usuarioId: 1 },
+  { name: 'mensaje_usuario_unico', unique: true, partialFilterExpression: { entidadTipo: 'Mensaje' } },
+);
 // Fase 4.5: resumen diario — solo las notificaciones cuyo correo se omitió por la preferencia 'resumen'
 NotificacionSchema.index(
   { 'metadata.resumen': 1, createdAt: 1 },

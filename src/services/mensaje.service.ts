@@ -572,7 +572,12 @@ class MensajeService {
     const mensajeObjId = new mongoose.Types.ObjectId(mensajeId);
     const yaNotificados = new Set(
       (
-        await Notificacion.find({ entidadId: mensajeObjId, usuarioId: { $in: usuarios.map((u) => u._id) } })
+        // entidadTipo: sin él MongoDB no puede usar el índice PARCIAL mensaje_usuario_unico (auditoría 4.Y)
+        await Notificacion.find({
+          entidadTipo: 'Mensaje',
+          entidadId: mensajeObjId,
+          usuarioId: { $in: usuarios.map((u) => u._id) },
+        })
           .select('usuarioId')
           .lean()
       ).map((n: any) => String(n.usuarioId)),
@@ -581,6 +586,8 @@ class MensajeService {
     if (faltan.length > 0) {
       const ahora = new Date();
       const escuelaObjId = new mongoose.Types.ObjectId(escuelaId);
+      // Auditoría 4.Y: el índice único { entidadId, usuarioId } descarta en la base las que otra ejecución ya
+      // insertó (ordered:false inserta las demás); solo se toleran esos duplicados (11000).
       await Notificacion.insertMany(
         faltan.map((u: any) => ({
           usuarioId: new mongoose.Types.ObjectId(String(u._id)),
@@ -603,7 +610,11 @@ class MensajeService {
           updatedAt: ahora,
         })),
         { ordered: false, lean: true },
-      );
+      ).catch((error: any) => {
+        const errores: any[] = error?.writeErrors || [];
+        if (errores.length > 0 && errores.every((e) => (e.code ?? e.err?.code) === 11000)) return;
+        throw error;
+      });
     }
 
     // 2. Correos + push en un solo insertMany, con claveUnica por lote (idempotente ante reintentos)
