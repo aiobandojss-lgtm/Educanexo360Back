@@ -131,19 +131,27 @@ export const crearAsistencia = async (req: RequestWithUser, res: Response, next:
     const ahora = new Date();
 
     // Estudiantes: normalizados (id o poblado), solo del curso y solo campos permitidos.
+    // Deduplicados por estudianteId con un Map (si se repite, gana el último; auditoría 3.W).
     // Si no se envían, todos los del curso en PRESENTE (como antes).
     const estudiantesRegistro =
       Array.isArray(estudiantes) && estudiantes.length > 0
-        ? estudiantes
-            .filter((est: any) => est && est.estudianteId && idsCurso.has(idDe(est.estudianteId)))
-            .map((est: any) => ({
-              estudianteId: idDe(est.estudianteId),
-              estado: est.estado || EstadoAsistencia.PRESENTE,
-              justificacion: est.justificacion,
-              observaciones: est.observaciones,
-              registradoPor: req.user!._id,
-              fechaRegistro: ahora,
-            }))
+        ? [
+            ...new Map(
+              estudiantes
+                .filter((est: any) => est && est.estudianteId && idsCurso.has(idDe(est.estudianteId)))
+                .map((est: any) => [
+                  idDe(est.estudianteId),
+                  {
+                    estudianteId: idDe(est.estudianteId),
+                    estado: est.estado || EstadoAsistencia.PRESENTE,
+                    justificacion: est.justificacion,
+                    observaciones: est.observaciones,
+                    registradoPor: req.user!._id,
+                    fechaRegistro: ahora,
+                  },
+                ]),
+            ).values(),
+          ]
         : [...idsCurso].map((estudianteId) => ({
             estudianteId,
             estado: EstadoAsistencia.PRESENTE,
@@ -387,6 +395,9 @@ export const actualizarAsistencia = async (
       // MERGE por estudianteId: se actualizan los enviados y se CONSERVAN los no enviados
       // (antes se reemplazaba el arreglo completo y se perdían entradas históricas).
       const enviados = new Map<string, any>(estudiantes.map((est: any) => [est.estudianteId, est]));
+      // Desde aquí se recorre el Map (deduplicado; gana el último): sin entradas dobles ni notificaciones
+      // repetidas si el cliente envía el mismo estudiante dos veces (auditoría 3.W)
+      estudiantes = [...enviados.values()];
       const ahora = new Date();
       const actualizar = (est: any) => ({
         estado: est.estado,
