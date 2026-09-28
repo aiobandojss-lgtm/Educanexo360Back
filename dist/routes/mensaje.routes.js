@@ -46,6 +46,7 @@ const sanitizeFilename_1 = require("../utils/sanitizeFilename");
 const dashboardCacheInvalidation_middleware_1 = require("../middleware/dashboardCacheInvalidation.middleware");
 const sanitize_middleware_1 = require("../middleware/sanitize.middleware");
 const limpiarTemporales_middleware_1 = require("../middleware/limpiarTemporales.middleware");
+const validarArchivos_middleware_1 = require("../middleware/validarArchivos.middleware");
 const router = express_1.default.Router();
 const verificarPermisoBorradores = (req, res, next) => {
     if (!req.user) {
@@ -78,6 +79,7 @@ const storage = multer_1.default.diskStorage({
     },
 });
 const upload = (0, multer_1.default)({
+    defParamCharset: 'utf8',
     storage,
     limits: {
         fileSize: 5 * 1024 * 1024,
@@ -85,10 +87,10 @@ const upload = (0, multer_1.default)({
     },
 });
 router.use(auth_middleware_1.authenticate);
-router.post('/borradores', limpiarTemporales_middleware_1.limpiarTemporales, upload.array('adjuntos', 5), sanitize_middleware_1.sanitizeNoSQL, verificarPermisoBorradores, (req, res, next) => {
+router.post('/borradores', limpiarTemporales_middleware_1.limpiarTemporales, upload.array('adjuntos', 5), validarArchivos_middleware_1.validarArchivos, sanitize_middleware_1.sanitizeNoSQL, verificarPermisoBorradores, (req, res, next) => {
     mensaje_controller_1.default.guardarBorrador(req, res, next);
 });
-router.post('/borradores/:id', limpiarTemporales_middleware_1.limpiarTemporales, upload.array('adjuntos', 5), sanitize_middleware_1.sanitizeNoSQL, verificarPermisoBorradores, (req, res, next) => {
+router.post('/borradores/:id', limpiarTemporales_middleware_1.limpiarTemporales, upload.array('adjuntos', 5), validarArchivos_middleware_1.validarArchivos, sanitize_middleware_1.sanitizeNoSQL, verificarPermisoBorradores, (req, res, next) => {
     req.query.id = req.params.id;
     mensaje_controller_1.default.guardarBorrador(req, res, next);
 });
@@ -116,7 +118,7 @@ router.get('/destinatarios-disponibles', (req, res, next) => {
 router.get('/cursos-disponibles', (0, auth_middleware_1.authorize)('ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO', 'DOCENTE'), (req, res, next) => {
     mensaje_controller_1.default.getCursosPosiblesDestinatarios(req, res, next);
 });
-router.post('/', limpiarTemporales_middleware_1.limpiarTemporales, upload.array('adjuntos', 5), sanitize_middleware_1.sanitizeNoSQL, dashboardCacheInvalidation_middleware_1.invalidateOnMensaje, (req, res, next) => {
+router.post('/', limpiarTemporales_middleware_1.limpiarTemporales, upload.array('adjuntos', 5), validarArchivos_middleware_1.validarArchivos, sanitize_middleware_1.sanitizeNoSQL, dashboardCacheInvalidation_middleware_1.invalidateOnMensaje, (req, res, next) => {
     mensaje_controller_1.default.crear(req, res, next);
 });
 router.get('/', (req, res, next) => {
@@ -155,7 +157,7 @@ router.put('/:id/lectura', (req, res, next) => {
 router.put('/:id/leer', (req, res, next) => {
     mensaje_controller_1.default.actualizarEstadoLectura(req, res, next);
 });
-router.post('/:mensajeId/responder', limpiarTemporales_middleware_1.limpiarTemporales, upload.array('adjuntos', 5), sanitize_middleware_1.sanitizeNoSQL, (req, res, next) => {
+router.post('/:mensajeId/responder', limpiarTemporales_middleware_1.limpiarTemporales, upload.array('adjuntos', 5), validarArchivos_middleware_1.validarArchivos, sanitize_middleware_1.sanitizeNoSQL, (req, res, next) => {
     mensaje_controller_1.default.responder(req, res, next);
 });
 router.get('/:mensajeId/adjuntos/:adjuntoId', (req, res, next) => {

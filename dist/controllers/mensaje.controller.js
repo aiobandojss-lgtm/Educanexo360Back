@@ -7,14 +7,15 @@ exports.MensajeController = exports.ROLES_CON_BORRADORES = void 0;
 const mongoose_1 = __importDefault(require("mongoose"));
 const mensaje_model_1 = __importDefault(require("../models/mensaje.model"));
 const usuario_model_1 = __importDefault(require("../models/usuario.model"));
-const gridfs_1 = __importDefault(require("../config/gridfs"));
 const mensaje_service_1 = __importDefault(require("../services/mensaje.service"));
 const escapeRegex_1 = require("../utils/escapeRegex");
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
 const IMensaje_1 = require("../interfaces/IMensaje");
 const paginacion_1 = require("../utils/paginacion");
 const logger_1 = require("../utils/logger");
-const adjuntosGridFS_1 = require("../utils/adjuntosGridFS");
+const adjuntos_1 = require("../utils/adjuntos");
+const storage_1 = require("../services/storage");
+const BUCKET_MENSAJES = 'uploads';
 const contentDisposition_1 = require("../utils/contentDisposition");
 exports.ROLES_CON_BORRADORES = ['ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO', 'DOCENTE'];
 const idsDestinatariosValidos = async (ids, escuelaId) => {
@@ -26,13 +27,14 @@ const idsDestinatariosValidos = async (ids, escuelaId) => {
         .lean();
     return new Set(validos.map((u) => String(u._id)));
 };
-const revertirAdjuntosSinMensaje = async (ids) => {
-    if (ids.length === 0)
+const revertirAdjuntosSinMensaje = async (refs) => {
+    if (refs.length === 0)
         return;
+    const ids = refs.map((r) => r.fileId);
     const referenciado = await mensaje_model_1.default.exists({ 'adjuntos.fileId': { $in: ids } }).catch(() => true);
     if (referenciado)
         return;
-    await (0, adjuntosGridFS_1.eliminarArchivosGridFS)(gridfs_1.default.getBucket(), ids);
+    await (0, adjuntos_1.eliminarAdjuntos)(refs, BUCKET_MENSAJES);
 };
 class MensajeController {
     async getPosiblesDestinatarios(req, res, next) {
@@ -464,13 +466,14 @@ class MensajeController {
                     if (totalSize > MAX_TOTAL_SIZE) {
                         throw new ApiError_1.default(400, `El tamaño total de los archivos adjuntos no puede superar los 15MB`);
                     }
-                    const bucket = gridfs_1.default.getBucket();
-                    if (!bucket) {
-                        throw new ApiError_1.default(500, 'Servicio de archivos no disponible');
-                    }
-                    nuevosAdjuntos.push(...(await (0, adjuntosGridFS_1.subirAdjuntosGridFS)(req.files, bucket, String(req.user._id))));
-                    idsNuevos = nuevosAdjuntos.map((a) => a.fileId);
-                    adjuntosAnteriores = (borrador.adjuntos || []).map((a) => ({ fileId: a.fileId, nombre: a.nombre }));
+                    nuevosAdjuntos.push(...(await (0, adjuntos_1.subirAdjuntos)(req.files, BUCKET_MENSAJES, String(req.user._id))));
+                    idsNuevos = nuevosAdjuntos;
+                    adjuntosAnteriores = (borrador.adjuntos || []).map((a) => ({
+                        fileId: a.fileId,
+                        nombre: a.nombre,
+                        almacen: a.almacen,
+                        clave: a.clave,
+                    }));
                     borrador.adjuntos = nuevosAdjuntos;
                     logger_1.logger.debug(`Adjuntos reemplazados: ${nuevosAdjuntos.length} nuevos adjuntos`);
                 }
@@ -485,17 +488,14 @@ class MensajeController {
                     throw saveError;
                 }
                 if (adjuntosAnteriores.length > 0) {
-                    const bucket = gridfs_1.default.getBucket();
-                    if (bucket) {
-                        logger_1.logger.debug(`Eliminando ${adjuntosAnteriores.length} adjuntos anteriores...`);
-                        for (const adjuntoAnterior of adjuntosAnteriores) {
-                            try {
-                                await bucket.delete(adjuntoAnterior.fileId);
-                                logger_1.logger.debug(`Adjunto eliminado: ${adjuntoAnterior.nombre}`);
-                            }
-                            catch (deleteError) {
-                                console.warn(`No se pudo eliminar adjunto ${adjuntoAnterior.nombre}:`, deleteError);
-                            }
+                    logger_1.logger.debug(`Eliminando ${adjuntosAnteriores.length} adjuntos anteriores...`);
+                    for (const adjuntoAnterior of adjuntosAnteriores) {
+                        try {
+                            await (0, storage_1.eliminarArchivo)(adjuntoAnterior, BUCKET_MENSAJES);
+                            logger_1.logger.debug(`Adjunto eliminado: ${adjuntoAnterior.nombre}`);
+                        }
+                        catch (deleteError) {
+                            console.warn(`No se pudo eliminar adjunto ${adjuntoAnterior.nombre}:`, deleteError);
                         }
                     }
                 }
@@ -532,18 +532,13 @@ class MensajeController {
                         await mensaje_model_1.default.deleteOne({ _id: borradorBasico._id });
                         throw new ApiError_1.default(400, `El tamaño total de los archivos adjuntos no puede superar los 15MB`);
                     }
-                    const bucket = gridfs_1.default.getBucket();
-                    if (!bucket) {
-                        await mensaje_model_1.default.deleteOne({ _id: borradorBasico._id });
-                        throw new ApiError_1.default(500, 'Servicio de archivos no disponible');
-                    }
                     try {
-                        adjuntos.push(...(await (0, adjuntosGridFS_1.subirAdjuntosGridFS)(req.files, bucket, String(req.user._id))));
+                        adjuntos.push(...(await (0, adjuntos_1.subirAdjuntos)(req.files, BUCKET_MENSAJES, String(req.user._id))));
                         borradorBasico.adjuntos = adjuntos;
                         await borradorBasico.save();
                     }
                     catch (adjuntosError) {
-                        await (0, adjuntosGridFS_1.eliminarArchivosGridFS)(bucket, adjuntos.map((a) => a.fileId));
+                        await (0, adjuntos_1.eliminarAdjuntos)(adjuntos, BUCKET_MENSAJES);
                         await mensaje_model_1.default.deleteOne({ _id: borradorBasico._id });
                         throw adjuntosError;
                     }
@@ -749,15 +744,12 @@ class MensajeController {
             }
             await mensaje_model_1.default.deleteOne({ _id: id });
             if (borrador.adjuntos && borrador.adjuntos.length > 0) {
-                const bucket = gridfs_1.default.getBucket();
-                if (bucket) {
-                    for (const adjunto of borrador.adjuntos) {
-                        try {
-                            await bucket.delete(adjunto.fileId);
-                        }
-                        catch (err) {
-                            console.error(`Error al eliminar adjunto con ID ${adjunto.fileId}:`, err);
-                        }
+                for (const adjunto of borrador.adjuntos) {
+                    try {
+                        await (0, storage_1.eliminarArchivo)(adjunto, BUCKET_MENSAJES);
+                    }
+                    catch (err) {
+                        console.error(`Error al eliminar adjunto con ID ${adjunto.fileId}:`, err);
                     }
                 }
             }
@@ -1343,11 +1335,7 @@ class MensajeController {
                     throw new ApiError_1.default(400, `El tamaño total de los archivos adjuntos no puede superar los 15MB (tamaño actual: ${(totalSize /
                         (1024 * 1024)).toFixed(2)}MB)`);
                 }
-                const bucket = gridfs_1.default.getBucket();
-                if (!bucket) {
-                    throw new ApiError_1.default(500, 'Servicio de archivos no disponible');
-                }
-                adjuntos.push(...(await (0, adjuntosGridFS_1.subirAdjuntosGridFS)(req.files, bucket, String(req.user._id))));
+                adjuntos.push(...(await (0, adjuntos_1.subirAdjuntos)(req.files, BUCKET_MENSAJES, String(req.user._id))));
             }
             let estado = IMensaje_1.EstadoMensaje.ENVIADO;
             if (tipo === 'BORRADOR') {
@@ -1412,7 +1400,7 @@ class MensajeController {
                 nuevoMensaje = await mensaje_service_1.default.crearMensaje(datosMensaje, req.user);
             }
             catch (crearError) {
-                await revertirAdjuntosSinMensaje(adjuntos.map((a) => a.fileId));
+                await revertirAdjuntosSinMensaje(adjuntos);
                 throw crearError;
             }
             if (estado !== IMensaje_1.EstadoMensaje.BORRADOR && cursoIdsArray.length === 0 && destinatariosArray.length > 0) {
@@ -2004,8 +1992,12 @@ class MensajeController {
                 throw new ApiError_1.default(401, 'No autorizado');
             }
             const { mensajeId, adjuntoId } = req.params;
+            if (!mongoose_1.default.isValidObjectId(req.user.escuelaId)) {
+                throw new ApiError_1.default(403, 'El usuario no tiene un colegio asociado');
+            }
             const mensaje = await mensaje_model_1.default.findOne({
                 _id: mensajeId,
+                escuelaId: req.user.escuelaId,
                 $or: [
                     { remitente: req.user._id },
                     { destinatarios: req.user._id },
@@ -2022,21 +2014,16 @@ class MensajeController {
             if (!adjunto) {
                 throw new ApiError_1.default(404, 'Adjunto no encontrado');
             }
-            const bucket = gridfs_1.default.getBucket();
-            if (!bucket) {
-                throw new ApiError_1.default(500, 'Servicio de archivos no disponible');
-            }
-            const [documento] = await bucket.find({ _id: new mongoose_1.default.Types.ObjectId(adjuntoId) }).limit(1).toArray();
-            if (!documento) {
+            if (!(await (0, storage_1.existeArchivo)(adjunto, BUCKET_MENSAJES))) {
                 throw new ApiError_1.default(404, 'Archivo no encontrado en el sistema');
             }
             res.set({
                 'Content-Type': adjunto.tipo,
                 'Content-Disposition': (0, contentDisposition_1.contentDispositionAdjunto)(adjunto.nombre),
             });
-            const downloadStream = bucket.openDownloadStream(new mongoose_1.default.Types.ObjectId(adjuntoId));
+            const downloadStream = await (0, storage_1.abrirArchivo)(adjunto, BUCKET_MENSAJES);
             downloadStream.on('error', (error) => {
-                console.error('Error en stream de descarga GridFS:', error);
+                console.error('Error en stream de descarga:', error);
                 if (!res.headersSent) {
                     next(new ApiError_1.default(500, 'Error al descargar el archivo'));
                 }
@@ -2276,11 +2263,7 @@ class MensajeController {
                     throw new ApiError_1.default(400, `El tamaño total de los archivos adjuntos no puede superar los 15MB (tamaño actual: ${(totalSize /
                         (1024 * 1024)).toFixed(2)}MB)`);
                 }
-                const bucket = gridfs_1.default.getBucket();
-                if (!bucket) {
-                    throw new ApiError_1.default(500, 'Servicio de archivos no disponible');
-                }
-                adjuntos.push(...(await (0, adjuntosGridFS_1.subirAdjuntosGridFS)(req.files, bucket, String(req.user._id))));
+                adjuntos.push(...(await (0, adjuntos_1.subirAdjuntos)(req.files, BUCKET_MENSAJES, String(req.user._id))));
             }
             let destinatariosCcArray = [];
             if (destinatariosCc) {
@@ -2313,7 +2296,7 @@ class MensajeController {
                 respuesta = await mensaje_service_1.default.crearMensaje(datosRespuesta, req.user);
             }
             catch (crearError) {
-                await revertirAdjuntosSinMensaje(adjuntos.map((a) => a.fileId));
+                await revertirAdjuntosSinMensaje(adjuntos);
                 throw crearError;
             }
             try {

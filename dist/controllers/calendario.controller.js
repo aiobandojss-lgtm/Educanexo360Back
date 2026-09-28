@@ -8,9 +8,9 @@ const calendario_model_1 = __importDefault(require("../models/calendario.model")
 const usuario_model_1 = __importDefault(require("../models/usuario.model"));
 const curso_model_1 = __importDefault(require("../models/curso.model"));
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
-const gridfs_1 = __importDefault(require("../config/gridfs"));
-const fs_1 = __importDefault(require("fs"));
-const path_1 = __importDefault(require("path"));
+const adjuntos_1 = require("../utils/adjuntos");
+const storage_1 = require("../services/storage");
+const BUCKET_CALENDARIO = 'uploads';
 const ICalendario_1 = require("../interfaces/ICalendario");
 const pushNotification_service_1 = __importDefault(require("../services/pushNotification.service"));
 const logger_1 = require("../utils/logger");
@@ -72,37 +72,9 @@ class CalendarioController {
             }
             const archivoCrear = archivoSubido(req);
             if (archivoCrear) {
-                const file = archivoCrear;
-                const bucket = gridfs_1.default.getBucket();
-                if (!bucket) {
-                    throw new ApiError_1.default(500, 'Servicio de archivos no disponible');
-                }
-                const filename = file.filename || path_1.default.basename(file.path);
-                const uploadStream = bucket.openUploadStream(filename, {
-                    metadata: {
-                        originalName: file.originalname,
-                        contentType: file.mimetype,
-                        size: file.size,
-                        uploadedBy: req.user._id,
-                    },
-                });
-                const fileContent = fs_1.default.readFileSync(file.path);
-                await new Promise((resolve, reject) => {
-                    uploadStream.once('finish', resolve).once('error', reject);
-                    uploadStream.end(fileContent);
-                });
-                eventoData.archivoAdjunto = {
-                    fileId: uploadStream.id,
-                    nombre: file.originalname,
-                    tipo: file.mimetype,
-                    tamaño: file.size,
-                };
-                try {
-                    fs_1.default.unlinkSync(file.path);
-                }
-                catch (error) {
-                    console.error('Error deleting temporary file:', error);
-                }
+                const [subido] = await (0, adjuntos_1.subirAdjuntos)([archivoCrear], BUCKET_CALENDARIO, String(req.user._id));
+                const { fechaSubida: _f, ...ref } = subido;
+                eventoData.archivoAdjunto = ref;
             }
             if (eventoData.fechaInicio) {
                 eventoData.fechaInicio = new Date(eventoData.fechaInicio);
@@ -130,7 +102,15 @@ class CalendarioController {
                     throw new ApiError_1.default(400, 'Formato de recordatorios inválido');
                 }
             }
-            const evento = (await calendario_model_1.default.create(eventoData));
+            let evento;
+            try {
+                evento = (await calendario_model_1.default.create(eventoData));
+            }
+            catch (crearError) {
+                if (eventoData.archivoAdjunto)
+                    await (0, adjuntos_1.eliminarAdjuntos)([eventoData.archivoAdjunto], BUCKET_CALENDARIO);
+                throw crearError;
+            }
             const eventoPopulado = await calendario_model_1.default.findById(evento._id)
                 .populate('creadorId', 'nombre apellidos email tipo')
                 .populate('cursoId', 'nombre nivel');
@@ -373,50 +353,25 @@ class CalendarioController {
             }
             const archivoActualizar = archivoSubido(req);
             if (archivoActualizar) {
-                const file = archivoActualizar;
-                const bucket = gridfs_1.default.getBucket();
-                if (!bucket) {
-                    throw new ApiError_1.default(500, 'Servicio de archivos no disponible');
-                }
-                if (evento.archivoAdjunto && evento.archivoAdjunto.fileId) {
-                    try {
-                        await bucket.delete(new mongoose_1.default.Types.ObjectId(evento.archivoAdjunto.fileId.toString()));
-                    }
-                    catch (error) {
-                        console.error('Error deleting old file:', error);
-                    }
-                }
-                const filename = file.filename || path_1.default.basename(file.path);
-                const uploadStream = bucket.openUploadStream(filename, {
-                    metadata: {
-                        originalName: file.originalname,
-                        contentType: file.mimetype,
-                        size: file.size,
-                        uploadedBy: req.user._id,
-                    },
-                });
-                const fileContent = fs_1.default.readFileSync(file.path);
-                await new Promise((resolve, reject) => {
-                    uploadStream.once('finish', resolve).once('error', reject);
-                    uploadStream.end(fileContent);
-                });
-                datosActualizacion.archivoAdjunto = {
-                    fileId: uploadStream.id,
-                    nombre: file.originalname,
-                    tipo: file.mimetype,
-                    tamaño: file.size,
-                };
-                try {
-                    fs_1.default.unlinkSync(file.path);
-                }
-                catch (error) {
-                    console.error('Error deleting temporary file:', error);
-                }
+                const [subido] = await (0, adjuntos_1.subirAdjuntos)([archivoActualizar], BUCKET_CALENDARIO, String(req.user._id));
+                const { fechaSubida: _f, ...ref } = subido;
+                datosActualizacion.archivoAdjunto = ref;
             }
-            await calendario_model_1.default.findOneAndUpdate({ _id: req.params.id, escuelaId: req.user.escuelaId }, datosActualizacion, {
-                new: true,
-                runValidators: true,
-            });
+            const adjuntoAnterior = archivoActualizar && evento.archivoAdjunto && evento.archivoAdjunto.fileId ? evento.archivoAdjunto : null;
+            try {
+                await calendario_model_1.default.findOneAndUpdate({ _id: req.params.id, escuelaId: req.user.escuelaId }, datosActualizacion, {
+                    new: true,
+                    runValidators: true,
+                });
+            }
+            catch (actualizarError) {
+                if (datosActualizacion.archivoAdjunto)
+                    await (0, adjuntos_1.eliminarAdjuntos)([datosActualizacion.archivoAdjunto], BUCKET_CALENDARIO);
+                throw actualizarError;
+            }
+            if (adjuntoAnterior) {
+                await (0, storage_1.eliminarArchivo)(adjuntoAnterior, BUCKET_CALENDARIO).catch((error) => console.error('Error deleting old file:', error));
+            }
             const eventoActualizado = await calendario_model_1.default.findById(req.params.id)
                 .populate('creadorId', 'nombre apellidos email tipo')
                 .populate('cursoId', 'nombre nivel')
@@ -588,25 +543,23 @@ class CalendarioController {
             if (!evento) {
                 throw new ApiError_1.default(404, 'Evento no encontrado');
             }
+            if ((req.user.tipo === 'ESTUDIANTE' || req.user.tipo === 'PADRE' || req.user.tipo === 'ACUDIENTE') &&
+                evento.estado !== 'ACTIVO') {
+                throw new ApiError_1.default(404, 'Evento no encontrado');
+            }
             if (!evento.archivoAdjunto || !evento.archivoAdjunto.fileId) {
                 throw new ApiError_1.default(404, 'Este evento no tiene archivo adjunto');
             }
-            const bucket = gridfs_1.default.getBucket();
-            if (!bucket) {
-                throw new ApiError_1.default(500, 'Servicio de archivos no disponible');
-            }
-            const fileId = new mongoose_1.default.Types.ObjectId(evento.archivoAdjunto.fileId.toString());
-            const [documento] = await bucket.find({ _id: fileId }).limit(1).toArray();
-            if (!documento) {
+            if (!(await (0, storage_1.existeArchivo)(evento.archivoAdjunto, BUCKET_CALENDARIO))) {
                 throw new ApiError_1.default(404, 'Archivo no encontrado en el sistema');
             }
             res.set({
                 'Content-Type': evento.archivoAdjunto.tipo,
                 'Content-Disposition': (0, contentDisposition_1.contentDispositionAdjunto)(evento.archivoAdjunto.nombre),
             });
-            const downloadStream = bucket.openDownloadStream(fileId);
+            const downloadStream = await (0, storage_1.abrirArchivo)(evento.archivoAdjunto, BUCKET_CALENDARIO);
             downloadStream.on('error', (error) => {
-                console.error('Error en stream de descarga GridFS:', error);
+                console.error('Error en stream de descarga:', error);
                 if (!res.headersSent) {
                     next(new ApiError_1.default(500, 'Error al descargar el archivo'));
                 }

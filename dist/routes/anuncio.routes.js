@@ -15,6 +15,8 @@ const sanitizeFilename_1 = require("../utils/sanitizeFilename");
 const simpleCache_1 = require("../cache/simpleCache");
 const dashboardCacheInvalidation_middleware_1 = require("../middleware/dashboardCacheInvalidation.middleware");
 const sanitize_middleware_1 = require("../middleware/sanitize.middleware");
+const validarArchivos_middleware_1 = require("../middleware/validarArchivos.middleware");
+const limpiarTemporales_middleware_1 = require("../middleware/limpiarTemporales.middleware");
 const router = express_1.default.Router();
 const storage = multer_1.default.diskStorage({
     destination: function (req, file, cb) {
@@ -30,6 +32,7 @@ const storage = multer_1.default.diskStorage({
     },
 });
 const upload = (0, multer_1.default)({
+    defParamCharset: 'utf8',
     storage,
     limits: {
         fileSize: 10 * 1024 * 1024,
@@ -40,7 +43,7 @@ router.post('/', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'RECTOR', 
 router.put('/:id', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'), dashboardCacheInvalidation_middleware_1.invalidateOnAnuncio, (0, validate_middleware_1.validate)(anuncio_validation_1.default.actualizar), anuncio_controller_1.default.actualizar);
 router.patch('/:id/publicar', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'), dashboardCacheInvalidation_middleware_1.invalidateOnAnuncio, anuncio_controller_1.default.publicar);
 router.delete('/:id', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'), anuncio_controller_1.default.eliminar);
-router.post('/:id/adjuntos', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'), upload.array('archivos', 5), sanitize_middleware_1.sanitizeNoSQL, anuncio_controller_1.default.agregarAdjuntos);
+router.post('/:id/adjuntos', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'), limpiarTemporales_middleware_1.limpiarTemporales, upload.array('archivos', 5), validarArchivos_middleware_1.validarArchivos, sanitize_middleware_1.sanitizeNoSQL, anuncio_controller_1.default.agregarAdjuntos);
 router.delete('/:id/adjuntos/:archivoId', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'), anuncio_controller_1.default.eliminarAdjunto);
 router.get('/', (0, simpleCache_1.cacheMiddleware)('anuncios'), anuncio_controller_1.default.obtenerTodos);
 router.get('/:id', anuncio_controller_1.default.obtenerPorId);

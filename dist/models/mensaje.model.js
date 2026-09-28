@@ -35,6 +35,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 const mongoose_1 = __importStar(require("mongoose"));
 const IMensaje_1 = require("../interfaces/IMensaje");
+const referenciaArchivo_1 = require("./campos/referenciaArchivo");
 const AdjuntoSchema = new mongoose_1.Schema({
     nombre: {
         type: String,
@@ -56,6 +57,7 @@ const AdjuntoSchema = new mongoose_1.Schema({
         type: Date,
         default: Date.now,
     },
+    ...referenciaArchivo_1.camposAlmacen,
 });
 const LecturaSchema = new mongoose_1.Schema({
     usuarioId: {

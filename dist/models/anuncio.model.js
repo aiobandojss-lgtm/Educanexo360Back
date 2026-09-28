@@ -34,6 +34,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 const mongoose_1 = __importStar(require("mongoose"));
+const referenciaArchivo_1 = require("./campos/referenciaArchivo");
 const ArchivoSchema = new mongoose_1.Schema({
     fileId: {
         type: mongoose_1.Schema.Types.ObjectId,
@@ -51,6 +52,7 @@ const ArchivoSchema = new mongoose_1.Schema({
         type: Number,
         required: true,
     },
+    ...referenciaArchivo_1.camposAlmacen,
 });
 const ImagenPortadaSchema = new mongoose_1.Schema({
     fileId: {

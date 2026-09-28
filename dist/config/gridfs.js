@@ -36,6 +36,7 @@ class GridFSManager {
                 },
             });
             this.upload = (0, multer_1.default)({
+                defParamCharset: 'utf8',
                 storage,
                 limits: {
                     fileSize: 5 * 1024 * 1024,

@@ -12,6 +12,7 @@ const auth_routes_1 = __importDefault(require("./routes/auth.routes"));
 const escuela_routes_1 = __importDefault(require("./routes/escuela.routes"));
 const usuario_routes_1 = __importDefault(require("./routes/usuario.routes"));
 const ApiError_1 = __importDefault(require("./utils/ApiError"));
+const erroresSubida_1 = require("./utils/erroresSubida");
 const curso_routes_1 = __importDefault(require("./routes/curso.routes"));
 const asignatura_routes_1 = __importDefault(require("./routes/asignatura.routes"));
 const logro_routes_1 = __importDefault(require("./routes/logro.routes"));
@@ -125,7 +126,8 @@ app.get(basePath || '/', (req, res) => {
 app.use((req, res, next) => {
     next(new ApiError_1.default(404, 'Ruta no encontrada'));
 });
-app.use((err, req, res, next) => {
+app.use((errOriginal, req, res, next) => {
+    const err = (0, erroresSubida_1.errorDeSubida)(errOriginal) || errOriginal;
     console.error('Error en la aplicación:', err);
     if (err instanceof ApiError_1.default) {
         res.status(err.statusCode).json({

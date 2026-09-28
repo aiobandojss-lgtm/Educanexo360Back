@@ -1,37 +1,4 @@
 "use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -39,11 +6,15 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const mongoose_1 = __importDefault(require("mongoose"));
 const anuncio_model_1 = __importDefault(require("../models/anuncio.model"));
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
-const mongodb_1 = require("mongodb");
-const fs = __importStar(require("fs"));
+const adjuntos_1 = require("../utils/adjuntos");
+const storage_1 = require("../services/storage");
+const referenciasArchivos_1 = require("../utils/referenciasArchivos");
+const BUCKET_ANUNCIOS = 'anuncios_adjuntos';
+const soloPublicados = (tipo) => !((0, accesoAcademico_1.esRolAdministrativo)(tipo) || tipo === 'DOCENTE' || tipo === 'SUPER_ADMIN');
 const escapeRegex_1 = require("../utils/escapeRegex");
 const pushNotification_service_1 = __importDefault(require("../services/pushNotification.service"));
 const paginacion_1 = require("../utils/paginacion");
+const accesoAcademico_1 = require("../utils/accesoAcademico");
 class AnuncioController {
     async crear(req, res, next) {
         try {
@@ -87,7 +58,7 @@ class AnuncioController {
             if (req.query.soloDestacados === 'true') {
                 filters.destacado = true;
             }
-            if (req.query.soloPublicados === 'true') {
+            if (req.query.soloPublicados === 'true' || soloPublicados(req.user.tipo)) {
                 filters.estaPublicado = true;
             }
             const paraRol = req.query.paraRol;
@@ -143,6 +114,7 @@ class AnuncioController {
             const anuncio = await anuncio_model_1.default.findOne({
                 _id: req.params.id,
                 escuelaId: req.user.escuelaId,
+                ...(soloPublicados(req.user.tipo) && { estaPublicado: true }),
             }).populate('creador', 'nombre apellidos');
             if (!anuncio) {
                 throw new ApiError_1.default(404, 'Anuncio no encontrado');
@@ -268,7 +240,9 @@ class AnuncioController {
             if (anuncio.creador.toString() !== req.user._id.toString() && req.user.tipo !== 'ADMIN') {
                 throw new ApiError_1.default(403, 'No tienes permiso para eliminar este anuncio');
             }
+            const adjuntos = (anuncio.archivosAdjuntos || []).map((a) => (a.toObject ? a.toObject() : a));
             await anuncio.deleteOne();
+            await (0, referenciasArchivos_1.eliminarSiNoReferenciados)(adjuntos, BUCKET_ANUNCIOS);
             res.json({
                 success: true,
                 message: 'Anuncio eliminado exitosamente',
@@ -288,6 +262,7 @@ class AnuncioController {
                 _id: id,
                 escuelaId: req.user.escuelaId,
                 'archivosAdjuntos.fileId': new mongoose_1.default.Types.ObjectId(archivoId),
+                ...(soloPublicados(req.user.tipo) && { estaPublicado: true }),
             });
             if (!anuncio) {
                 throw new ApiError_1.default(404, 'Anuncio o archivo adjunto no encontrado');
@@ -296,20 +271,16 @@ class AnuncioController {
             if (!archivo) {
                 throw new ApiError_1.default(404, 'Archivo adjunto no encontrado');
             }
-            const db = mongoose_1.default.connection.db;
-            const bucket = new mongodb_1.GridFSBucket(db, {
-                bucketName: 'anuncios_adjuntos',
-            });
+            const downloadStream = await (0, storage_1.abrirArchivo)(archivo, BUCKET_ANUNCIOS);
             res.setHeader('Content-Type', archivo.tipo);
             res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(archivo.nombre)}"`);
             res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
             res.setHeader('Pragma', 'no-cache');
             res.setHeader('Expires', '0');
-            const downloadStream = bucket.openDownloadStream(new mongoose_1.default.Types.ObjectId(archivoId));
             downloadStream.on('error', (error) => {
-                console.error('Error en GridFS stream:', error);
+                console.error('Error en stream de descarga:', error);
                 if (!res.headersSent) {
-                    next(new ApiError_1.default(500, 'Error al leer el archivo desde GridFS'));
+                    next(new ApiError_1.default(500, 'Error al leer el archivo'));
                 }
             });
             downloadStream.pipe(res);
@@ -336,38 +307,17 @@ class AnuncioController {
             if (anuncio.creador.toString() !== req.user._id.toString() && req.user.tipo !== 'ADMIN') {
                 throw new ApiError_1.default(403, 'No tienes permiso para modificar este anuncio');
             }
-            const db = mongoose_1.default.connection.db;
-            if (!db) {
-                throw new ApiError_1.default(500, 'Error de conexión a la base de datos');
-            }
-            const bucket = new mongodb_1.GridFSBucket(db, {
-                bucketName: 'anuncios_adjuntos',
+            const nuevosAdjuntos = await (0, adjuntos_1.subirAdjuntos)(req.files, BUCKET_ANUNCIOS, String(req.user._id), {
+                anuncioId: String(anuncio._id),
             });
-            const filePromises = req.files.map(async (file) => {
-                const fileStream = fs.createReadStream(file.path);
-                const uploadStream = bucket.openUploadStream(file.originalname, {
-                    contentType: file.mimetype,
-                });
-                return new Promise((resolve, reject) => {
-                    fileStream
-                        .pipe(uploadStream)
-                        .on('error', (error) => {
-                        reject(error);
-                    })
-                        .on('finish', () => {
-                        fs.unlinkSync(file.path);
-                        resolve({
-                            fileId: uploadStream.id,
-                            nombre: file.originalname,
-                            tipo: file.mimetype,
-                            tamaño: file.size,
-                        });
-                    });
-                });
-            });
-            const nuevosAdjuntos = await Promise.all(filePromises);
             anuncio.archivosAdjuntos.push(...nuevosAdjuntos);
-            await anuncio.save();
+            try {
+                await anuncio.save();
+            }
+            catch (saveError) {
+                await (0, adjuntos_1.eliminarAdjuntos)(nuevosAdjuntos, BUCKET_ANUNCIOS);
+                throw saveError;
+            }
             res.json({
                 success: true,
                 data: anuncio.archivosAdjuntos,
@@ -375,13 +325,6 @@ class AnuncioController {
             });
         }
         catch (error) {
-            if (req.files && Array.isArray(req.files)) {
-                req.files.forEach((file) => {
-                    if (fs.existsSync(file.path)) {
-                        fs.unlinkSync(file.path);
-                    }
-                });
-            }
             next(error);
         }
     }
@@ -405,26 +348,14 @@ class AnuncioController {
             if (archivoIndex === -1) {
                 throw new ApiError_1.default(404, 'Archivo adjunto no encontrado');
             }
-            try {
-                const db = mongoose_1.default.connection.db;
-                if (!db) {
-                    throw new ApiError_1.default(500, 'Error de conexión a la base de datos');
-                }
-                const bucket = new mongodb_1.GridFSBucket(db, {
-                    bucketName: 'anuncios_adjuntos',
-                });
-                await bucket.delete(new mongoose_1.default.Types.ObjectId(archivoId));
-            }
-            catch (error) {
-                if (error instanceof Error && error.message.includes('FileNotFound')) {
-                    console.warn(`Archivo ${archivoId} no encontrado en GridFS, continuando con la eliminación de la referencia`);
-                }
-                else {
-                    throw error;
-                }
-            }
-            anuncio.archivosAdjuntos.splice(archivoIndex, 1);
+            const [archivo] = anuncio.archivosAdjuntos.splice(archivoIndex, 1);
             await anuncio.save();
+            try {
+                await (0, storage_1.eliminarArchivo)(archivo, BUCKET_ANUNCIOS);
+            }
+            catch (errorBorrado) {
+                console.warn(`[Anuncios] No se pudo borrar el archivo ${archivoId} del almacén:`, errorBorrado);
+            }
             res.json({
                 success: true,
                 message: 'Archivo adjunto eliminado exitosamente',

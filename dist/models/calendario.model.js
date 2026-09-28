@@ -35,6 +35,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 const mongoose_1 = __importStar(require("mongoose"));
 const ICalendario_1 = require("../interfaces/ICalendario");
+const referenciaArchivo_1 = require("./campos/referenciaArchivo");
 const InvitadoSchema = new mongoose_1.Schema({
     usuarioId: {
         type: mongoose_1.Schema.Types.ObjectId,
@@ -78,6 +79,7 @@ const ArchivoAdjuntoSchema = new mongoose_1.Schema({
         type: Number,
         required: true,
     },
+    ...referenciaArchivo_1.camposAlmacen,
 });
 const EventoCalendarioSchema = new mongoose_1.Schema({
     titulo: {

@@ -1,37 +1,4 @@
 "use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -41,8 +8,9 @@ const tarea_model_1 = __importDefault(require("../models/tarea.model"));
 const curso_model_1 = __importDefault(require("../models/curso.model"));
 const usuario_model_1 = __importDefault(require("../models/usuario.model"));
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
-const mongodb_1 = require("mongodb");
-const fs = __importStar(require("fs"));
+const adjuntos_1 = require("../utils/adjuntos");
+const storage_1 = require("../services/storage");
+const referenciasArchivos_1 = require("../utils/referenciasArchivos");
 const escapeRegex_1 = require("../utils/escapeRegex");
 const accesoAcademico_1 = require("../utils/accesoAcademico");
 const idDe = (valor) => String(valor?._id ?? valor);
@@ -344,7 +312,11 @@ class TareaController {
             if (tieneEntregas) {
                 throw new ApiError_1.default(400, 'No se puede eliminar una tarea que ya tiene entregas. Considere cancelarla.');
             }
+            const referencias = (tarea.archivosReferencia || []).map((a) => (a.toObject ? a.toObject() : a));
+            const deEntregas = (tarea.entregas || []).flatMap((e) => (e.archivos || []).map((a) => (a.toObject ? a.toObject() : a)));
             await tarea.deleteOne();
+            await (0, referenciasArchivos_1.eliminarSiNoReferenciados)(referencias, 'tareas_referencias');
+            await (0, referenciasArchivos_1.eliminarSiNoReferenciados)(deEntregas, 'tareas_entregas');
             res.json({
                 success: true,
                 message: 'Tarea eliminada exitosamente',
@@ -447,45 +419,28 @@ class TareaController {
             if (!req.files || !Array.isArray(req.files) || req.files.length === 0) {
                 throw new ApiError_1.default(400, 'Debes subir al menos un archivo');
             }
-            const db = mongoose_1.default.connection.db;
-            const bucket = new mongodb_1.GridFSBucket(db, {
-                bucketName: 'tareas_entregas',
+            const archivosSubidos = await (0, adjuntos_1.subirAdjuntos)(req.files, 'tareas_entregas', String(req.user._id), {
+                estudianteId: String(req.user._id),
+                tareaId: String(req.params.id),
             });
-            const archivosSubidos = [];
-            for (const file of req.files) {
-                const readStream = fs.createReadStream(file.path);
-                const uploadStream = bucket.openUploadStream(file.originalname, {
-                    metadata: {
-                        estudianteId: req.user._id,
-                        tareaId: req.params.id,
-                        contentType: file.mimetype,
-                    },
-                });
-                await new Promise((resolve, reject) => {
-                    readStream
-                        .pipe(uploadStream)
-                        .on('error', reject)
-                        .on('finish', resolve);
-                });
-                archivosSubidos.push({
-                    fileId: uploadStream.id,
-                    nombre: file.originalname,
-                    tipo: file.mimetype,
-                    tamaño: file.size,
-                    fechaSubida: new Date(),
-                });
-                fs.unlinkSync(file.path);
-            }
             const entrega = tarea.entregas.find((e) => e.estudianteId.toString() === req.user?._id);
             if (!entrega) {
                 throw new ApiError_1.default(404, 'Entrega no encontrada');
             }
+            const archivosAnteriores = (entrega.archivos || []).map((a) => (a.toObject ? a.toObject() : a));
             entrega.fechaEntrega = new Date();
             entrega.estado = esAtrasada ? 'ATRASADA' : 'ENTREGADA';
             entrega.archivos = archivosSubidos;
             entrega.comentarioEstudiante = req.body.comentarioEstudiante || '';
             entrega.intentos += 1;
-            await tarea.save();
+            try {
+                await tarea.save();
+            }
+            catch (saveError) {
+                await (0, adjuntos_1.eliminarAdjuntos)(archivosSubidos, 'tareas_entregas');
+                throw saveError;
+            }
+            await (0, referenciasArchivos_1.eliminarSiNoReferenciados)(archivosAnteriores, 'tareas_entregas');
             res.json({
                 success: true,
                 data: entrega,
@@ -616,37 +571,18 @@ class TareaController {
                 !['ADMIN', 'COORDINADOR', 'RECTOR'].includes(req.user.tipo)) {
                 throw new ApiError_1.default(403, 'No tienes permiso para subir archivos a esta tarea');
             }
-            const db = mongoose_1.default.connection.db;
-            const bucket = new mongodb_1.GridFSBucket(db, {
-                bucketName: 'tareas_referencias',
+            const archivosSubidos = await (0, adjuntos_1.subirAdjuntos)(req.files, 'tareas_referencias', String(req.user._id), {
+                docenteId: String(req.user._id),
+                tareaId: String(req.params.id),
             });
-            const archivosSubidos = [];
-            for (const file of req.files) {
-                const readStream = fs.createReadStream(file.path);
-                const uploadStream = bucket.openUploadStream(file.originalname, {
-                    metadata: {
-                        docenteId: req.user._id,
-                        tareaId: req.params.id,
-                        contentType: file.mimetype,
-                    },
-                });
-                await new Promise((resolve, reject) => {
-                    readStream
-                        .pipe(uploadStream)
-                        .on('error', reject)
-                        .on('finish', resolve);
-                });
-                archivosSubidos.push({
-                    fileId: uploadStream.id,
-                    nombre: file.originalname,
-                    tipo: file.mimetype,
-                    tamaño: file.size,
-                    fechaSubida: new Date(),
-                });
-                fs.unlinkSync(file.path);
-            }
             tarea.archivosReferencia.push(...archivosSubidos);
-            await tarea.save();
+            try {
+                await tarea.save();
+            }
+            catch (saveError) {
+                await (0, adjuntos_1.eliminarAdjuntos)(archivosSubidos, 'tareas_referencias');
+                throw saveError;
+            }
             res.json({
                 success: true,
                 data: archivosSubidos,
@@ -695,15 +631,11 @@ class TareaController {
             if (!archivo) {
                 throw new ApiError_1.default(404, 'Archivo no encontrado');
             }
-            const db = mongoose_1.default.connection.db;
-            const bucket = new mongodb_1.GridFSBucket(db, {
-                bucketName,
-            });
+            const downloadStream = await (0, storage_1.abrirArchivo)(archivo, bucketName);
             res.setHeader('Content-Type', archivo.tipo);
             res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(archivo.nombre)}"`);
-            const downloadStream = bucket.openDownloadStream(new mongoose_1.default.Types.ObjectId(archivoId));
             downloadStream.on('error', (error) => {
-                console.error('Error en GridFS stream:', error);
+                console.error('Error en stream de descarga:', error);
                 if (!res.headersSent) {
                     next(new ApiError_1.default(500, 'Error al descargar el archivo'));
                 }
@@ -735,13 +667,14 @@ class TareaController {
             if (archivoIndex === -1) {
                 throw new ApiError_1.default(404, 'Archivo no encontrado');
             }
-            const db = mongoose_1.default.connection.db;
-            const bucket = new mongodb_1.GridFSBucket(db, {
-                bucketName: 'tareas_referencias',
-            });
-            await bucket.delete(new mongoose_1.default.Types.ObjectId(archivoId));
-            tarea.archivosReferencia.splice(archivoIndex, 1);
+            const [archivo] = tarea.archivosReferencia.splice(archivoIndex, 1);
             await tarea.save();
+            try {
+                await (0, storage_1.eliminarArchivo)(archivo, 'tareas_referencias');
+            }
+            catch (errorBorrado) {
+                console.warn(`[Tareas] No se pudo borrar el archivo ${archivoId} del almacén:`, errorBorrado);
+            }
             res.json({
                 success: true,
                 message: 'Archivo eliminado exitosamente',

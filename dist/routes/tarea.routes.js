@@ -13,6 +13,8 @@ const path_1 = __importDefault(require("path"));
 const fs_1 = __importDefault(require("fs"));
 const sanitizeFilename_1 = require("../utils/sanitizeFilename");
 const sanitize_middleware_1 = require("../middleware/sanitize.middleware");
+const validarArchivos_middleware_1 = require("../middleware/validarArchivos.middleware");
+const limpiarTemporales_middleware_1 = require("../middleware/limpiarTemporales.middleware");
 const router = express_1.default.Router();
 const storage = multer_1.default.diskStorage({
     destination: function (req, file, cb) {
@@ -28,6 +30,7 @@ const storage = multer_1.default.diskStorage({
     },
 });
 const upload = (0, multer_1.default)({
+    defParamCharset: 'utf8',
     storage,
     limits: {
         fileSize: 10 * 1024 * 1024,
@@ -40,11 +43,11 @@ router.get('/:id', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'ESTUDIA
 router.put('/:id', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'), (0, validate_middleware_1.validate)(tarea_validation_1.default.actualizar), tarea_controller_1.default.actualizar);
 router.delete('/:id', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE'), (0, validate_middleware_1.validate)(tarea_validation_1.default.obtenerPorId), tarea_controller_1.default.eliminar);
 router.patch('/:id/cerrar', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'), (0, validate_middleware_1.validate)(tarea_validation_1.default.obtenerPorId), tarea_controller_1.default.cerrar);
-router.post('/:id/archivos', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'), upload.array('archivos', 5), sanitize_middleware_1.sanitizeNoSQL, tarea_controller_1.default.subirArchivosReferencia);
+router.post('/:id/archivos', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'), limpiarTemporales_middleware_1.limpiarTemporales, upload.array('archivos', 5), validarArchivos_middleware_1.validarArchivos, sanitize_middleware_1.sanitizeNoSQL, tarea_controller_1.default.subirArchivosReferencia);
 router.delete('/:id/archivos/:archivoId', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'), (0, validate_middleware_1.validate)(tarea_validation_1.default.archivo), tarea_controller_1.default.eliminarArchivoReferencia);
 router.get('/:id/archivos/:archivoId', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'ESTUDIANTE', 'ACUDIENTE'), (0, validate_middleware_1.validate)(tarea_validation_1.default.archivo), tarea_controller_1.default.descargarArchivo);
 router.patch('/:id/marcar-vista', (0, auth_middleware_1.authorize)('ESTUDIANTE'), (0, validate_middleware_1.validate)(tarea_validation_1.default.obtenerPorId), tarea_controller_1.default.marcarVista);
-router.post('/:id/entregar', (0, auth_middleware_1.authorize)('ESTUDIANTE'), upload.array('archivos', 5), sanitize_middleware_1.sanitizeNoSQL, (0, validate_middleware_1.validate)(tarea_validation_1.default.entregar), tarea_controller_1.default.entregar);
+router.post('/:id/entregar', (0, auth_middleware_1.authorize)('ESTUDIANTE'), limpiarTemporales_middleware_1.limpiarTemporales, upload.array('archivos', 5), validarArchivos_middleware_1.validarArchivos, sanitize_middleware_1.sanitizeNoSQL, (0, validate_middleware_1.validate)(tarea_validation_1.default.entregar), tarea_controller_1.default.entregar);
 router.get('/:id/mi-entrega', (0, auth_middleware_1.authorize)('ESTUDIANTE'), (0, validate_middleware_1.validate)(tarea_validation_1.default.obtenerPorId), tarea_controller_1.default.verMiEntrega);
 router.get('/:id/entregas', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'), (0, validate_middleware_1.validate)(tarea_validation_1.default.obtenerPorId), tarea_controller_1.default.verEntregas);
 router.put('/:id/entregas/:entregaId', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'), (0, validate_middleware_1.validate)(tarea_validation_1.default.calificar), tarea_controller_1.default.calificarEntrega);
