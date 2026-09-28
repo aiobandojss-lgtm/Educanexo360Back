@@ -29,7 +29,6 @@
     "types": ["node", "express", "jest"],
     "paths": {
       // Otras rutas existentes...
-      "express-fileupload": ["./node_modules/express-fileupload/lib/index.d.ts"]
     }
   },
   "include": [
