@@ -91,9 +91,11 @@ const EntregaSchema = new Schema({
   },
   // 5.C9: solo lo ven el docente de la tarea y los administrativos. select:false → ninguna consulta lo trae salvo
   // las que piden '+entregas.historial' (y un save sin cargarlo no lo toca)
+  // default undefined: sin historial el campo no existe (no aparece "historial": [] en cada entrega)
   historial: {
     type: [HistorialEntregaSchema],
     select: false,
+    default: undefined,
   },
 });
 

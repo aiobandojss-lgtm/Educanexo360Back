@@ -652,6 +652,7 @@ class TareaController {
       // calificado (lo ven el docente de la tarea y los administrativos) y la nueva queda como la vigente
       const conservarAnterior = entrega.estado === 'CALIFICADA';
       if (conservarAnterior) {
+        if (!(entrega as any).historial) (entrega as any).historial = [];
         (entrega as any).historial.push({
           archivos: archivosAnteriores,
           calificacion: entrega.calificacion,
