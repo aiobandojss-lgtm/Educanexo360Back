@@ -5,6 +5,7 @@ import { authenticate, authorize } from '../middleware/auth.middleware';
 import { validate } from '../middleware/validate.middleware';
 import tareaValidation from '../validations/tarea.validation';
 import multer from 'multer';
+import { LIMITES_SUBIDA, bytesMaximos, subidaConLimites } from '../utils/erroresSubida';
 import path from 'path';
 import fs from 'fs';
 import { sanitizeFilename } from '../utils/sanitizeFilename';
@@ -34,7 +35,7 @@ const upload = multer({
   defParamCharset: 'utf8',
   storage,
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB límite
+    fileSize: bytesMaximos(LIMITES_SUBIDA.tareas), // 10 MB (5.C10: el mensaje de error cita el mismo valor)
   },
 });
 
@@ -97,7 +98,7 @@ router.post(
   '/:id/archivos',
   authorize('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'),
   limpiarTemporales, // borra los temporales de multer al terminar la respuesta (3.Q)
-  upload.array('archivos', 5),
+  subidaConLimites(LIMITES_SUBIDA.tareas, upload.array(LIMITES_SUBIDA.tareas.campo, LIMITES_SUBIDA.tareas.maxArchivos)),
   validarArchivos, // tipos permitidos por extensión y contenido (5.4)
   sanitizeNoSQL, // multer arma objetos anidados con campo[$ne]
   tareaController.subirArchivosReferencia
@@ -132,7 +133,7 @@ router.post(
   '/:id/entregar',
   authorize('ESTUDIANTE'),
   limpiarTemporales, // borra los temporales de multer al terminar la respuesta (3.Q)
-  upload.array('archivos', 5),
+  subidaConLimites(LIMITES_SUBIDA.tareas, upload.array(LIMITES_SUBIDA.tareas.campo, LIMITES_SUBIDA.tareas.maxArchivos)),
   validarArchivos, // tipos permitidos por extensión y contenido (5.4)
   sanitizeNoSQL, // multer arma objetos anidados con campo[$ne]
   validate(tareaValidation.entregar),

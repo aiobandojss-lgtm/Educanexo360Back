@@ -11,6 +11,7 @@ import {
 } from '../validations/calendario.validation';
 import gridfsManager from '../config/gridfs';
 import ApiError from '../utils/ApiError';
+import { LIMITES_SUBIDA, subidaConLimites } from '../utils/erroresSubida';
 import { invalidateOnCalendario } from '../middleware/dashboardCacheInvalidation.middleware';
 import { sanitizeNoSQL } from '../middleware/sanitize.middleware';
 import { validarArchivos } from '../middleware/validarArchivos.middleware';
@@ -29,7 +30,8 @@ const subirAdjunto: express.RequestHandler = (req, res, next) => {
   if (!upload) {
     return next(new ApiError(503, 'Servicio de archivos no disponible'));
   }
-  return upload.single('archivo')(req, res, next);
+  // 5.C10: errores de multer → 400 con el límite concreto ("Solo se permite 1 archivo", "máximo 5 MB")
+  return subidaConLimites(LIMITES_SUBIDA.calendario, upload.single(LIMITES_SUBIDA.calendario.campo))(req, res, next);
 };
 
 // Middlewares de actualización, compartidos por PUT /:id y su alias POST /:id

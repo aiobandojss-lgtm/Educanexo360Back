@@ -6,6 +6,7 @@ import multer from 'multer';
 import path from 'path';
 import crypto from 'crypto';
 import { sanitizeFilename } from '../utils/sanitizeFilename';
+import { LIMITES_SUBIDA, bytesMaximos } from '../utils/erroresSubida';
 
 // Clase singleton para manejar GridFS
 class GridFSManager {
@@ -44,7 +45,7 @@ class GridFSManager {
         defParamCharset: 'utf8',
         storage,
         limits: {
-          fileSize: 5 * 1024 * 1024, // 5MB limit
+          fileSize: bytesMaximos(LIMITES_SUBIDA.calendario), // 5 MB (5.C10: el mensaje de error cita el mismo valor)
         },
       });
 

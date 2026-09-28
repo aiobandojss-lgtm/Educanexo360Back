@@ -4,6 +4,7 @@ import { authenticate, authorize } from '../middleware/auth.middleware';
 import { validate } from '../middleware/validate.middleware';
 import anuncioValidation from '../validations/anuncio.validation';
 import multer from 'multer';
+import { LIMITES_SUBIDA, bytesMaximos, subidaConLimites } from '../utils/erroresSubida';
 import path from 'path';
 import fs from 'fs';
 import { sanitizeFilename } from '../utils/sanitizeFilename';
@@ -36,7 +37,7 @@ const upload = multer({
   defParamCharset: 'utf8',
   storage,
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB límite de tamaño
+    fileSize: bytesMaximos(LIMITES_SUBIDA.anuncios), // 10 MB (5.C10: el mensaje de error cita el mismo valor)
   },
 });
 
@@ -78,7 +79,7 @@ router.post(
   '/:id/adjuntos',
   authorize('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'),
   limpiarTemporales, // borra los temporales de multer al terminar la respuesta (3.Q)
-  upload.array('archivos', 5),
+  subidaConLimites(LIMITES_SUBIDA.anuncios, upload.array(LIMITES_SUBIDA.anuncios.campo, LIMITES_SUBIDA.anuncios.maxArchivos)),
   validarArchivos, // tipos permitidos por extensión y contenido (5.4)
   sanitizeNoSQL, // multer arma objetos anidados con campo[$ne]
   anuncioController.agregarAdjuntos,

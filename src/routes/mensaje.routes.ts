@@ -6,6 +6,7 @@ import { authenticate, authorize } from '../middleware/auth.middleware';
 import path from 'path';
 import fs from 'fs';
 import multer from 'multer';
+import { LIMITES_SUBIDA, bytesMaximos, subidaConLimites } from '../utils/erroresSubida';
 import { sanitizeFilename } from '../utils/sanitizeFilename';
 import { TipoUsuario } from '../interfaces/IUsuario';
 
@@ -59,8 +60,8 @@ const upload = multer({
   defParamCharset: 'utf8',
   storage,
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB por archivo
-    files: 5, // Máximo 5 archivos
+    fileSize: bytesMaximos(LIMITES_SUBIDA.mensajes), // 5 MB por archivo (5.C10: el mensaje de error cita el mismo valor)
+    files: LIMITES_SUBIDA.mensajes.maxArchivos, // Máximo 5 archivos
   },
 });
 
@@ -72,7 +73,7 @@ router.use(authenticate);
 router.post(
   '/borradores',
   limpiarTemporales, // borra los temporales de multer al terminar la respuesta (3.Q)
-  upload.array('adjuntos', 5),
+  subidaConLimites(LIMITES_SUBIDA.mensajes, upload.array(LIMITES_SUBIDA.mensajes.campo, LIMITES_SUBIDA.mensajes.maxArchivos)),
   validarArchivos, // tipos permitidos por extensión y contenido (5.4)
   sanitizeNoSQL, // multer arma objetos anidados con campo[$ne]
   verificarPermisoBorradores,
@@ -85,7 +86,7 @@ router.post(
 router.post(
   '/borradores/:id',
   limpiarTemporales, // borra los temporales de multer al terminar la respuesta (3.Q)
-  upload.array('adjuntos', 5),
+  subidaConLimites(LIMITES_SUBIDA.mensajes, upload.array(LIMITES_SUBIDA.mensajes.campo, LIMITES_SUBIDA.mensajes.maxArchivos)),
   validarArchivos, // tipos permitidos por extensión y contenido (5.4)
   sanitizeNoSQL, // multer arma objetos anidados con campo[$ne]
   verificarPermisoBorradores,
@@ -166,7 +167,7 @@ router.get(
 router.post(
   '/',
   limpiarTemporales, // borra los temporales de multer al terminar la respuesta (3.Q)
-  upload.array('adjuntos', 5),
+  subidaConLimites(LIMITES_SUBIDA.mensajes, upload.array(LIMITES_SUBIDA.mensajes.campo, LIMITES_SUBIDA.mensajes.maxArchivos)),
   validarArchivos, // tipos permitidos por extensión y contenido (5.4)
   sanitizeNoSQL, // multer arma objetos anidados con campo[$ne]
   invalidateOnMensaje,
@@ -330,7 +331,7 @@ router.put('/:id/leer', (req: any, res: Response, next: NextFunction) => {
 router.post(
   '/:mensajeId/responder',
   limpiarTemporales, // borra los temporales de multer al terminar la respuesta (3.Q)
-  upload.array('adjuntos', 5),
+  subidaConLimites(LIMITES_SUBIDA.mensajes, upload.array(LIMITES_SUBIDA.mensajes.campo, LIMITES_SUBIDA.mensajes.maxArchivos)),
   validarArchivos, // tipos permitidos por extensión y contenido (5.4)
   sanitizeNoSQL, // multer arma objetos anidados con campo[$ne]
   (req: any, res: Response, next: NextFunction) => {
