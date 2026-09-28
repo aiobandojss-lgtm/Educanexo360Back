@@ -449,6 +449,9 @@ class TareaController {
                     fechaCalificacion: entrega.fechaCalificacion,
                     intento: entrega.intentos,
                 });
+                entrega.calificacion = undefined;
+                entrega.comentarioDocente = undefined;
+                entrega.fechaCalificacion = undefined;
             }
             entrega.fechaEntrega = new Date();
             entrega.estado = esAtrasada ? 'ATRASADA' : 'ENTREGADA';
