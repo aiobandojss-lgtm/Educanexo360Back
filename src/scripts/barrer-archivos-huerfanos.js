@@ -12,7 +12,8 @@
  *   anuncios_adjuntos  anuncios.archivosAdjuntos
  *
  * Seguridad: por defecto SIMULACIÓN (solo cuenta). Con --aplicar borra. Solo se consideran huérfanos los archivos con
- * más de --min-horas (24 por defecto) para no tocar subidas en curso. NO lee el .env: MONGODB_URI (y S3_*) explícitas.
+ * más de --min-horas (24 por defecto) para no tocar subidas en curso (también los chunks sin archivo, por la fecha
+ * del ObjectId de su files_id). NO lee el .env: MONGODB_URI (y S3_*) explícitas.
  *
  * Uso:
  *   MONGODB_URI="..." node src/scripts/barrer-archivos-huerfanos.js                  (simulación)
@@ -78,9 +79,13 @@ async function barrerGridFS(db, refs, limite) {
       if (f.uploadDate && f.uploadDate > limite) continue;
       huerfanos.push(f);
     }
-    // chunks cuyo archivo no existe (subida cortada)
+    // chunks cuyo archivo no existe (subida cortada). 5.C2: GridFS escribe el documento .files AL FINAL, así que una
+    // subida en curso también tiene chunks sin archivo; se respeta --min-horas con la fecha del ObjectId de files_id
+    // (si files_id no es un ObjectId no hay fecha fiable y no se toca)
     const conArchivo = new Set((await db.collection(`${bucket}.files`).distinct('_id')).map(String));
-    const idsChunks = (await db.collection(`${bucket}.chunks`).distinct('files_id')).filter((id) => !conArchivo.has(String(id)));
+    const idsChunks = (await db.collection(`${bucket}.chunks`).distinct('files_id')).filter(
+      (id) => !conArchivo.has(String(id)) && typeof id?.getTimestamp === 'function' && id.getTimestamp() <= limite,
+    );
     const bytes = huerfanos.reduce((t, f) => t + (f.length || 0), 0);
     console.log(`  GridFS ${bucket}: ${huerfanos.length} archivo(s) huérfano(s) (${mb(bytes)} MB); ${idsChunks.length} grupo(s) de chunks sin archivo`);
     if (APLICAR) {
