@@ -71,7 +71,7 @@ const CalificacionSchema = new Schema(
 // Middleware para calcular el promedio antes de guardar
 CalificacionSchema.pre('save', async function (next) {
   try {
-    const calificacion = this as ICalificacionDocument;
+    const calificacion = this as unknown as ICalificacionDocument; // unknown: tipos más estrictos de mongoose 8.24 (versionKey:false)
 
     if (
       Array.isArray(calificacion.calificaciones_logros) &&
