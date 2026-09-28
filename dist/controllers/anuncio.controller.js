@@ -15,6 +15,7 @@ const escapeRegex_1 = require("../utils/escapeRegex");
 const pushNotification_service_1 = __importDefault(require("../services/pushNotification.service"));
 const paginacion_1 = require("../utils/paginacion");
 const accesoAcademico_1 = require("../utils/accesoAcademico");
+const enviarArchivo_1 = require("../utils/enviarArchivo");
 class AnuncioController {
     async crear(req, res, next) {
         try {
@@ -277,13 +278,7 @@ class AnuncioController {
             res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
             res.setHeader('Pragma', 'no-cache');
             res.setHeader('Expires', '0');
-            downloadStream.on('error', (error) => {
-                console.error('Error en stream de descarga:', error);
-                if (!res.headersSent) {
-                    next(new ApiError_1.default(500, 'Error al leer el archivo'));
-                }
-            });
-            downloadStream.pipe(res);
+            (0, enviarArchivo_1.enviarArchivo)(downloadStream, res, next, 'Error al leer el archivo');
         }
         catch (error) {
             next(error);

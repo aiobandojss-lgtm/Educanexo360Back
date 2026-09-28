@@ -13,6 +13,7 @@ const escuela_routes_1 = __importDefault(require("./routes/escuela.routes"));
 const usuario_routes_1 = __importDefault(require("./routes/usuario.routes"));
 const ApiError_1 = __importDefault(require("./utils/ApiError"));
 const erroresSubida_1 = require("./utils/erroresSubida");
+const filtroRespuesta_1 = require("./utils/filtroRespuesta");
 const curso_routes_1 = __importDefault(require("./routes/curso.routes"));
 const asignatura_routes_1 = __importDefault(require("./routes/asignatura.routes"));
 const logro_routes_1 = __importDefault(require("./routes/logro.routes"));
@@ -45,6 +46,7 @@ const basePath = process.env.BASE_PATH || '';
 console.log(`Inicializando aplicación con BASE_PATH: "${basePath}"`);
 const app = (0, express_1.default)();
 app.set('trust proxy', 1);
+app.set('json replacer', filtroRespuesta_1.reemplazoRespuestaJson);
 if (process.env.LOG_CLIENT_IP === 'true') {
     app.use((req, _res, next) => {
         console.log(`[trust-proxy] req.ip=${req.ip} x-forwarded-for=${req.headers['x-forwarded-for']}`);

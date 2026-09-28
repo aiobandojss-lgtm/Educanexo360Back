@@ -54,8 +54,11 @@ const resolverAccesoTarea = async (user, tarea) => {
         : null;
     return enCurso ? { entregas: [], completo: false } : null;
 };
+const puedeVerHistorial = (user, tarea) => (0, accesoAcademico_1.esRolAdministrativo)(user.tipo) || (user.tipo === 'DOCENTE' && idDe(tarea.docenteId) === String(user._id));
+const rolConHistorial = (tipo) => (0, accesoAcademico_1.esRolAdministrativo)(tipo) || tipo === 'DOCENTE';
 const pushNotification_service_1 = __importDefault(require("../services/pushNotification.service"));
 const paginacion_1 = require("../utils/paginacion");
+const enviarArchivo_1 = require("../utils/enviarArchivo");
 class TareaController {
     async crear(req, res, next) {
         try {
@@ -220,7 +223,8 @@ class TareaController {
                 .populate('docenteId', 'nombre apellidos email')
                 .populate('asignaturaId', 'nombre')
                 .populate('cursoId', 'nombre nivel')
-                .populate('entregas.estudianteId', 'nombre apellidos email');
+                .populate('entregas.estudianteId', 'nombre apellidos email')
+                .select(rolConHistorial(req.user.tipo) ? '+entregas.historial' : '');
             if (!tarea) {
                 throw new ApiError_1.default(404, 'Tarea no encontrada');
             }
@@ -240,9 +244,14 @@ class TareaController {
                 return;
             }
             const estadisticas = tarea.obtenerEstadisticas();
+            let datos = tarea;
+            if (!puedeVerHistorial(req.user, tarea)) {
+                datos = tarea.toJSON();
+                (datos.entregas || []).forEach((e) => delete e.historial);
+            }
             res.json({
                 success: true,
-                data: tarea,
+                data: datos,
                 estadisticas,
             });
         }
@@ -404,7 +413,7 @@ class TareaController {
                 _id: req.params.id,
                 escuelaId: req.user.escuelaId,
                 'entregas.estudianteId': req.user._id,
-            });
+            }).select('+entregas.historial');
             if (!tarea) {
                 throw new ApiError_1.default(404, 'Tarea no encontrada o no asignada a ti');
             }
@@ -428,6 +437,19 @@ class TareaController {
                 throw new ApiError_1.default(404, 'Entrega no encontrada');
             }
             const archivosAnteriores = (entrega.archivos || []).map((a) => (a.toObject ? a.toObject() : a));
+            const conservarAnterior = entrega.estado === 'CALIFICADA';
+            if (conservarAnterior) {
+                if (!entrega.historial)
+                    entrega.historial = [];
+                entrega.historial.push({
+                    archivos: archivosAnteriores,
+                    calificacion: entrega.calificacion,
+                    comentarioDocente: entrega.comentarioDocente,
+                    fechaEntrega: entrega.fechaEntrega,
+                    fechaCalificacion: entrega.fechaCalificacion,
+                    intento: entrega.intentos,
+                });
+            }
             entrega.fechaEntrega = new Date();
             entrega.estado = esAtrasada ? 'ATRASADA' : 'ENTREGADA';
             entrega.archivos = archivosSubidos;
@@ -440,10 +462,13 @@ class TareaController {
                 await (0, adjuntos_1.eliminarAdjuntos)(archivosSubidos, 'tareas_entregas');
                 throw saveError;
             }
-            await (0, referenciasArchivos_1.eliminarSiNoReferenciados)(archivosAnteriores, 'tareas_entregas');
+            if (!conservarAnterior)
+                await (0, referenciasArchivos_1.eliminarSiNoReferenciados)(archivosAnteriores, 'tareas_entregas');
+            const datosEntrega = entrega.toJSON();
+            delete datosEntrega.historial;
             res.json({
                 success: true,
-                data: entrega,
+                data: datosEntrega,
                 message: esAtrasada
                     ? 'Tarea entregada (ATRASADA)'
                     : 'Tarea entregada exitosamente',
@@ -490,7 +515,9 @@ class TareaController {
             const tarea = await tarea_model_1.default.findOne({
                 _id: req.params.id,
                 escuelaId: req.user.escuelaId,
-            }).populate('entregas.estudianteId', 'nombre apellidos email');
+            })
+                .populate('entregas.estudianteId', 'nombre apellidos email')
+                .select('+entregas.historial');
             if (!tarea) {
                 throw new ApiError_1.default(404, 'Tarea no encontrada');
             }
@@ -603,7 +630,7 @@ class TareaController {
             const tarea = await tarea_model_1.default.findOne({
                 _id: id,
                 escuelaId: req.user.escuelaId,
-            });
+            }).select(rolConHistorial(req.user.tipo) ? '+entregas.historial' : '');
             if (!tarea) {
                 throw new ApiError_1.default(404, 'Tarea no encontrada');
             }
@@ -618,8 +645,13 @@ class TareaController {
                 bucketName = 'tareas_referencias';
             }
             else if (tipo === 'entrega') {
+                const conHistorial = puedeVerHistorial(req.user, tarea);
                 for (const entrega of acceso.entregas) {
-                    archivo = (entrega.archivos || []).find((a) => a.fileId.toString() === archivoId);
+                    const candidatos = [
+                        ...(entrega.archivos || []),
+                        ...(conHistorial ? (entrega.historial || []).flatMap((h) => h.archivos || []) : []),
+                    ];
+                    archivo = candidatos.find((a) => a.fileId.toString() === archivoId);
                     if (archivo)
                         break;
                 }
@@ -634,13 +666,7 @@ class TareaController {
             const downloadStream = await (0, storage_1.abrirArchivo)(archivo, bucketName);
             res.setHeader('Content-Type', archivo.tipo);
             res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(archivo.nombre)}"`);
-            downloadStream.on('error', (error) => {
-                console.error('Error en stream de descarga:', error);
-                if (!res.headersSent) {
-                    next(new ApiError_1.default(500, 'Error al descargar el archivo'));
-                }
-            });
-            downloadStream.pipe(res);
+            (0, enviarArchivo_1.enviarArchivo)(downloadStream, res, next, 'Error al descargar el archivo');
         }
         catch (error) {
             next(error);
@@ -745,7 +771,7 @@ class TareaController {
                         },
                     },
                 },
-                { $project: { entregas: 0 } },
+                { $project: { entregas: 0, 'miEntrega.historial': 0 } },
             ]);
             const tareasConMiEntrega = await tarea_model_1.default.populate(tareasAgg, [
                 { path: 'docenteId', select: 'nombre apellidos' },

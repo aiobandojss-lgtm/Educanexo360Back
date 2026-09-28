@@ -15,6 +15,7 @@ const ICalendario_1 = require("../interfaces/ICalendario");
 const pushNotification_service_1 = __importDefault(require("../services/pushNotification.service"));
 const logger_1 = require("../utils/logger");
 const contentDisposition_1 = require("../utils/contentDisposition");
+const enviarArchivo_1 = require("../utils/enviarArchivo");
 const CAMPOS_EVENTO = [
     'titulo',
     'descripcion',
@@ -553,21 +554,12 @@ class CalendarioController {
             if (!(await (0, storage_1.existeArchivo)(evento.archivoAdjunto, BUCKET_CALENDARIO))) {
                 throw new ApiError_1.default(404, 'Archivo no encontrado en el sistema');
             }
+            const downloadStream = await (0, storage_1.abrirArchivo)(evento.archivoAdjunto, BUCKET_CALENDARIO);
             res.set({
                 'Content-Type': evento.archivoAdjunto.tipo,
                 'Content-Disposition': (0, contentDisposition_1.contentDispositionAdjunto)(evento.archivoAdjunto.nombre),
             });
-            const downloadStream = await (0, storage_1.abrirArchivo)(evento.archivoAdjunto, BUCKET_CALENDARIO);
-            downloadStream.on('error', (error) => {
-                console.error('Error en stream de descarga:', error);
-                if (!res.headersSent) {
-                    next(new ApiError_1.default(500, 'Error al descargar el archivo'));
-                }
-                else {
-                    res.end();
-                }
-            });
-            downloadStream.pipe(res);
+            (0, enviarArchivo_1.enviarArchivo)(downloadStream, res, next, 'Error al descargar el archivo');
         }
         catch (error) {
             next(error);

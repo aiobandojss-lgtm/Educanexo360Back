@@ -17,6 +17,7 @@ const adjuntos_1 = require("../utils/adjuntos");
 const storage_1 = require("../services/storage");
 const BUCKET_MENSAJES = 'uploads';
 const contentDisposition_1 = require("../utils/contentDisposition");
+const enviarArchivo_1 = require("../utils/enviarArchivo");
 exports.ROLES_CON_BORRADORES = ['ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO', 'DOCENTE'];
 const idsDestinatariosValidos = async (ids, escuelaId) => {
     const lista = ids.map((d) => String(d?._id ?? d)).filter((d) => mongoose_1.default.isValidObjectId(d));
@@ -2017,21 +2018,12 @@ class MensajeController {
             if (!(await (0, storage_1.existeArchivo)(adjunto, BUCKET_MENSAJES))) {
                 throw new ApiError_1.default(404, 'Archivo no encontrado en el sistema');
             }
+            const downloadStream = await (0, storage_1.abrirArchivo)(adjunto, BUCKET_MENSAJES);
             res.set({
                 'Content-Type': adjunto.tipo,
                 'Content-Disposition': (0, contentDisposition_1.contentDispositionAdjunto)(adjunto.nombre),
             });
-            const downloadStream = await (0, storage_1.abrirArchivo)(adjunto, BUCKET_MENSAJES);
-            downloadStream.on('error', (error) => {
-                console.error('Error en stream de descarga:', error);
-                if (!res.headersSent) {
-                    next(new ApiError_1.default(500, 'Error al descargar el archivo'));
-                }
-                else {
-                    res.end();
-                }
-            });
-            downloadStream.pipe(res);
+            (0, enviarArchivo_1.enviarArchivo)(downloadStream, res, next, 'Error al descargar el archivo');
         }
         catch (error) {
             next(error);

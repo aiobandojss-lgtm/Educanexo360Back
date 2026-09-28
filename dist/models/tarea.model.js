@@ -69,6 +69,15 @@ const VistaSchema = new mongoose_1.Schema({
         default: Date.now,
     },
 });
+const HistorialEntregaSchema = new mongoose_1.Schema({
+    archivos: [ArchivoSchema],
+    calificacion: { type: Number },
+    comentarioDocente: { type: String },
+    fechaEntrega: { type: Date },
+    fechaCalificacion: { type: Date },
+    intento: { type: Number },
+    fechaReemplazo: { type: Date, default: Date.now },
+});
 const EntregaSchema = new mongoose_1.Schema({
     estudianteId: {
         type: mongoose_1.Schema.Types.ObjectId,
@@ -102,6 +111,11 @@ const EntregaSchema = new mongoose_1.Schema({
     intentos: {
         type: Number,
         default: 0,
+    },
+    historial: {
+        type: [HistorialEntregaSchema],
+        select: false,
+        default: undefined,
     },
 });
 const TareaSchema = new mongoose_1.Schema({

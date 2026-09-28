@@ -58,18 +58,33 @@ const ubicacion = (ref, bucketLegado) => {
     return { almacen: (0, exports.almacen)('gridfs'), clave: `${bucketLegado}/${String(ref.fileId)}` };
 };
 exports.ubicacion = ubicacion;
+const resolver = async (ref, bucketLegado) => {
+    const u = (0, exports.ubicacion)(ref, bucketLegado);
+    if ((ref.almacen && ref.clave) || !process.env.S3_BUCKET)
+        return u;
+    if (await u.almacen.existe(u.clave))
+        return u;
+    try {
+        const s3 = (0, exports.almacen)('s3');
+        if (await s3.existe(u.clave))
+            return { almacen: s3, clave: u.clave };
+    }
+    catch (error) {
+    }
+    return u;
+};
 const abrirArchivo = async (ref, bucketLegado) => {
-    const { almacen: a, clave } = (0, exports.ubicacion)(ref, bucketLegado);
+    const { almacen: a, clave } = await resolver(ref, bucketLegado);
     return a.leer(clave);
 };
 exports.abrirArchivo = abrirArchivo;
 const existeArchivo = async (ref, bucketLegado) => {
-    const { almacen: a, clave } = (0, exports.ubicacion)(ref, bucketLegado);
+    const { almacen: a, clave } = await resolver(ref, bucketLegado);
     return a.existe(clave);
 };
 exports.existeArchivo = existeArchivo;
 const eliminarArchivo = async (ref, bucketLegado) => {
-    const { almacen: a, clave } = (0, exports.ubicacion)(ref, bucketLegado);
+    const { almacen: a, clave } = await resolver(ref, bucketLegado);
     await a.eliminar(clave);
 };
 exports.eliminarArchivo = eliminarArchivo;

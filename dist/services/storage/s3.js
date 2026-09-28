@@ -5,6 +5,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.crearAlmacenS3 = void 0;
 const crypto_1 = __importDefault(require("crypto"));
+const http_1 = __importDefault(require("http"));
+const https_1 = __importDefault(require("https"));
 const stream_1 = require("stream");
 const requerida = (nombre) => {
     const v = process.env[nombre];
@@ -27,6 +29,8 @@ const errorSeguro = (operacion, error) => {
 };
 const crearAlmacenS3 = () => {
     const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
+    const { NodeHttpHandler } = require('@smithy/node-http-handler');
+    const agente = { keepAlive: true, maxSockets: 50 };
     const bucket = requerida('S3_BUCKET');
     const cliente = new S3Client({
         region: process.env.S3_REGION || 'us-east-1',
@@ -35,6 +39,12 @@ const crearAlmacenS3 = () => {
         credentials: { accessKeyId: requerida('S3_ACCESS_KEY_ID'), secretAccessKey: requerida('S3_SECRET_ACCESS_KEY') },
         requestChecksumCalculation: 'WHEN_REQUIRED',
         responseChecksumValidation: 'WHEN_REQUIRED',
+        requestHandler: new NodeHttpHandler({
+            connectionTimeout: 5000,
+            requestTimeout: 60000,
+            httpAgent: new http_1.default.Agent(agente),
+            httpsAgent: new https_1.default.Agent(agente),
+        }),
     });
     return {
         nombre: 's3',
@@ -59,6 +69,7 @@ const crearAlmacenS3 = () => {
                 }));
             }
             catch (error) {
+                origen.destroy();
                 throw errorSeguro('guardar', error);
             }
             return { clave, tamaño, sha256: hash.digest('hex') };
