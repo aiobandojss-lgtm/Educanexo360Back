@@ -9,9 +9,19 @@ import { eliminarSiNoReferenciados } from '../utils/referenciasArchivos';
 
 // Bucket (GridFS) / prefijo de clave de los adjuntos de anuncios
 const BUCKET_ANUNCIOS = 'anuncios_adjuntos';
+
+/**
+ * Fase 5.8 (decisión de Aymer: solo publicación). Quien NO puede crear anuncios (ESTUDIANTE, ACUDIENTE, PADRE)
+ * solo ve anuncios publicados en listado, detalle y descarga. Los roles que crean (administrativos y DOCENTE, los
+ * mismos que deja pasar authorize('ADMIN','DOCENTE',...) en las rutas) siguen viendo borradores. Es lo mismo que ya
+ * piden React y Flutter (soloPublicados=true para quien no crea), ahora garantizado en el servidor. La audiencia
+ * (paraEstudiantes/paraPadres/paraDocentes) no se filtra aquí (queda reportada).
+ */
+const soloPublicados = (tipo: string): boolean => !(esRolAdministrativo(tipo) || tipo === 'DOCENTE' || tipo === 'SUPER_ADMIN');
 import { escapeRegex } from '../utils/escapeRegex';
 import pushNotificationService from '../services/pushNotification.service';
 import { numeroPagina, numeroLimite } from '../utils/paginacion';
+import { esRolAdministrativo } from '../utils/accesoAcademico';
 
 interface RequestWithUser extends Request {
   user?: {
@@ -89,8 +99,8 @@ class AnuncioController {
         filters.destacado = true;
       }
 
-      // Filtro por estado de publicación
-      if (req.query.soloPublicados === 'true') {
+      // Filtro por estado de publicación (forzado para quien no crea anuncios, 5.8)
+      if (req.query.soloPublicados === 'true' || soloPublicados(req.user.tipo)) {
         filters.estaPublicado = true;
       }
 
@@ -154,6 +164,7 @@ class AnuncioController {
       const anuncio = await Anuncio.findOne({
         _id: req.params.id,
         escuelaId: req.user.escuelaId,
+        ...(soloPublicados(req.user.tipo) && { estaPublicado: true }), // 5.8
       }).populate('creador', 'nombre apellidos');
 
       if (!anuncio) {
@@ -339,10 +350,12 @@ class AnuncioController {
 
       const { id, archivoId } = req.params;
 
+      // 5.8: mismas reglas que el detalle (colegio y, para quien no crea anuncios, solo publicados)
       const anuncio = await Anuncio.findOne({
         _id: id,
         escuelaId: req.user.escuelaId,
         'archivosAdjuntos.fileId': new mongoose.Types.ObjectId(archivoId),
+        ...(soloPublicados(req.user.tipo) && { estaPublicado: true }),
       });
 
       if (!anuncio) {
