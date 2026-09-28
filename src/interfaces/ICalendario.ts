@@ -47,6 +47,10 @@ export interface IEventoCalendarioBase {
     nombre: string;
     tipo: string;
     tamaño: number;
+    // Fase 5.2: referencia en la capa de almacenamiento (opcional en lo antiguo)
+    almacen?: 'gridfs' | 's3' | 'local';
+    clave?: string;
+    sha256?: string;
   };
   notificadoEn?: Date; // push de publicación ya enviado (auditoría 3.Y)
 }

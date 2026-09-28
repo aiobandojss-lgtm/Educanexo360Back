@@ -6,9 +6,11 @@ import EventoCalendario from '../models/calendario.model';
 import Usuario from '../models/usuario.model';
 import Curso from '../models/curso.model';
 import ApiError from '../utils/ApiError';
-import gridfsManager from '../config/gridfs';
-import fs from 'fs';
-import path from 'path';
+import { subirAdjuntos, eliminarAdjuntos } from '../utils/adjuntos';
+import { abrirArchivo, existeArchivo, eliminarArchivo } from '../services/storage';
+
+// Bucket (GridFS) / prefijo de clave de los adjuntos de eventos (el mismo de los mensajes)
+const BUCKET_CALENDARIO = 'uploads';
 import { EstadoEvento } from '../interfaces/ICalendario';
 import pushNotificationService from '../services/pushNotification.service';
 import { logger } from '../utils/logger';
@@ -114,44 +116,10 @@ class CalendarioController {
       // Verificar si hay un archivo adjunto
       const archivoCrear = archivoSubido(req);
       if (archivoCrear) {
-        const file = archivoCrear;
-        const bucket = gridfsManager.getBucket();
-
-        if (!bucket) {
-          throw new ApiError(500, 'Servicio de archivos no disponible');
-        }
-
-        // Subir archivo a GridFS
-        const filename = file.filename || path.basename(file.path);
-        const uploadStream = bucket.openUploadStream(filename, {
-          metadata: {
-            originalName: file.originalname,
-            contentType: file.mimetype,
-            size: file.size,
-            uploadedBy: req.user._id,
-          },
-        });
-
-        const fileContent = fs.readFileSync(file.path);
-        // Esperar a que GridFS termine de escribir (antes se respondía antes de que existiera el archivo)
-        await new Promise((resolve, reject) => {
-          uploadStream.once('finish', resolve).once('error', reject);
-          uploadStream.end(fileContent);
-        });
-
-        eventoData.archivoAdjunto = {
-          fileId: uploadStream.id,
-          nombre: file.originalname,
-          tipo: file.mimetype,
-          tamaño: file.size,
-        };
-
-        // Limpiar archivo temporal
-        try {
-          fs.unlinkSync(file.path);
-        } catch (error) {
-          console.error('Error deleting temporary file:', error);
-        }
+        // Fase 5.2: subida por la capa (stream, sin cargar el archivo en memoria); temporales: limpiarTemporales
+        const [subido] = await subirAdjuntos([archivoCrear], BUCKET_CALENDARIO, String(req.user._id));
+        const { fechaSubida: _f, ...ref } = subido;
+        eventoData.archivoAdjunto = ref;
       }
 
       // Procesar fechas - MODIFICADO para mejor manejo de zonas horarias
@@ -185,7 +153,14 @@ class CalendarioController {
         }
       }
 
-      const evento = (await EventoCalendario.create(eventoData)) as any;
+      let evento: any;
+      try {
+        evento = (await EventoCalendario.create(eventoData)) as any;
+      } catch (crearError) {
+        // No se creó: el archivo recién subido quedaría huérfano (criterio 3.O)
+        if (eventoData.archivoAdjunto) await eliminarAdjuntos([eventoData.archivoAdjunto], BUCKET_CALENDARIO);
+        throw crearError;
+      }
 
       const eventoPopulado = await EventoCalendario.findById(evento._id)
         .populate('creadorId', 'nombre apellidos email tipo')
@@ -502,66 +477,33 @@ class CalendarioController {
     // Verificar si hay un archivo adjunto
     const archivoActualizar = archivoSubido(req);
     if (archivoActualizar) {
-      const file = archivoActualizar;
-      const bucket = gridfsManager.getBucket();
-
-      if (!bucket) {
-        throw new ApiError(500, 'Servicio de archivos no disponible');
-      }
-
-      // Si ya hay un archivo adjunto, eliminarlo
-      if (evento.archivoAdjunto && evento.archivoAdjunto.fileId) {
-        try {
-          await bucket.delete(
-            new mongoose.Types.ObjectId(evento.archivoAdjunto.fileId.toString()),
-          );
-        } catch (error) {
-          console.error('Error deleting old file:', error);
-        }
-      }
-
-      // Subir nuevo archivo a GridFS
-      const filename = file.filename || path.basename(file.path);
-      const uploadStream = bucket.openUploadStream(filename, {
-        metadata: {
-          originalName: file.originalname,
-          contentType: file.mimetype,
-          size: file.size,
-          uploadedBy: req.user._id,
-        },
-      });
-
-      const fileContent = fs.readFileSync(file.path);
-      // Esperar a que GridFS termine de escribir (antes se respondía antes de que existiera el archivo)
-      await new Promise((resolve, reject) => {
-        uploadStream.once('finish', resolve).once('error', reject);
-        uploadStream.end(fileContent);
-      });
-
-      datosActualizacion.archivoAdjunto = {
-        fileId: uploadStream.id,
-        nombre: file.originalname,
-        tipo: file.mimetype,
-        tamaño: file.size,
-      };
-
-      // Limpiar archivo temporal
-      try {
-        fs.unlinkSync(file.path);
-      } catch (error) {
-        console.error('Error deleting temporary file:', error);
-      }
+      // Fase 5.2: se sube el nuevo por la capa; el anterior se borra DESPUÉS de actualizar el evento (antes se
+      // borraba primero: si algo fallaba después, el evento quedaba sin archivo)
+      const [subido] = await subirAdjuntos([archivoActualizar], BUCKET_CALENDARIO, String(req.user._id));
+      const { fechaSubida: _f, ...ref } = subido;
+      datosActualizacion.archivoAdjunto = ref;
     }
+    const adjuntoAnterior = archivoActualizar && evento.archivoAdjunto && evento.archivoAdjunto.fileId ? evento.archivoAdjunto : null;
 
     // Actualizar el evento
-    await EventoCalendario.findOneAndUpdate(
-      { _id: req.params.id, escuelaId: req.user.escuelaId },
-      datosActualizacion,
-      {
-        new: true,
-        runValidators: true,
-      },
-    );
+    try {
+      await EventoCalendario.findOneAndUpdate(
+        { _id: req.params.id, escuelaId: req.user.escuelaId },
+        datosActualizacion,
+        {
+          new: true,
+          runValidators: true,
+        },
+      );
+    } catch (actualizarError) {
+      if (datosActualizacion.archivoAdjunto) await eliminarAdjuntos([datosActualizacion.archivoAdjunto], BUCKET_CALENDARIO);
+      throw actualizarError;
+    }
+    if (adjuntoAnterior) {
+      await eliminarArchivo(adjuntoAnterior as any, BUCKET_CALENDARIO).catch((error) =>
+        console.error('Error deleting old file:', error),
+      );
+    }
 
     // Obtener evento actualizado con campos populados
     const eventoActualizado = await EventoCalendario.findById(req.params.id)
@@ -804,16 +746,8 @@ class CalendarioController {
         throw new ApiError(404, 'Este evento no tiene archivo adjunto');
       }
 
-      const bucket = gridfsManager.getBucket();
-      if (!bucket) {
-        throw new ApiError(500, 'Servicio de archivos no disponible');
-      }
-
-      // Buscar el archivo en GridFS
-      const fileId = new mongoose.Types.ObjectId(evento.archivoAdjunto.fileId.toString());
-      // Existencia en GridFS (cursor.count() está deprecado en el driver 6)
-      const [documento] = await bucket.find({ _id: fileId }).limit(1).toArray();
-      if (!documento) {
+      // Existencia en su almacén (Fase 5.2: GridFS o S3 según la referencia)
+      if (!(await existeArchivo(evento.archivoAdjunto as any, BUCKET_CALENDARIO))) {
         throw new ApiError(404, 'Archivo no encontrado en el sistema');
       }
 
@@ -823,11 +757,11 @@ class CalendarioController {
         'Content-Disposition': contentDispositionAdjunto(evento.archivoAdjunto.nombre),
       });
 
-      // Devolver el stream del archivo
-      const downloadStream = bucket.openDownloadStream(fileId);
-      // Sin handler, un error de GridFS con las cabeceras ya enviadas era un error de stream no manejado
+      // Devolver el stream del archivo (el backend autoriza y hace stream: no se redirige a una URL firmada)
+      const downloadStream = await abrirArchivo(evento.archivoAdjunto as any, BUCKET_CALENDARIO);
+      // Sin handler, un error del almacén con las cabeceras ya enviadas era un error de stream no manejado
       downloadStream.on('error', (error) => {
-        console.error('Error en stream de descarga GridFS:', error);
+        console.error('Error en stream de descarga:', error);
         if (!res.headersSent) {
           next(new ApiError(500, 'Error al descargar el archivo'));
         } else {

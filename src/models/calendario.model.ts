@@ -2,6 +2,7 @@
 
 import mongoose, { Schema } from 'mongoose';
 import { IEventoCalendario, TipoEvento, EstadoEvento } from '../interfaces/ICalendario';
+import { camposAlmacen } from './campos/referenciaArchivo';
 
 const InvitadoSchema = new Schema({
   usuarioId: {
@@ -48,6 +49,8 @@ const ArchivoAdjuntoSchema = new Schema({
     type: Number,
     required: true,
   },
+  // Fase 5.2: dónde está el archivo (opcional; sin estos campos es GridFS 'uploads' por fileId)
+  ...camposAlmacen,
 });
 
 const EventoCalendarioSchema = new Schema(
