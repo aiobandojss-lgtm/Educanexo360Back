@@ -6,7 +6,7 @@
  *   (sin flags)      SIMULACIÓN: archivos y MB por bucket, ya migrados, pendientes y sin referencia. No cambia nada.
  *   --aplicar        copia por lotes (--lote=N, 20 por defecto). Por cada archivo pendiente:
  *                      1. si en S3 ya existe '<bucket>/<fileId>' con el mismo tamaño y sha256 → no lo vuelve a subir
- *                         (reanudar tras un corte);
+ *                         (reanudar tras un corte); mismo tamaño con otro sha256 → lo vuelve a subir;
  *                      2. si no, lo sube en stream calculando sha256;
  *                      3. VERIFICA descargándolo de S3: tamaño y sha256 (y md5 si GridFS lo guardó) iguales al origen;
  *                      4. solo entonces actualiza TODAS las referencias a ese fileId (mensajes y sus copias a
@@ -72,15 +72,24 @@ const AVISO_SERVIDOR =
   'ℹ️  El servidor debe tener EXACTAMENTE las mismas S3_ENDPOINT, S3_REGION, S3_BUCKET y credenciales que esta corrida: ' +
   'las referencias migradas apuntan a este bucket.';
 
-// [colección, ruta del arreglo o subdocumento, cómo se escribe cada campo]
+// [colección, ruta del arreglo o subdocumento, cómo se escribe cada campo, arrayFilters para un fileId]
+const soloArchivo = (id) => [{ 'a.fileId': id }];
 const REFERENCIAS = {
   uploads: [
-    { col: 'mensajes', filtro: 'adjuntos.fileId', set: (c) => `adjuntos.$[a].${c}`, arrayFilters: true },
-    { col: 'eventocalendarios', filtro: 'archivoAdjunto.fileId', set: (c) => `archivoAdjunto.${c}`, arrayFilters: false },
+    { col: 'mensajes', filtro: 'adjuntos.fileId', set: (c) => `adjuntos.$[a].${c}`, arrayFilters: soloArchivo },
+    { col: 'eventocalendarios', filtro: 'archivoAdjunto.fileId', set: (c) => `archivoAdjunto.${c}`, arrayFilters: null },
   ],
-  tareas_referencias: [{ col: 'tareas', filtro: 'archivosReferencia.fileId', set: (c) => `archivosReferencia.$[a].${c}`, arrayFilters: true }],
-  tareas_entregas: [{ col: 'tareas', filtro: 'entregas.archivos.fileId', set: (c) => `entregas.$[].archivos.$[a].${c}`, arrayFilters: true }],
-  anuncios_adjuntos: [{ col: 'anuncios', filtro: 'archivosAdjuntos.fileId', set: (c) => `archivosAdjuntos.$[a].${c}`, arrayFilters: true }],
+  tareas_referencias: [{ col: 'tareas', filtro: 'archivosReferencia.fileId', set: (c) => `archivosReferencia.$[a].${c}`, arrayFilters: soloArchivo }],
+  // Auditoría 5.C7: $[e] con filtro (no $[]): con $[] una entrega vieja sin 'archivos' hacía fallar el update de toda la tarea
+  tareas_entregas: [
+    {
+      col: 'tareas',
+      filtro: 'entregas.archivos.fileId',
+      set: (c) => `entregas.$[e].archivos.$[a].${c}`,
+      arrayFilters: (id) => [{ 'e.archivos.fileId': id }, { 'a.fileId': id }],
+    },
+  ],
+  anuncios_adjuntos: [{ col: 'anuncios', filtro: 'archivosAdjuntos.fileId', set: (c) => `archivosAdjuntos.$[a].${c}`, arrayFilters: soloArchivo }],
 };
 const mb = (b) => (b / 1024 / 1024).toFixed(2);
 
@@ -192,7 +201,7 @@ async function actualizarReferencias(db, bucket, fileId, clave, sha256) {
   let n = 0;
   for (const r of REFERENCIAS[bucket]) {
     const set = { [r.set('almacen')]: 's3', [r.set('clave')]: clave, [r.set('sha256')]: sha256 };
-    const res = await db.collection(r.col).updateMany({ [r.filtro]: fileId }, { $set: set }, r.arrayFilters ? { arrayFilters: [{ 'a.fileId': fileId }] } : {});
+    const res = await db.collection(r.col).updateMany({ [r.filtro]: fileId }, { $set: set }, r.arrayFilters ? { arrayFilters: r.arrayFilters(fileId) } : {});
     n += res.modifiedCount;
   }
   return n;
@@ -279,15 +288,21 @@ async function main() {
           if (leidos !== Number(f.length)) throw new Error(`contenido incompleto en GridFS (${leidos} de ${f.length} bytes; faltan chunks)`);
           if (f.md5 && f.md5 !== origen.md5) throw new Error('el md5 guardado en GridFS no coincide con su contenido');
 
-          let h = await cabecera(s3, clave);
+          const h = await cabecera(s3, clave);
+          let destino = null;
           if (h && Number(h.ContentLength) === Number(f.length)) {
-            rep.yaEnS3++; // corte anterior: se verifica abajo, no se vuelve a subir
-          } else {
+            // corte anterior: si el contenido coincide no se vuelve a subir. Auditoría 5.C7: mismo tamaño con otro
+            // contenido (subida anterior corrupta o escritura ajena) → se sube de nuevo en vez de fallar para siempre
+            destino = await hashDeS3(s3, clave);
+            if (destino.sha256 === origen.sha256) rep.yaEnS3++;
+            else destino = null;
+          }
+          if (!destino) {
             await subir(s3, gfs, f, clave);
             rep.copiados++;
             rep.bytesCopiados += f.length || 0;
+            destino = await hashDeS3(s3, clave);
           }
-          const destino = await hashDeS3(s3, clave);
           if (destino.tamaño !== Number(f.length) || destino.sha256 !== origen.sha256) {
             throw new Error(`verificación fallida (tamaño ${destino.tamaño}/${f.length}, sha256 distinto=${destino.sha256 !== origen.sha256})`);
           }
