@@ -2820,14 +2820,15 @@ export class MensajeController {
         throw new ApiError(404, 'Archivo no encontrado en el sistema');
       }
 
-      // Configurar respuesta (Content-Disposition RFC 5987, ver utils/contentDisposition)
+      // Devolver el stream del archivo (el backend autoriza y hace stream: no se redirige a una URL firmada)
+      const downloadStream = await abrirArchivo(adjunto as any, BUCKET_MENSAJES);
+
+      // Configurar respuesta (Content-Disposition RFC 5987, ver utils/contentDisposition).
+      // 5.C5: solo tras abrir el archivo; si abrir falla, el error JSON no sale como adjunto con el tipo del archivo
       res.set({
         'Content-Type': adjunto.tipo,
         'Content-Disposition': contentDispositionAdjunto(adjunto.nombre),
       });
-
-      // Devolver el stream del archivo (el backend autoriza y hace stream: no se redirige a una URL firmada)
-      const downloadStream = await abrirArchivo(adjunto as any, BUCKET_MENSAJES);
       // Sin handler, un error del almacén con las cabeceras ya enviadas era un error de stream no manejado
       // 5.C1: si el cliente corta se destruye el origen (libera el socket de S3); error a mitad → res.destroy()
       enviarArchivo(downloadStream, res, next, 'Error al descargar el archivo');
