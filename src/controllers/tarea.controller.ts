@@ -5,8 +5,8 @@ import Tarea from '../models/tarea.model';
 import Curso from '../models/curso.model';
 import Usuario from '../models/usuario.model';
 import ApiError from '../utils/ApiError';
-import { GridFSBucket } from 'mongodb';
-import * as fs from 'fs';
+import { subirAdjuntos, eliminarAdjuntos } from '../utils/adjuntos';
+import { abrirArchivo, eliminarArchivo } from '../services/storage';
 import { escapeRegex } from '../utils/escapeRegex';
 import {
   esRolAdministrativo,
@@ -605,42 +605,11 @@ class TareaController {
         throw new ApiError(400, 'Debes subir al menos un archivo');
       }
 
-      // Procesar archivos subidos con GridFS
-      const db = mongoose.connection.db;
-      const bucket = new GridFSBucket(db as any, {
-        bucketName: 'tareas_entregas',
+      // Fase 5.2: subida por la capa de almacenamiento (temporales: limpiarTemporales; si una falla, no deja huérfanos)
+      const archivosSubidos = await subirAdjuntos(req.files as Express.Multer.File[], 'tareas_entregas', String(req.user._id), {
+        estudianteId: String(req.user._id),
+        tareaId: String(req.params.id),
       });
-
-      const archivosSubidos = [];
-
-      for (const file of req.files as Express.Multer.File[]) {
-        const readStream = fs.createReadStream(file.path);
-        const uploadStream = bucket.openUploadStream(file.originalname, {
-          metadata: {
-            estudianteId: req.user._id,
-            tareaId: req.params.id,
-            contentType: file.mimetype,
-          },
-        });
-
-        await new Promise((resolve, reject) => {
-          readStream
-            .pipe(uploadStream)
-            .on('error', reject)
-            .on('finish', resolve);
-        });
-
-        archivosSubidos.push({
-          fileId: uploadStream.id,
-          nombre: file.originalname,
-          tipo: file.mimetype,
-          tamaño: file.size,
-          fechaSubida: new Date(),
-        });
-
-        // Eliminar archivo temporal
-        fs.unlinkSync(file.path);
-      }
 
       // Encontrar y actualizar la entrega del estudiante
       const entrega = tarea.entregas.find(
@@ -657,7 +626,13 @@ class TareaController {
       entrega.comentarioEstudiante = req.body.comentarioEstudiante || '';
       entrega.intentos += 1;
 
-      await tarea.save();
+      try {
+        await tarea.save();
+      } catch (saveError) {
+        // No se guardó: los archivos recién subidos quedarían huérfanos (criterio 3.O)
+        await eliminarAdjuntos(archivosSubidos, 'tareas_entregas');
+        throw saveError;
+      }
 
       res.json({
         success: true,
@@ -850,46 +825,20 @@ class TareaController {
         throw new ApiError(403, 'No tienes permiso para subir archivos a esta tarea');
       }
 
-      // Procesar archivos con GridFS
-      const db = mongoose.connection.db;
-      const bucket = new GridFSBucket(db as any, {
-        bucketName: 'tareas_referencias',
+      // Fase 5.2: subida por la capa de almacenamiento (temporales: limpiarTemporales; si una falla, no deja huérfanos)
+      const archivosSubidos = await subirAdjuntos(req.files as Express.Multer.File[], 'tareas_referencias', String(req.user._id), {
+        docenteId: String(req.user._id),
+        tareaId: String(req.params.id),
       });
 
-      const archivosSubidos = [];
-
-      for (const file of req.files as Express.Multer.File[]) {
-        const readStream = fs.createReadStream(file.path);
-        const uploadStream = bucket.openUploadStream(file.originalname, {
-          metadata: {
-            docenteId: req.user._id,
-            tareaId: req.params.id,
-            contentType: file.mimetype,
-          },
-        });
-
-        await new Promise((resolve, reject) => {
-          readStream
-            .pipe(uploadStream)
-            .on('error', reject)
-            .on('finish', resolve);
-        });
-
-        archivosSubidos.push({
-          fileId: uploadStream.id,
-          nombre: file.originalname,
-          tipo: file.mimetype,
-          tamaño: file.size,
-          fechaSubida: new Date(),
-        });
-
-        // Eliminar archivo temporal
-        fs.unlinkSync(file.path);
-      }
-
       // Agregar archivos a la tarea
-      tarea.archivosReferencia.push(...archivosSubidos);
-      await tarea.save();
+      tarea.archivosReferencia.push(...(archivosSubidos as any[]));
+      try {
+        await tarea.save();
+      } catch (saveError) {
+        await eliminarAdjuntos(archivosSubidos, 'tareas_referencias');
+        throw saveError;
+      }
 
       res.json({
         success: true,
@@ -954,26 +903,19 @@ class TareaController {
         throw new ApiError(404, 'Archivo no encontrado');
       }
 
-      // Configurar GridFS
-      const db = mongoose.connection.db;
-      const bucket = new GridFSBucket(db as any, {
-        bucketName,
-      });
+      // Fase 5.2: abrir desde su almacén (GridFS o S3 según la referencia) ANTES de fijar cabeceras
+      const downloadStream = await abrirArchivo(archivo, bucketName);
 
-      // Configurar headers
+      // Configurar headers (idénticas a las de siempre)
       res.setHeader('Content-Type', archivo.tipo);
       res.setHeader(
         'Content-Disposition',
         `attachment; filename="${encodeURIComponent(archivo.nombre)}"`
       );
 
-      // Stream del archivo
-      const downloadStream = bucket.openDownloadStream(
-        new mongoose.Types.ObjectId(archivoId)
-      );
-
+      // Stream del archivo (el backend autoriza y hace stream: no se redirige a una URL firmada)
       downloadStream.on('error', (error) => {
-        console.error('Error en GridFS stream:', error);
+        console.error('Error en stream de descarga:', error);
         if (!res.headersSent) {
           next(new ApiError(500, 'Error al descargar el archivo'));
         }
@@ -1022,17 +964,15 @@ class TareaController {
         throw new ApiError(404, 'Archivo no encontrado');
       }
 
-      // Eliminar de GridFS
-      const db = mongoose.connection.db;
-      const bucket = new GridFSBucket(db as any, {
-        bucketName: 'tareas_referencias',
-      });
-
-      await bucket.delete(new mongoose.Types.ObjectId(archivoId));
-
-      // Eliminar del array
-      tarea.archivosReferencia.splice(archivoIndex, 1);
+      // Fase 5.2: primero se quita del documento y DESPUÉS se borra el archivo (si el save falla, el archivo sigue
+      // referenciado y no se pierde; antes un archivo ya inexistente en GridFS hacía fallar la petición con 500)
+      const [archivo] = tarea.archivosReferencia.splice(archivoIndex, 1);
       await tarea.save();
+      try {
+        await eliminarArchivo(archivo as any, 'tareas_referencias');
+      } catch (errorBorrado) {
+        console.warn(`[Tareas] No se pudo borrar el archivo ${archivoId} del almacén:`, errorBorrado);
+      }
 
       res.json({
         success: true,

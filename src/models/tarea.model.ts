@@ -1,6 +1,7 @@
 // src/models/tarea.model.ts
 import mongoose, { Schema } from 'mongoose';
 import { ITarea } from '../interfaces/ITarea';
+import { camposAlmacen } from './campos/referenciaArchivo';
 
 // Schema para archivos
 const ArchivoSchema = new Schema({
@@ -24,6 +25,8 @@ const ArchivoSchema = new Schema({
     type: Date,
     default: Date.now,
   },
+  // Fase 5.2: dónde está el archivo (opcional; sin estos campos es GridFS tareas_referencias/tareas_entregas)
+  ...camposAlmacen,
 });
 
 // Schema para vistas

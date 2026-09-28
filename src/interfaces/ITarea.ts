@@ -20,6 +20,10 @@ export interface IArchivoTarea {
   tipo: string;
   tamaño: number;
   fechaSubida: Date;
+  // Fase 5.2: referencia en la capa de almacenamiento (opcional en lo antiguo)
+  almacen?: 'gridfs' | 's3' | 'local';
+  clave?: string;
+  sha256?: string;
 }
 
 // Interface para tracking de vistas

@@ -18,11 +18,16 @@ export interface AdjuntoSubido {
  * - Si una subida falla, borra los ya subidos (el almacén limpia su propio parcial) y relanza: no quedan
  *   huérfanos (3.O/3.S).
  */
-export const subirAdjuntos = async (files: any[], bucket: string, usuarioId?: string): Promise<AdjuntoSubido[]> => {
+export const subirAdjuntos = async (
+  files: any[],
+  bucket: string,
+  usuarioId?: string,
+  extra?: Record<string, string>,
+): Promise<AdjuntoSubido[]> => {
   const subidos: AdjuntoSubido[] = [];
   try {
     for (const file of files) {
-      const ref = await subirArchivo(file, bucket, usuarioId ? { uploadedBy: String(usuarioId) } : undefined);
+      const ref = await subirArchivo(file, bucket, { ...(usuarioId && { uploadedBy: String(usuarioId) }), ...(extra || {}) });
       subidos.push({ ...ref, fileId: ref.fileId as Types.ObjectId, fechaSubida: new Date() });
     }
     return subidos;
