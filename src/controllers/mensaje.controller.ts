@@ -2783,9 +2783,16 @@ export class MensajeController {
 
       const { mensajeId, adjuntoId } = req.params;
 
+      // Fase 5.8: mismas reglas que el detalle (obtenerPorId): colegio del usuario Y participante. Antes faltaba el
+      // filtro por colegio. Cuentas sin colegio (SUPER_ADMIN sin escuelaId) no tienen mensajes.
+      if (!mongoose.isValidObjectId(req.user.escuelaId)) {
+        throw new ApiError(403, 'El usuario no tiene un colegio asociado');
+      }
+
       // Verificar que el mensaje existe y el usuario tiene acceso
       const mensaje = await Mensaje.findOne({
         _id: mensajeId,
+        escuelaId: req.user.escuelaId,
         $or: [
           { remitente: req.user._id },
           { destinatarios: req.user._id },
