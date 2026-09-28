@@ -3,8 +3,11 @@ import mongoose from 'mongoose';
 import Anuncio from '../models/anuncio.model';
 import Usuario from '../models/usuario.model';
 import ApiError from '../utils/ApiError';
-import { GridFSBucket } from 'mongodb';
-import * as fs from 'fs';
+import { subirAdjuntos, eliminarAdjuntos } from '../utils/adjuntos';
+import { abrirArchivo, eliminarArchivo } from '../services/storage';
+
+// Bucket (GridFS) / prefijo de clave de los adjuntos de anuncios
+const BUCKET_ANUNCIOS = 'anuncios_adjuntos';
 import { escapeRegex } from '../utils/escapeRegex';
 import pushNotificationService from '../services/pushNotification.service';
 import { numeroPagina, numeroLimite } from '../utils/paginacion';
@@ -349,13 +352,10 @@ class AnuncioController {
         throw new ApiError(404, 'Archivo adjunto no encontrado');
       }
 
-      // Configurar GridFS
-      const db = mongoose.connection.db;
-      const bucket = new GridFSBucket(db as any, {
-        bucketName: 'anuncios_adjuntos',
-      });
+      // Fase 5.2: abrir desde su almacén (GridFS o S3 según la referencia) ANTES de fijar cabeceras
+      const downloadStream = await abrirArchivo(archivo, BUCKET_ANUNCIOS);
 
-      // IMPORTANTE: Establecer correctamente las cabeceras
+      // IMPORTANTE: Establecer correctamente las cabeceras (idénticas a las de siempre)
       // Establecer el tipo MIME
       res.setHeader('Content-Type', archivo.tipo);
 
@@ -370,14 +370,11 @@ class AnuncioController {
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');
 
-      // Buscar el archivo en GridFS y transmitirlo
-      const downloadStream = bucket.openDownloadStream(new mongoose.Types.ObjectId(archivoId));
-
-      // Manejar errores del stream
+      // Manejar errores del stream (el backend autoriza y hace stream: no se redirige a una URL firmada)
       downloadStream.on('error', (error) => {
-        console.error('Error en GridFS stream:', error);
+        console.error('Error en stream de descarga:', error);
         if (!res.headersSent) {
-          next(new ApiError(500, 'Error al leer el archivo desde GridFS'));
+          next(new ApiError(500, 'Error al leer el archivo'));
         }
       });
 
@@ -413,53 +410,21 @@ class AnuncioController {
         throw new ApiError(403, 'No tienes permiso para modificar este anuncio');
       }
 
-      // Configurar GridFS para cargar los archivos desde disco
-      const db = mongoose.connection.db;
-      if (!db) {
-        throw new ApiError(500, 'Error de conexión a la base de datos');
-      }
-      const bucket = new GridFSBucket(db as any, {
-        bucketName: 'anuncios_adjuntos',
+      // Fase 5.2: subida por la capa de almacenamiento. Si una subida falla, no deja huérfanos; los temporales
+      // los borra limpiarTemporales (antes: subida en paralelo sin rollback y unlink manual)
+      const nuevosAdjuntos = await subirAdjuntos(req.files as Express.Multer.File[], BUCKET_ANUNCIOS, String(req.user._id), {
+        anuncioId: String(anuncio._id),
       });
-
-      // Procesar cada archivo: subirlo a GridFS y luego eliminarlo del disco
-      const filePromises = (req.files as Express.Multer.File[]).map(async (file) => {
-        // Crear un stream de lectura del archivo en disco
-        const fileStream = fs.createReadStream(file.path);
-
-        // Crear un stream de escritura a GridFS
-        const uploadStream = bucket.openUploadStream(file.originalname, {
-          contentType: file.mimetype,
-        });
-
-        // Conectar los streams y esperar a que termine la subida
-        return new Promise<any>((resolve, reject) => {
-          fileStream
-            .pipe(uploadStream)
-            .on('error', (error) => {
-              reject(error);
-            })
-            .on('finish', () => {
-              // Eliminar el archivo temporal
-              fs.unlinkSync(file.path);
-
-              // Retornar los datos del archivo
-              resolve({
-                fileId: uploadStream.id,
-                nombre: file.originalname,
-                tipo: file.mimetype,
-                tamaño: file.size,
-              });
-            });
-        });
-      });
-
-      // Esperar a que todos los archivos se suban a GridFS
-      const nuevosAdjuntos = await Promise.all(filePromises);
 
       // Actualizar el anuncio con los nuevos adjuntos
-      anuncio.archivosAdjuntos.push(...nuevosAdjuntos);
-      await anuncio.save();
+      anuncio.archivosAdjuntos.push(...(nuevosAdjuntos as any[]));
+      try {
+        await anuncio.save();
+      } catch (saveError) {
+        // No se guardó: los recién subidos quedarían huérfanos (criterio 3.O)
+        await eliminarAdjuntos(nuevosAdjuntos, BUCKET_ANUNCIOS);
+        throw saveError;
+      }
 
       res.json({
         success: true,
@@ -467,14 +432,7 @@ class AnuncioController {
         message: 'Archivos adjuntos añadidos exitosamente',
       });
     } catch (error) {
-      // Limpiar archivos temporales en caso de error
-      if (req.files && Array.isArray(req.files)) {
-        (req.files as Express.Multer.File[]).forEach((file) => {
-          if (fs.existsSync(file.path)) {
-            fs.unlinkSync(file.path);
-          }
-        });
-      }
+      // Los temporales los borra limpiarTemporales (3.Q)
       next(error);
     }
   }
@@ -510,32 +468,15 @@ class AnuncioController {
         throw new ApiError(404, 'Archivo adjunto no encontrado');
       }
 
-      try {
-        // Configurar GridFS para eliminar el archivo
-        const db = mongoose.connection.db;
-        if (!db) {
-          throw new ApiError(500, 'Error de conexión a la base de datos');
-        }
-        const bucket = new GridFSBucket(db, {
-          bucketName: 'anuncios_adjuntos',
-        });
-
-        // Eliminar el archivo de GridFS
-        await bucket.delete(new mongoose.Types.ObjectId(archivoId));
-      } catch (error: unknown) {
-        // Manejo elegante si el archivo ya fue eliminado de GridFS
-        if (error instanceof Error && error.message.includes('FileNotFound')) {
-          console.warn(
-            `Archivo ${archivoId} no encontrado en GridFS, continuando con la eliminación de la referencia`,
-          );
-        } else {
-          throw error;
-        }
-      }
-
-      // Eliminar la referencia del anuncio
-      anuncio.archivosAdjuntos.splice(archivoIndex, 1);
+      // Fase 5.2: primero se quita la referencia y DESPUÉS se borra el archivo (si el save falla, el archivo sigue
+      // referenciado y no se pierde); el borrado es idempotente
+      const [archivo] = anuncio.archivosAdjuntos.splice(archivoIndex, 1);
       await anuncio.save();
+      try {
+        await eliminarArchivo(archivo as any, BUCKET_ANUNCIOS);
+      } catch (errorBorrado) {
+        console.warn(`[Anuncios] No se pudo borrar el archivo ${archivoId} del almacén:`, errorBorrado);
+      }
 
       res.json({
         success: true,

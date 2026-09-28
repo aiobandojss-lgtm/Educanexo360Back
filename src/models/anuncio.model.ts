@@ -1,5 +1,6 @@
 import mongoose, { Schema } from 'mongoose';
 import { IAnuncio } from '../interfaces/IAnuncio';
+import { camposAlmacen } from './campos/referenciaArchivo';
 
 const ArchivoSchema = new Schema({
   fileId: {
@@ -18,6 +19,8 @@ const ArchivoSchema = new Schema({
     type: Number,
     required: true,
   },
+  // Fase 5.2: dónde está el archivo (opcional; sin estos campos es GridFS anuncios_adjuntos por fileId)
+  ...camposAlmacen,
 });
 
 const ImagenPortadaSchema = new Schema({

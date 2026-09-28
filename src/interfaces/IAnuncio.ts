@@ -5,6 +5,10 @@ export interface IArchivoAnuncio {
   nombre: string;
   tipo: string;
   tamaño: number;
+  // Fase 5.2: referencia en la capa de almacenamiento (opcional en lo antiguo)
+  almacen?: 'gridfs' | 's3' | 'local';
+  clave?: string;
+  sha256?: string;
 }
 
 export interface IImagenPortada {
