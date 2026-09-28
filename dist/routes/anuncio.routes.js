@@ -9,6 +9,7 @@ const auth_middleware_1 = require("../middleware/auth.middleware");
 const validate_middleware_1 = require("../middleware/validate.middleware");
 const anuncio_validation_1 = __importDefault(require("../validations/anuncio.validation"));
 const multer_1 = __importDefault(require("multer"));
+const erroresSubida_1 = require("../utils/erroresSubida");
 const path_1 = __importDefault(require("path"));
 const fs_1 = __importDefault(require("fs"));
 const sanitizeFilename_1 = require("../utils/sanitizeFilename");
@@ -35,7 +36,7 @@ const upload = (0, multer_1.default)({
     defParamCharset: 'utf8',
     storage,
     limits: {
-        fileSize: 10 * 1024 * 1024,
+        fileSize: (0, erroresSubida_1.bytesMaximos)(erroresSubida_1.LIMITES_SUBIDA.anuncios),
     },
 });
 router.use(auth_middleware_1.authenticate);
@@ -43,7 +44,7 @@ router.post('/', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'RECTOR', 
 router.put('/:id', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'), dashboardCacheInvalidation_middleware_1.invalidateOnAnuncio, (0, validate_middleware_1.validate)(anuncio_validation_1.default.actualizar), anuncio_controller_1.default.actualizar);
 router.patch('/:id/publicar', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'), dashboardCacheInvalidation_middleware_1.invalidateOnAnuncio, anuncio_controller_1.default.publicar);
 router.delete('/:id', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'), anuncio_controller_1.default.eliminar);
-router.post('/:id/adjuntos', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'), limpiarTemporales_middleware_1.limpiarTemporales, upload.array('archivos', 5), validarArchivos_middleware_1.validarArchivos, sanitize_middleware_1.sanitizeNoSQL, anuncio_controller_1.default.agregarAdjuntos);
+router.post('/:id/adjuntos', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'), limpiarTemporales_middleware_1.limpiarTemporales, (0, erroresSubida_1.subidaConLimites)(erroresSubida_1.LIMITES_SUBIDA.anuncios, upload.array(erroresSubida_1.LIMITES_SUBIDA.anuncios.campo, erroresSubida_1.LIMITES_SUBIDA.anuncios.maxArchivos)), validarArchivos_middleware_1.validarArchivos, sanitize_middleware_1.sanitizeNoSQL, anuncio_controller_1.default.agregarAdjuntos);
 router.delete('/:id/adjuntos/:archivoId', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'), anuncio_controller_1.default.eliminarAdjunto);
 router.get('/', (0, simpleCache_1.cacheMiddleware)('anuncios'), anuncio_controller_1.default.obtenerTodos);
 router.get('/:id', anuncio_controller_1.default.obtenerPorId);

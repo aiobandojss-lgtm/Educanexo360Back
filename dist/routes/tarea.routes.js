@@ -9,6 +9,7 @@ const auth_middleware_1 = require("../middleware/auth.middleware");
 const validate_middleware_1 = require("../middleware/validate.middleware");
 const tarea_validation_1 = __importDefault(require("../validations/tarea.validation"));
 const multer_1 = __importDefault(require("multer"));
+const erroresSubida_1 = require("../utils/erroresSubida");
 const path_1 = __importDefault(require("path"));
 const fs_1 = __importDefault(require("fs"));
 const sanitizeFilename_1 = require("../utils/sanitizeFilename");
@@ -33,7 +34,7 @@ const upload = (0, multer_1.default)({
     defParamCharset: 'utf8',
     storage,
     limits: {
-        fileSize: 10 * 1024 * 1024,
+        fileSize: (0, erroresSubida_1.bytesMaximos)(erroresSubida_1.LIMITES_SUBIDA.tareas),
     },
 });
 router.use(auth_middleware_1.authenticate);
@@ -43,11 +44,11 @@ router.get('/:id', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'ESTUDIA
 router.put('/:id', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'), (0, validate_middleware_1.validate)(tarea_validation_1.default.actualizar), tarea_controller_1.default.actualizar);
 router.delete('/:id', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE'), (0, validate_middleware_1.validate)(tarea_validation_1.default.obtenerPorId), tarea_controller_1.default.eliminar);
 router.patch('/:id/cerrar', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'), (0, validate_middleware_1.validate)(tarea_validation_1.default.obtenerPorId), tarea_controller_1.default.cerrar);
-router.post('/:id/archivos', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'), limpiarTemporales_middleware_1.limpiarTemporales, upload.array('archivos', 5), validarArchivos_middleware_1.validarArchivos, sanitize_middleware_1.sanitizeNoSQL, tarea_controller_1.default.subirArchivosReferencia);
+router.post('/:id/archivos', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'), limpiarTemporales_middleware_1.limpiarTemporales, (0, erroresSubida_1.subidaConLimites)(erroresSubida_1.LIMITES_SUBIDA.tareas, upload.array(erroresSubida_1.LIMITES_SUBIDA.tareas.campo, erroresSubida_1.LIMITES_SUBIDA.tareas.maxArchivos)), validarArchivos_middleware_1.validarArchivos, sanitize_middleware_1.sanitizeNoSQL, tarea_controller_1.default.subirArchivosReferencia);
 router.delete('/:id/archivos/:archivoId', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'), (0, validate_middleware_1.validate)(tarea_validation_1.default.archivo), tarea_controller_1.default.eliminarArchivoReferencia);
 router.get('/:id/archivos/:archivoId', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'ESTUDIANTE', 'ACUDIENTE'), (0, validate_middleware_1.validate)(tarea_validation_1.default.archivo), tarea_controller_1.default.descargarArchivo);
 router.patch('/:id/marcar-vista', (0, auth_middleware_1.authorize)('ESTUDIANTE'), (0, validate_middleware_1.validate)(tarea_validation_1.default.obtenerPorId), tarea_controller_1.default.marcarVista);
-router.post('/:id/entregar', (0, auth_middleware_1.authorize)('ESTUDIANTE'), limpiarTemporales_middleware_1.limpiarTemporales, upload.array('archivos', 5), validarArchivos_middleware_1.validarArchivos, sanitize_middleware_1.sanitizeNoSQL, (0, validate_middleware_1.validate)(tarea_validation_1.default.entregar), tarea_controller_1.default.entregar);
+router.post('/:id/entregar', (0, auth_middleware_1.authorize)('ESTUDIANTE'), limpiarTemporales_middleware_1.limpiarTemporales, (0, erroresSubida_1.subidaConLimites)(erroresSubida_1.LIMITES_SUBIDA.tareas, upload.array(erroresSubida_1.LIMITES_SUBIDA.tareas.campo, erroresSubida_1.LIMITES_SUBIDA.tareas.maxArchivos)), validarArchivos_middleware_1.validarArchivos, sanitize_middleware_1.sanitizeNoSQL, (0, validate_middleware_1.validate)(tarea_validation_1.default.entregar), tarea_controller_1.default.entregar);
 router.get('/:id/mi-entrega', (0, auth_middleware_1.authorize)('ESTUDIANTE'), (0, validate_middleware_1.validate)(tarea_validation_1.default.obtenerPorId), tarea_controller_1.default.verMiEntrega);
 router.get('/:id/entregas', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'), (0, validate_middleware_1.validate)(tarea_validation_1.default.obtenerPorId), tarea_controller_1.default.verEntregas);
 router.put('/:id/entregas/:entregaId', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'), (0, validate_middleware_1.validate)(tarea_validation_1.default.calificar), tarea_controller_1.default.calificarEntrega);

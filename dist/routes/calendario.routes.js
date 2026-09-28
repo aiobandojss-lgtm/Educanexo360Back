@@ -10,6 +10,7 @@ const validate_middleware_1 = require("../middleware/validate.middleware");
 const calendario_validation_1 = require("../validations/calendario.validation");
 const gridfs_1 = __importDefault(require("../config/gridfs"));
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
+const erroresSubida_1 = require("../utils/erroresSubida");
 const dashboardCacheInvalidation_middleware_1 = require("../middleware/dashboardCacheInvalidation.middleware");
 const sanitize_middleware_1 = require("../middleware/sanitize.middleware");
 const validarArchivos_middleware_1 = require("../middleware/validarArchivos.middleware");
@@ -21,7 +22,7 @@ const subirAdjunto = (req, res, next) => {
     if (!upload) {
         return next(new ApiError_1.default(503, 'Servicio de archivos no disponible'));
     }
-    return upload.single('archivo')(req, res, next);
+    return (0, erroresSubida_1.subidaConLimites)(erroresSubida_1.LIMITES_SUBIDA.calendario, upload.single(erroresSubida_1.LIMITES_SUBIDA.calendario.campo))(req, res, next);
 };
 const middlewaresActualizar = [
     (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE'),

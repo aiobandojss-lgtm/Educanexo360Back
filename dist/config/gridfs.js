@@ -9,6 +9,7 @@ const multer_1 = __importDefault(require("multer"));
 const path_1 = __importDefault(require("path"));
 const crypto_1 = __importDefault(require("crypto"));
 const sanitizeFilename_1 = require("../utils/sanitizeFilename");
+const erroresSubida_1 = require("../utils/erroresSubida");
 class GridFSManager {
     constructor() {
         this.bucket = null;
@@ -39,7 +40,7 @@ class GridFSManager {
                 defParamCharset: 'utf8',
                 storage,
                 limits: {
-                    fileSize: 5 * 1024 * 1024,
+                    fileSize: (0, erroresSubida_1.bytesMaximos)(erroresSubida_1.LIMITES_SUBIDA.calendario),
                 },
             });
             const db = mongoose_1.default.connection.db;
