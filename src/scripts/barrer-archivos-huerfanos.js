@@ -8,7 +8,7 @@
  * Referencias (mantener en sincronía con src/utils/referenciasArchivos.ts):
  *   uploads            mensajes.adjuntos (incluye copias a acudientes), eventocalendarios.archivoAdjunto
  *   tareas_referencias tareas.archivosReferencia
- *   tareas_entregas    tareas.entregas.archivos
+ *   tareas_entregas    tareas.entregas.archivos, tareas.entregas.historial.archivos
  *   anuncios_adjuntos  anuncios.archivosAdjuntos
  *
  * Seguridad: por defecto SIMULACIÓN (solo cuenta). Con --aplicar borra. Solo se consideran huérfanos los archivos con
@@ -39,7 +39,10 @@ const REFERENCIAS = {
     ['eventocalendarios', 'archivoAdjunto'],
   ],
   tareas_referencias: [['tareas', 'archivosReferencia']],
-  tareas_entregas: [['tareas', 'entregas.archivos']],
+  tareas_entregas: [
+    ['tareas', 'entregas.archivos'],
+    ['tareas', 'entregas.historial.archivos'], // 5.C9: evidencia de entregas calificadas reemplazadas
+  ],
   anuncios_adjuntos: [['anuncios', 'archivosAdjuntos']],
 };
 const mb = (b) => (b / 1024 / 1024).toFixed(2);

@@ -42,6 +42,18 @@ const VistaSchema = new Schema({
   },
 });
 
+// Auditoría 5.C9: entrega ya CALIFICADA que el estudiante reemplaza. Sus archivos NO se borran: quedan como
+// evidencia de lo que se calificó
+const HistorialEntregaSchema = new Schema({
+  archivos: [ArchivoSchema],
+  calificacion: { type: Number },
+  comentarioDocente: { type: String },
+  fechaEntrega: { type: Date },
+  fechaCalificacion: { type: Date },
+  intento: { type: Number },
+  fechaReemplazo: { type: Date, default: Date.now },
+});
+
 // Schema para entregas
 const EntregaSchema = new Schema({
   estudianteId: {
@@ -76,6 +88,12 @@ const EntregaSchema = new Schema({
   intentos: {
     type: Number,
     default: 0,
+  },
+  // 5.C9: solo lo ven el docente de la tarea y los administrativos. select:false → ninguna consulta lo trae salvo
+  // las que piden '+entregas.historial' (y un save sin cargarlo no lo toca)
+  historial: {
+    type: [HistorialEntregaSchema],
+    select: false,
   },
 });
 

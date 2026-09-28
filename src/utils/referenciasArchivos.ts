@@ -12,7 +12,10 @@ export const REFERENCIAS_POR_BUCKET: Record<string, { coleccion: string; campo: 
     { coleccion: 'eventocalendarios', campo: 'archivoAdjunto.fileId' },
   ],
   tareas_referencias: [{ coleccion: 'tareas', campo: 'archivosReferencia.fileId' }],
-  tareas_entregas: [{ coleccion: 'tareas', campo: 'entregas.archivos.fileId' }],
+  tareas_entregas: [
+    { coleccion: 'tareas', campo: 'entregas.archivos.fileId' },
+    { coleccion: 'tareas', campo: 'entregas.historial.archivos.fileId' }, // 5.C9: evidencia de entregas calificadas
+  ],
   anuncios_adjuntos: [{ coleccion: 'anuncios', campo: 'archivosAdjuntos.fileId' }],
 };
 

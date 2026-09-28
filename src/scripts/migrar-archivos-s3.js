@@ -21,7 +21,7 @@
  * Buckets y referencias (mantener en sincronía con src/utils/referenciasArchivos.ts):
  *   uploads            mensajes.adjuntos, eventocalendarios.archivoAdjunto
  *   tareas_referencias tareas.archivosReferencia
- *   tareas_entregas    tareas.entregas[].archivos
+ *   tareas_entregas    tareas.entregas[].archivos, tareas.entregas[].historial[].archivos
  *   anuncios_adjuntos  anuncios.archivosAdjuntos
  *
  * Espacio en Atlas M0: tras --borrar-gridfs, dataSize (tamaño lógico) baja de inmediato; storageSize (disco) puede no
@@ -87,6 +87,13 @@ const REFERENCIAS = {
       filtro: 'entregas.archivos.fileId',
       set: (c) => `entregas.$[e].archivos.$[a].${c}`,
       arrayFilters: (id) => [{ 'e.archivos.fileId': id }, { 'a.fileId': id }],
+    },
+    // 5.C9: evidencia de entregas calificadas que el estudiante reemplazó
+    {
+      col: 'tareas',
+      filtro: 'entregas.historial.archivos.fileId',
+      set: (c) => `entregas.$[e].historial.$[h].archivos.$[a].${c}`,
+      arrayFilters: (id) => [{ 'e.historial.archivos.fileId': id }, { 'h.archivos.fileId': id }, { 'a.fileId': id }],
     },
   ],
   anuncios_adjuntos: [{ col: 'anuncios', filtro: 'archivosAdjuntos.fileId', set: (c) => `archivosAdjuntos.$[a].${c}`, arrayFilters: soloArchivo }],

@@ -80,6 +80,16 @@ const resolverAccesoTarea = async (
     : null;
   return enCurso ? { entregas: [], completo: false } : null;
 };
+
+/**
+ * 5.C9: el historial de entregas (entregas calificadas que el estudiante reemplazó) solo lo ven el docente de la
+ * tarea y los administrativos. Estudiante, acudiente y otros docentes del curso siguen viendo lo mismo que antes.
+ */
+const puedeVerHistorial = (user: any, tarea: any): boolean =>
+  esRolAdministrativo(user.tipo) || (user.tipo === 'DOCENTE' && idDe(tarea.docenteId) === String(user._id));
+
+/** Roles que PODRÍAN ver el historial (se decide antes de consultar; el docente se confirma con la tarea). */
+const rolConHistorial = (tipo: string): boolean => esRolAdministrativo(tipo) || tipo === 'DOCENTE';
 import pushNotificationService from '../services/pushNotification.service';
 import { numeroPagina, numeroLimite } from '../utils/paginacion';
 import { enviarArchivo } from '../utils/enviarArchivo';
@@ -324,7 +334,8 @@ class TareaController {
         .populate('docenteId', 'nombre apellidos email')
         .populate('asignaturaId', 'nombre')
         .populate('cursoId', 'nombre nivel')
-        .populate('entregas.estudianteId', 'nombre apellidos email');
+        .populate('entregas.estudianteId', 'nombre apellidos email')
+        .select(rolConHistorial(req.user.tipo) ? '+entregas.historial' : '');
 
       if (!tarea) {
         throw new ApiError(404, 'Tarea no encontrada');
@@ -357,9 +368,16 @@ class TareaController {
       // Para docentes y admin, incluir estadísticas
       const estadisticas = tarea.obtenerEstadisticas();
 
+      // 5.C9: otro docente del curso ve la tarea completa, pero sin el historial
+      let datos: any = tarea;
+      if (!puedeVerHistorial(req.user, tarea)) {
+        datos = tarea.toJSON();
+        (datos.entregas || []).forEach((e: any) => delete e.historial);
+      }
+
       res.json({
         success: true,
-        data: tarea,
+        data: datos,
         estadisticas,
       });
     } catch (error) {
@@ -590,7 +608,7 @@ class TareaController {
         _id: req.params.id,
         escuelaId: req.user.escuelaId,
         'entregas.estudianteId': req.user._id,
-      });
+      }).select('+entregas.historial'); // 5.C9: se agrega al historial si la entrega anterior estaba calificada
 
       if (!tarea) {
         throw new ApiError(404, 'Tarea no encontrada o no asignada a ti');
@@ -630,6 +648,19 @@ class TareaController {
 
       // Fase 5.5: al reenviar, los archivos de la entrega anterior se reemplazan; se borran DESPUÉS de guardar
       const archivosAnteriores = (entrega.archivos || []).map((a: any) => (a.toObject ? a.toObject() : a));
+      // 5.C9: si la anterior ya estaba CALIFICADA, sus archivos NO se borran: pasan al historial como evidencia de lo
+      // calificado (lo ven el docente de la tarea y los administrativos) y la nueva queda como la vigente
+      const conservarAnterior = entrega.estado === 'CALIFICADA';
+      if (conservarAnterior) {
+        (entrega as any).historial.push({
+          archivos: archivosAnteriores,
+          calificacion: entrega.calificacion,
+          comentarioDocente: entrega.comentarioDocente,
+          fechaEntrega: entrega.fechaEntrega,
+          fechaCalificacion: entrega.fechaCalificacion,
+          intento: entrega.intentos,
+        });
+      }
       entrega.fechaEntrega = new Date();
       entrega.estado = esAtrasada ? 'ATRASADA' : 'ENTREGADA';
       entrega.archivos = archivosSubidos as any;
@@ -643,11 +674,15 @@ class TareaController {
         await eliminarAdjuntos(archivosSubidos, 'tareas_entregas');
         throw saveError;
       }
-      await eliminarSiNoReferenciados(archivosAnteriores, 'tareas_entregas');
+      if (!conservarAnterior) await eliminarSiNoReferenciados(archivosAnteriores, 'tareas_entregas');
+
+      // El estudiante no ve el historial (5.C9): la respuesta es la entrega de siempre
+      const datosEntrega: any = (entrega as any).toJSON();
+      delete datosEntrega.historial;
 
       res.json({
         success: true,
-        data: entrega,
+        data: datosEntrega,
         message: esAtrasada 
           ? 'Tarea entregada (ATRASADA)' 
           : 'Tarea entregada exitosamente',
@@ -709,7 +744,9 @@ class TareaController {
       const tarea = await Tarea.findOne({
         _id: req.params.id,
         escuelaId: req.user.escuelaId,
-      }).populate('entregas.estudianteId', 'nombre apellidos email');
+      })
+        .populate('entregas.estudianteId', 'nombre apellidos email')
+        .select('+entregas.historial'); // 5.C9: esta ruta ya es solo del docente de la tarea y administrativos
 
       if (!tarea) {
         throw new ApiError(404, 'Tarea no encontrada');
@@ -876,7 +913,7 @@ class TareaController {
       const tarea = await Tarea.findOne({
         _id: id,
         escuelaId: req.user.escuelaId,
-      });
+      }).select(rolConHistorial(req.user.tipo) ? '+entregas.historial' : '');
 
       if (!tarea) {
         throw new ApiError(404, 'Tarea no encontrada');
@@ -899,10 +936,14 @@ class TareaController {
         bucketName = 'tareas_referencias';
       } else if (tipo === 'entrega') {
         // Buscar solo en las entregas visibles para el usuario
+        // (5.C9: y en su historial, solo para el docente de la tarea y administrativos)
+        const conHistorial = puedeVerHistorial(req.user, tarea);
         for (const entrega of acceso.entregas) {
-          archivo = (entrega.archivos || []).find(
-            (a: any) => a.fileId.toString() === archivoId
-          );
+          const candidatos = [
+            ...(entrega.archivos || []),
+            ...(conHistorial ? (entrega.historial || []).flatMap((h: any) => h.archivos || []) : []),
+          ];
+          archivo = candidatos.find((a: any) => a.fileId.toString() === archivoId);
           if (archivo) break;
         }
         bucketName = 'tareas_entregas';
@@ -1064,7 +1105,8 @@ async misTareas(req: RequestWithUser, res: Response, next: NextFunction) {
           },
         },
       },
-      { $project: { entregas: 0 } },
+      // 5.C9: la agregación no aplica select:false; el estudiante no ve el historial
+      { $project: { entregas: 0, 'miEntrega.historial': 0 } },
     ]);
     const tareasConMiEntrega = await Tarea.populate(tareasAgg, [
       { path: 'docenteId', select: 'nombre apellidos' },

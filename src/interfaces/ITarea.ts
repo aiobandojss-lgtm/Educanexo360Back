@@ -44,6 +44,19 @@ export interface IEntregaTarea {
   comentarioDocente?: string;
   fechaCalificacion?: Date;
   intentos: number;
+  historial?: IHistorialEntrega[]; // 5.C9: solo docente de la tarea y administrativos (select: false)
+}
+
+// Entrega calificada que el estudiante reemplazó (sus archivos se conservan como evidencia)
+export interface IHistorialEntrega {
+  _id?: Types.ObjectId;
+  archivos: IArchivoTarea[];
+  calificacion?: number;
+  comentarioDocente?: string;
+  fechaEntrega?: Date;
+  fechaCalificacion?: Date;
+  intento?: number;
+  fechaReemplazo?: Date;
 }
 
 // Interface base para la tarea
