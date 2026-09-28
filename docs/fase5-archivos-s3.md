@@ -154,14 +154,13 @@ Con B2 real la latencia será mayor (red); todo va en stream, la memoria no crec
   protobufjs / fast-xml-parser (override) / websocket-driver / form-data corregidos, `npm audit fix` sin `--force`
   (express 4.22, jws). `npm audit`: 70 (4 críticas, 25 altas) → 9 moderadas (cadena interna de firebase-admin).
 - Aviso: las versiones del AWS SDK v3 publicadas desde enero de 2027 exigirán **Node ≥ 22**.
-- **Override de `fast-xml-parser` (`^4.5.5` en `package.json`)**. Por qué se agregó (5.A3): `@google-cloud/storage`
-  7.17 (dentro de firebase-admin) y `@aws-sdk/core` 3.750 (credenciales AWS opcionales del driver de mongodb)
-  fijaban la 4.4.1, con una vulnerabilidad crítica y varias altas; el override llevó todo a 4.5.7 sin cambiar de
-  versión mayor. Estado actual: tras `npm audit fix`, `@google-cloud/storage` subió a 7.22, que declara
-  `^5.3.4`, y `@aws-sdk/core` ya no lo usa; el override hoy **fuerza 4.5.7 sobre un paquete que pide 5.x**. No afecta
-  en ejecución (el backend no usa Firebase Storage, solo FCM), pero ya no es necesario: se recomienda quitarlo en una
-  corrida aparte (instalaría 5.x, que además cierra el moderado de XMLBuilder) — pendiente de aprobación. Mientras
-  exista, el servidor debe instalar con `npm ci` para respetar el lockfile y el override.
+- **Override de `fast-xml-parser`: quitado (auditoría 5.C13).** Se agregó en 5.A3 porque `@google-cloud/storage`
+  7.17 (dentro de firebase-admin) y `@aws-sdk/core` 3.750 fijaban la 4.4.1 (una crítica y varias altas); el
+  override la llevó a 4.5.7. Tras `npm audit fix`, `@google-cloud/storage` 7.22 pide `^5.3.4` y `@aws-sdk/core` ya
+  no lo usa, así que el override forzaba 4.x fuera del rango. Sin él se instala la 5.11.1 (dentro del rango).
+  `npm audit`: antes 9 moderadas (0 altas, 0 críticas, fast-xml-parser 4.5.7 entre ellas) → después 8 moderadas
+  (0 altas, 0 críticas; fast-xml-parser ya no aparece). Las 8 son la cadena interna de firebase-admin (uuid vía
+  gaxios/google-gax/teeny-request); su arreglo exige bajar de versión mayor firebase-admin, no se aplica.
 
 ## Brechas conocidas
 
