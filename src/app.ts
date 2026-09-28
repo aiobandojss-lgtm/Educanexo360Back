@@ -8,6 +8,7 @@ import authRoutes from './routes/auth.routes';
 import escuelaRoutes from './routes/escuela.routes';
 import usuarioRoutes from './routes/usuario.routes';
 import ApiError from './utils/ApiError';
+import { errorDeSubida } from './utils/erroresSubida';
 import cursoRoutes from './routes/curso.routes';
 import asignaturaRoutes from './routes/asignatura.routes';
 import logroRoutes from './routes/logro.routes';
@@ -170,7 +171,9 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 });
 
 // ===== MANEJO DE ERRORES GLOBAL =====
-app.use((err: Error | ApiError, req: Request, res: Response, next: NextFunction) => {
+app.use((errOriginal: Error | ApiError, req: Request, res: Response, next: NextFunction) => {
+  // Fase 5.A2: errores de subida de archivos (multer/busboy) → 400 con mensaje claro
+  const err = errorDeSubida(errOriginal) || errOriginal;
   console.error('Error en la aplicación:', err);
 
   if (err instanceof ApiError) {
