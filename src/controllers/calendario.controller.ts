@@ -15,6 +15,7 @@ import { EstadoEvento } from '../interfaces/ICalendario';
 import pushNotificationService from '../services/pushNotification.service';
 import { logger } from '../utils/logger';
 import { contentDispositionAdjunto } from '../utils/contentDisposition';
+import { enviarArchivo } from '../utils/enviarArchivo';
 
 // Campos editables de un evento (lista blanca: escuelaId, creadorId y archivoAdjunto nunca vienen del cliente)
 const CAMPOS_EVENTO = [
@@ -769,15 +770,8 @@ class CalendarioController {
       // Devolver el stream del archivo (el backend autoriza y hace stream: no se redirige a una URL firmada)
       const downloadStream = await abrirArchivo(evento.archivoAdjunto as any, BUCKET_CALENDARIO);
       // Sin handler, un error del almacén con las cabeceras ya enviadas era un error de stream no manejado
-      downloadStream.on('error', (error) => {
-        console.error('Error en stream de descarga:', error);
-        if (!res.headersSent) {
-          next(new ApiError(500, 'Error al descargar el archivo'));
-        } else {
-          res.end();
-        }
-      });
-      downloadStream.pipe(res);
+      // 5.C1: si el cliente corta se destruye el origen (libera el socket de S3); error a mitad → res.destroy()
+      enviarArchivo(downloadStream, res, next, 'Error al descargar el archivo');
     } catch (error) {
       next(error);
     }

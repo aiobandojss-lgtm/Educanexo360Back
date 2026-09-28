@@ -82,6 +82,7 @@ const resolverAccesoTarea = async (
 };
 import pushNotificationService from '../services/pushNotification.service';
 import { numeroPagina, numeroLimite } from '../utils/paginacion';
+import { enviarArchivo } from '../utils/enviarArchivo';
 
 interface RequestWithUser extends Request {
   user?: {
@@ -924,14 +925,8 @@ class TareaController {
       );
 
       // Stream del archivo (el backend autoriza y hace stream: no se redirige a una URL firmada)
-      downloadStream.on('error', (error) => {
-        console.error('Error en stream de descarga:', error);
-        if (!res.headersSent) {
-          next(new ApiError(500, 'Error al descargar el archivo'));
-        }
-      });
-
-      downloadStream.pipe(res);
+      // 5.C1: si el cliente corta se destruye el origen (libera el socket de S3); error a mitad → res.destroy()
+      enviarArchivo(downloadStream, res, next, 'Error al descargar el archivo');
     } catch (error) {
       next(error);
     }

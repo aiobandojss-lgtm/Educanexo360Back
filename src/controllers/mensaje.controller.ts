@@ -23,6 +23,7 @@ import { abrirArchivo, existeArchivo, eliminarArchivo } from '../services/storag
 // Bucket (GridFS) / prefijo de clave de los adjuntos de mensajes
 const BUCKET_MENSAJES = 'uploads';
 import { contentDispositionAdjunto } from '../utils/contentDisposition';
+import { enviarArchivo } from '../utils/enviarArchivo';
 
 export const ROLES_CON_BORRADORES = ['ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO', 'DOCENTE'];
 
@@ -2828,15 +2829,8 @@ export class MensajeController {
       // Devolver el stream del archivo (el backend autoriza y hace stream: no se redirige a una URL firmada)
       const downloadStream = await abrirArchivo(adjunto as any, BUCKET_MENSAJES);
       // Sin handler, un error del almacén con las cabeceras ya enviadas era un error de stream no manejado
-      downloadStream.on('error', (error) => {
-        console.error('Error en stream de descarga:', error);
-        if (!res.headersSent) {
-          next(new ApiError(500, 'Error al descargar el archivo'));
-        } else {
-          res.end();
-        }
-      });
-      downloadStream.pipe(res);
+      // 5.C1: si el cliente corta se destruye el origen (libera el socket de S3); error a mitad → res.destroy()
+      enviarArchivo(downloadStream, res, next, 'Error al descargar el archivo');
     } catch (error) {
       next(error);
     }

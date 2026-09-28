@@ -1,4 +1,6 @@
 import crypto from 'crypto';
+import http from 'http';
+import https from 'https';
 import { PassThrough, Readable } from 'stream';
 import { ArchivoStorage, MetaArchivo, ResultadoGuardar } from './tipos';
 
@@ -34,6 +36,10 @@ const errorSeguro = (operacion: string, error: any): Error => {
 export const crearAlmacenS3 = (): ArchivoStorage => {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { NodeHttpHandler } = require('@smithy/node-http-handler');
+  // 5.C1: sin timeouts, un socket colgado dejaba la operación esperando para siempre; el pool se limita explícitamente
+  const agente = { keepAlive: true, maxSockets: 50 };
   const bucket = requerida('S3_BUCKET');
   const cliente = new S3Client({
     region: process.env.S3_REGION || 'us-east-1',
@@ -43,6 +49,12 @@ export const crearAlmacenS3 = (): ArchivoStorage => {
     // B2 y R2 no soportan (o no del todo) los checksums CRC32 por defecto de los SDK recientes
     requestChecksumCalculation: 'WHEN_REQUIRED',
     responseChecksumValidation: 'WHEN_REQUIRED',
+    requestHandler: new NodeHttpHandler({
+      connectionTimeout: 5000,
+      requestTimeout: 60000,
+      httpAgent: new http.Agent(agente),
+      httpsAgent: new https.Agent(agente),
+    }),
   });
 
   return {
@@ -70,6 +82,7 @@ export const crearAlmacenS3 = (): ArchivoStorage => {
           }),
         );
       } catch (error) {
+        origen.destroy(); // 5.C1: libera el descriptor del temporal
         throw errorSeguro('guardar', error);
       }
       return { clave, tamaño, sha256: hash.digest('hex') };
