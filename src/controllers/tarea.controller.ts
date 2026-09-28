@@ -661,8 +661,15 @@ class TareaController {
           fechaCalificacion: entrega.fechaCalificacion,
           intento: entrega.intentos,
         });
+        // 5.C12 (decisión de Aymer): la nueva queda pendiente de calificar, sin la nota anterior (que queda solo en el
+        // historial). Así el docente ve que hay algo nuevo por calificar y el estudiante no ve una nota que no
+        // corresponde a lo entregado; tampoco cuenta en el promedio de la tarea
+        entrega.calificacion = undefined;
+        entrega.comentarioDocente = undefined;
+        entrega.fechaCalificacion = undefined;
       }
       entrega.fechaEntrega = new Date();
+      // ENTREGADA, o ATRASADA si es tarde (el enum no tiene ENTREGADA_TARDE; ATRASADA es lo que ya usan los clientes)
       entrega.estado = esAtrasada ? 'ATRASADA' : 'ENTREGADA';
       entrega.archivos = archivosSubidos as any;
       entrega.comentarioEstudiante = req.body.comentarioEstudiante || '';
