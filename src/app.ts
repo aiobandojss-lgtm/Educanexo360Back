@@ -9,6 +9,7 @@ import escuelaRoutes from './routes/escuela.routes';
 import usuarioRoutes from './routes/usuario.routes';
 import ApiError from './utils/ApiError';
 import { errorDeSubida } from './utils/erroresSubida';
+import { reemplazoRespuestaJson } from './utils/filtroRespuesta';
 import cursoRoutes from './routes/curso.routes';
 import asignaturaRoutes from './routes/asignatura.routes';
 import logroRoutes from './routes/logro.routes';
@@ -55,6 +56,8 @@ const app: Express = express();
 // Detrás del proxy de cPanel/Passenger: confiar en 1 salto para que req.ip sea la IP real
 // del cliente (X-Forwarded-For). Sin esto todos comparten IP y el rate limiter los bloquea juntos.
 app.set('trust proxy', 1);
+// 5.C6: las respuestas JSON no exponen almacen/clave/sha256 de las referencias de archivo (ver utils/filtroRespuesta)
+app.set('json replacer', reemplazoRespuestaJson);
 
 // TEMPORAL: verificar en producción que req.ip cambia por cliente (activar con LOG_CLIENT_IP=true)
 if (process.env.LOG_CLIENT_IP === 'true') {
