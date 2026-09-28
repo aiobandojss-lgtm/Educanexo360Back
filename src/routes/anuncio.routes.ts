@@ -10,6 +10,8 @@ import { sanitizeFilename } from '../utils/sanitizeFilename';
 import { cacheMiddleware } from '../cache/simpleCache';
 import { invalidateOnAnuncio } from '../middleware/dashboardCacheInvalidation.middleware';
 import { sanitizeNoSQL } from '../middleware/sanitize.middleware';
+import { validarArchivos } from '../middleware/validarArchivos.middleware';
+import { limpiarTemporales } from '../middleware/limpiarTemporales.middleware';
 
 const router = express.Router();
 
@@ -73,7 +75,9 @@ router.delete(
 router.post(
   '/:id/adjuntos',
   authorize('ADMIN', 'DOCENTE', 'RECTOR', 'COORDINADOR'),
+  limpiarTemporales, // borra los temporales de multer al terminar la respuesta (3.Q)
   upload.array('archivos', 5),
+  validarArchivos, // tipos permitidos por extensión y contenido (5.4)
   sanitizeNoSQL, // multer arma objetos anidados con campo[$ne]
   anuncioController.agregarAdjuntos,
 );

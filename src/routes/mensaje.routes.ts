@@ -12,6 +12,7 @@ import { TipoUsuario } from '../interfaces/IUsuario';
 import { invalidateOnMensaje } from '../middleware/dashboardCacheInvalidation.middleware';
 import { sanitizeNoSQL } from '../middleware/sanitize.middleware';
 import { limpiarTemporales } from '../middleware/limpiarTemporales.middleware';
+import { validarArchivos } from '../middleware/validarArchivos.middleware';
 
 const router = express.Router();
 
@@ -70,6 +71,7 @@ router.post(
   '/borradores',
   limpiarTemporales, // borra los temporales de multer al terminar la respuesta (3.Q)
   upload.array('adjuntos', 5),
+  validarArchivos, // tipos permitidos por extensión y contenido (5.4)
   sanitizeNoSQL, // multer arma objetos anidados con campo[$ne]
   verificarPermisoBorradores,
   (req: any, res: Response, next: NextFunction) => {
@@ -82,6 +84,7 @@ router.post(
   '/borradores/:id',
   limpiarTemporales, // borra los temporales de multer al terminar la respuesta (3.Q)
   upload.array('adjuntos', 5),
+  validarArchivos, // tipos permitidos por extensión y contenido (5.4)
   sanitizeNoSQL, // multer arma objetos anidados con campo[$ne]
   verificarPermisoBorradores,
   (req: any, res: Response, next: NextFunction) => {
@@ -162,6 +165,7 @@ router.post(
   '/',
   limpiarTemporales, // borra los temporales de multer al terminar la respuesta (3.Q)
   upload.array('adjuntos', 5),
+  validarArchivos, // tipos permitidos por extensión y contenido (5.4)
   sanitizeNoSQL, // multer arma objetos anidados con campo[$ne]
   invalidateOnMensaje,
   (req: any, res: Response, next: NextFunction) => {
@@ -325,6 +329,7 @@ router.post(
   '/:mensajeId/responder',
   limpiarTemporales, // borra los temporales de multer al terminar la respuesta (3.Q)
   upload.array('adjuntos', 5),
+  validarArchivos, // tipos permitidos por extensión y contenido (5.4)
   sanitizeNoSQL, // multer arma objetos anidados con campo[$ne]
   (req: any, res: Response, next: NextFunction) => {
     mensajeController.responder(req, res, next);

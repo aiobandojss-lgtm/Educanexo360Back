@@ -13,6 +13,8 @@ import gridfsManager from '../config/gridfs';
 import ApiError from '../utils/ApiError';
 import { invalidateOnCalendario } from '../middleware/dashboardCacheInvalidation.middleware';
 import { sanitizeNoSQL } from '../middleware/sanitize.middleware';
+import { validarArchivos } from '../middleware/validarArchivos.middleware';
+import { limpiarTemporales } from '../middleware/limpiarTemporales.middleware';
 
 const router = express.Router();
 
@@ -34,7 +36,9 @@ const subirAdjunto: express.RequestHandler = (req, res, next) => {
 const middlewaresActualizar = [
   authorize('ADMIN', 'DOCENTE'),
   invalidateOnCalendario,
+  limpiarTemporales, // borra los temporales de multer al terminar la respuesta (3.Q)
   subirAdjunto,
+  validarArchivos, // tipos permitidos por extensión y contenido (5.4)
   sanitizeNoSQL, // multer arma objetos anidados con campo[$ne]
   validate(actualizarEventoValidation),
   calendarioController.actualizarEvento as express.RequestHandler,
@@ -46,7 +50,9 @@ router.post(
   '/',
   authorize('ADMIN', 'DOCENTE'),
   invalidateOnCalendario, // ← AGREGAR ESTA LÍNEA
+  limpiarTemporales, // borra los temporales de multer al terminar la respuesta (3.Q)
   subirAdjunto,
+  validarArchivos, // tipos permitidos por extensión y contenido (5.4)
   sanitizeNoSQL, // multer arma objetos anidados con campo[$ne]
   validate(crearEventoValidation),
   calendarioController.crearEvento as unknown as express.RequestHandler,
