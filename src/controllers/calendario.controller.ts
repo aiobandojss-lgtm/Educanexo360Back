@@ -742,6 +742,15 @@ class CalendarioController {
         throw new ApiError(404, 'Evento no encontrado');
       }
 
+      // Fase 5.8: se descarga SOLO si el evento se puede ver por el detalle (obtenerEventoPorId): estudiantes,
+      // padres y acudientes solo ven eventos ACTIVOS. Antes bajaban el adjunto de eventos PENDIENTE/CANCELADO.
+      if (
+        (req.user.tipo === 'ESTUDIANTE' || req.user.tipo === 'PADRE' || req.user.tipo === 'ACUDIENTE') &&
+        evento.estado !== 'ACTIVO'
+      ) {
+        throw new ApiError(404, 'Evento no encontrado');
+      }
+
       if (!evento.archivoAdjunto || !evento.archivoAdjunto.fileId) {
         throw new ApiError(404, 'Este evento no tiene archivo adjunto');
       }
