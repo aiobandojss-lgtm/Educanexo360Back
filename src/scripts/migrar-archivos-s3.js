@@ -30,8 +30,11 @@
  * Uso:
  *   MONGODB_URI="..." S3_ENDPOINT=... S3_REGION=... S3_BUCKET=... S3_ACCESS_KEY_ID=... S3_SECRET_ACCESS_KEY=... \
  *     node src/scripts/migrar-archivos-s3.js                 (simulación)
- *     node src/scripts/migrar-archivos-s3.js --aplicar       (copiar y actualizar referencias)
- *     node src/scripts/migrar-archivos-s3.js --borrar-gridfs (liberar GridFS, con mongodump previo)
+ *     node src/scripts/migrar-archivos-s3.js --aplicar --bucket=<S3_BUCKET>       (copiar y actualizar referencias)
+ *     node src/scripts/migrar-archivos-s3.js --borrar-gridfs --bucket=<S3_BUCKET> (liberar GridFS, con mongodump previo)
+ *   --bucket=<nombre> es obligatorio en --aplicar y --borrar-gridfs y debe ser igual a S3_BUCKET (confirmación).
+ *   --aplicar primero prueba las credenciales (escribe, lee y borra un objeto '_prueba-migracion/...'); si falla, no
+ *   copia nada. El servidor debe quedar con las MISMAS variables S3_* que la corrida.
  */
 'use strict';
 const crypto = require('crypto');
@@ -58,6 +61,16 @@ for (const v of ['S3_BUCKET', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY']) {
     process.exit(1);
   }
 }
+// Auditoría 5.C4: en los modos que escriben se confirma el bucket a mano (evita migrar a un bucket equivocado por
+// una variable vieja en la terminal: las referencias quedarían apuntando a un bucket que el servidor no usa)
+const argBucket = process.argv.find((a) => a.startsWith('--bucket='));
+if ((APLICAR || BORRAR) && (!argBucket || argBucket.slice('--bucket='.length) !== process.env.S3_BUCKET)) {
+  console.error(`❌ Confirme el bucket destino con --bucket=<nombre>, igual a S3_BUCKET ('${process.env.S3_BUCKET}').`);
+  process.exit(1);
+}
+const AVISO_SERVIDOR =
+  'ℹ️  El servidor debe tener EXACTAMENTE las mismas S3_ENDPOINT, S3_REGION, S3_BUCKET y credenciales que esta corrida: ' +
+  'las referencias migradas apuntan a este bucket.';
 
 // [colección, ruta del arreglo o subdocumento, cómo se escribe cada campo]
 const REFERENCIAS = {
@@ -156,6 +169,25 @@ async function subir(s3, gfs, f, clave) {
   return sha.digest('hex');
 }
 
+/**
+ * Auditoría 5.C4: antes de copiar nada se prueba que las credenciales pueden escribir, leer y borrar en el bucket
+ * (un objeto de prueba que se elimina al final). Falla → no se migra.
+ */
+async function probarCredenciales(s3) {
+  const { PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+  const clave = `_prueba-migracion/${crypto.randomBytes(8).toString('hex')}`;
+  const cuerpo = Buffer.from('prueba de credenciales');
+  await s3.send(new PutObjectCommand({ Bucket: process.env.S3_BUCKET, Key: clave, Body: cuerpo, ContentLength: cuerpo.length }));
+  try {
+    const r = await s3.send(new GetObjectCommand({ Bucket: process.env.S3_BUCKET, Key: clave }));
+    const partes = [];
+    for await (const t of r.Body) partes.push(t);
+    if (!Buffer.concat(partes).equals(cuerpo)) throw new Error('el objeto de prueba se leyó distinto');
+  } finally {
+    await s3.send(new DeleteObjectCommand({ Bucket: process.env.S3_BUCKET, Key: clave }));
+  }
+}
+
 async function actualizarReferencias(db, bucket, fileId, clave, sha256) {
   let n = 0;
   for (const r of REFERENCIAS[bucket]) {
@@ -186,6 +218,18 @@ async function main() {
   console.log(`\n${modo} en ${mongoose.connection.name} → bucket S3 '${process.env.S3_BUCKET}'\n`);
   const antes = await db.stats();
   const s3 = clienteS3();
+  if (APLICAR) {
+    try {
+      await probarCredenciales(s3);
+      console.log('✅ Credenciales S3: escritura, lectura y borrado en el bucket OK');
+    } catch (e) {
+      // el mensaje del SDK no incluye el secreto
+      console.error(`❌ Prueba de credenciales S3 fallida (no se copió nada): ${String(e?.name || '')} ${String(e?.message || e).slice(0, 200)}`);
+      await mongoose.disconnect();
+      process.exit(1);
+    }
+    console.log(AVISO_SERVIDOR + '\n');
+  }
   const rep = { archivos: 0, bytes: 0, yaMigrados: 0, pendientes: 0, sinReferencia: 0, copiados: 0, yaEnS3: 0, bytesCopiados: 0, fallidos: [], borrados: 0, bytesLiberados: 0, refsActualizadas: 0 };
 
   for (const bucket of Object.keys(REFERENCIAS)) {
@@ -266,6 +310,7 @@ async function main() {
   const despues = await db.stats();
   console.log(`\nTotal GridFS: ${rep.archivos} archivo(s), ${mb(rep.bytes)} MB; migrados ${rep.yaMigrados}; pendientes ${rep.pendientes}; sin referencia ${rep.sinReferencia}`);
   if (APLICAR) console.log(`Copiados ${rep.copiados} (${mb(rep.bytesCopiados)} MB); ya estaban en S3 ${rep.yaEnS3}; referencias actualizadas ${rep.refsActualizadas}`);
+  if (APLICAR || BORRAR) console.log(AVISO_SERVIDOR);
   if (BORRAR) console.log(`Borrados de GridFS ${rep.borrados} (${mb(rep.bytesLiberados)} MB liberados)`);
   console.log(`Fallidos: ${rep.fallidos.length}`);
   rep.fallidos.slice(0, 20).forEach((f) => console.log(`  - ${f}`));
