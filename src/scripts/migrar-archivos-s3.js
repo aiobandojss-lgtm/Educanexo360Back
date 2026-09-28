@@ -14,6 +14,9 @@
  *                    Un fallo en un archivo se registra y se sigue con el resto (sus referencias no cambian).
  *   --borrar-gridfs  (corrida APARTE, después de verificar la migración) borra de GridFS los archivos cuyas
  *                    referencias están TODAS en S3 y cuyo objeto existe en S3 con el mismo tamaño. Hacer mongodump antes.
+ *                    Se niega si hay trabajos 'copias-acudientes' PENDIENTE/PROCESANDO (llevan referencias viejas).
+ *                    Referencias viejas que queden (p. ej. copias reintentadas) se leen de S3 por la misma clave: el
+ *                    servidor, con S3_* configuradas, busca en S3 '<bucket>/<fileId>' si ya no está en GridFS.
  *
  * Buckets y referencias (mantener en sincronía con src/utils/referenciasArchivos.ts):
  *   uploads            mensajes.adjuntos, eventocalendarios.archivoAdjunto
@@ -166,6 +169,19 @@ async function actualizarReferencias(db, bucket, fileId, clave, sha256) {
 async function main() {
   await mongoose.connect(URI);
   const db = mongoose.connection.db;
+  if (BORRAR) {
+    // Auditoría 5.C3: esos trabajos guardan una copia de los adjuntos con la referencia VIEJA (GridFS); si se procesan
+    // después de borrar GridFS, la copia al acudiente apuntaría a un archivo inexistente. Se espera a que terminen.
+    const copias = (estados) => db.collection('outbox').countDocuments({ tipo: 'copias-acudientes', estado: { $in: estados } });
+    const enCurso = await copias(['PENDIENTE', 'PROCESANDO']);
+    if (enCurso > 0) {
+      console.error(`❌ Hay ${enCurso} trabajo(s) 'copias-acudientes' PENDIENTE/PROCESANDO en la cola: sus copias usarán las referencias viejas de GridFS. Espere a que terminen y vuelva a correr --borrar-gridfs.`);
+      await mongoose.disconnect();
+      process.exit(1);
+    }
+    const fallidos = await copias(['FALLIDO']);
+    if (fallidos > 0) console.log(`⚠️  ${fallidos} trabajo(s) 'copias-acudientes' FALLIDO: si se reintentan, sus adjuntos se leerán de S3 por la misma clave (respaldo de lectura del servidor).`);
+  }
   const modo = APLICAR ? '🔧 MIGRANDO (copiar + verificar + actualizar referencias)' : BORRAR ? '🗑️  LIBERANDO GridFS (solo lo ya migrado)' : '🔍 SIMULACIÓN (sin cambios)';
   console.log(`\n${modo} en ${mongoose.connection.name} → bucket S3 '${process.env.S3_BUCKET}'\n`);
   const antes = await db.stats();

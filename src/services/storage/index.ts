@@ -61,20 +61,39 @@ export const ubicacion = (ref: RefArchivo, bucketLegado: string): { almacen: Arc
   return { almacen: almacen('gridfs'), clave: `${bucketLegado}/${String(ref.fileId)}` };
 };
 
+/**
+ * Como ubicacion(), con respaldo para referencias LEGADO (auditoría 5.C3): si el archivo ya no está en GridFS y hay
+ * S3 configurado, se busca en S3 con la misma clave '<bucket>/<fileId>' (la que usa la migración). Cubre referencias
+ * viejas que la migración no pudo actualizar: p. ej. copias a acudientes encoladas antes de migrar (el trabajo guarda
+ * una copia de los adjuntos) y procesadas después de --borrar-gridfs.
+ */
+const resolver = async (ref: RefArchivo, bucketLegado: string): Promise<{ almacen: ArchivoStorage; clave: string }> => {
+  const u = ubicacion(ref, bucketLegado);
+  if ((ref.almacen && ref.clave) || !process.env.S3_BUCKET) return u;
+  if (await u.almacen.existe(u.clave)) return u;
+  try {
+    const s3 = almacen('s3');
+    if (await s3.existe(u.clave)) return { almacen: s3, clave: u.clave };
+  } catch (error) {
+    // S3 mal configurado o caído: se responde como antes (archivo no encontrado en GridFS)
+  }
+  return u;
+};
+
 /** Abre el archivo para enviarlo por stream (lo decide la referencia). */
 export const abrirArchivo = async (ref: RefArchivo, bucketLegado: string): Promise<Readable> => {
-  const { almacen: a, clave } = ubicacion(ref, bucketLegado);
+  const { almacen: a, clave } = await resolver(ref, bucketLegado);
   return a.leer(clave);
 };
 
 export const existeArchivo = async (ref: RefArchivo, bucketLegado: string): Promise<boolean> => {
-  const { almacen: a, clave } = ubicacion(ref, bucketLegado);
+  const { almacen: a, clave } = await resolver(ref, bucketLegado);
   return a.existe(clave);
 };
 
 /** Borra el archivo (idempotente: si ya no existe no falla). */
 export const eliminarArchivo = async (ref: RefArchivo, bucketLegado: string): Promise<void> => {
-  const { almacen: a, clave } = ubicacion(ref, bucketLegado);
+  const { almacen: a, clave } = await resolver(ref, bucketLegado);
   await a.eliminar(clave);
 };
 
