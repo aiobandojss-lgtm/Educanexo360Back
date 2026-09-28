@@ -2,6 +2,7 @@
 
 import mongoose, { Schema } from 'mongoose';
 import { IMensaje, TipoMensaje, EstadoMensaje, PrioridadMensaje } from '../interfaces/IMensaje';
+import { camposAlmacen } from './campos/referenciaArchivo';
 
 const AdjuntoSchema = new Schema({
   nombre: {
@@ -24,6 +25,8 @@ const AdjuntoSchema = new Schema({
     type: Date,
     default: Date.now,
   },
+  // Fase 5.2: dónde está el archivo (opcional; sin estos campos es GridFS 'uploads' por fileId)
+  ...camposAlmacen,
 });
 
 const LecturaSchema = new Schema({

@@ -27,7 +27,12 @@ export const crearAlmacenLocal = (): ArchivoStorage => ({
       hash.update(trozo);
       tamaño += trozo.length;
     });
-    await pipeline(origen, fs.createWriteStream(destino));
+    try {
+      await pipeline(origen, fs.createWriteStream(destino));
+    } catch (error) {
+      await fs.promises.rm(destino, { force: true }).catch(() => undefined);
+      throw error;
+    }
     return { clave, tamaño, sha256: hash.digest('hex') };
   },
   async leer(clave: string): Promise<Readable> {

@@ -32,6 +32,10 @@ export interface IAdjunto {
   tamaño: number;
   fileId: Types.ObjectId;
   fechaSubida: Date;
+  // Fase 5.2: referencia en la capa de almacenamiento (opcional en lo antiguo)
+  almacen?: 'gridfs' | 's3' | 'local';
+  clave?: string;
+  sha256?: string;
 }
 
 // Interfaz para lecturas de mensaje

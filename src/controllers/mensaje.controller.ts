@@ -4,7 +4,6 @@ import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import Mensaje from '../models/mensaje.model';
 import Usuario from '../models/usuario.model';
-import gridfsManager from '../config/gridfs';
 import emailService from '../services/email.service';
 import notificacionService from '../services/notificacion.service';
 import mensajeService from '../services/mensaje.service'; // Importamos el nuevo servicio
@@ -18,7 +17,11 @@ import fs from 'fs';
 import path from 'path';
 import { numeroPagina, numeroLimite } from '../utils/paginacion';
 import { logger } from '../utils/logger';
-import { subirAdjuntosGridFS, eliminarArchivosGridFS } from '../utils/adjuntosGridFS';
+import { subirAdjuntos, eliminarAdjuntos } from '../utils/adjuntos';
+import { abrirArchivo, existeArchivo, eliminarArchivo } from '../services/storage';
+
+// Bucket (GridFS) / prefijo de clave de los adjuntos de mensajes
+const BUCKET_MENSAJES = 'uploads';
 import { contentDispositionAdjunto } from '../utils/contentDisposition';
 
 export const ROLES_CON_BORRADORES = ['ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO', 'DOCENTE'];
@@ -64,11 +67,12 @@ const idsDestinatariosValidos = async (ids: unknown[], escuelaId: string): Promi
  * si falla lo posterior, el mensaje existe y sus adjuntos deben quedarse. Ante duda (error al consultar),
  * no se borra: un archivo huérfano es preferible a un adjunto roto.
  */
-const revertirAdjuntosSinMensaje = async (ids: any[]): Promise<void> => {
-  if (ids.length === 0) return;
+const revertirAdjuntosSinMensaje = async (refs: any[]): Promise<void> => {
+  if (refs.length === 0) return;
+  const ids = refs.map((r) => r.fileId);
   const referenciado = await Mensaje.exists({ 'adjuntos.fileId': { $in: ids } }).catch(() => true);
   if (referenciado) return;
-  await eliminarArchivosGridFS(gridfsManager.getBucket(), ids);
+  await eliminarAdjuntos(refs, BUCKET_MENSAJES);
 };
 
 export class MensajeController {
@@ -676,18 +680,18 @@ export class MensajeController {
             );
           }
 
-          const bucket = gridfsManager.getBucket();
-          if (!bucket) {
-            throw new ApiError(500, 'Servicio de archivos no disponible');
-          }
+          // Sube por la capa de almacenamiento (5.2); si falla, no deja archivos huérfanos (temporales: limpiarTemporales)
+          nuevosAdjuntos.push(...(await subirAdjuntos(req.files as any[], BUCKET_MENSAJES, String(req.user._id))));
 
-          // Sube a GridFS; si falla, no deja archivos huérfanos (los temporales los borra limpiarTemporales)
-          nuevosAdjuntos.push(...(await subirAdjuntosGridFS(req.files as any[], bucket, String(req.user._id))));
-
-          idsNuevos = nuevosAdjuntos.map((a) => a.fileId);
+          idsNuevos = nuevosAdjuntos;
 
           // PASO 2: REEMPLAZAR (no concatenar) los adjuntos
-          adjuntosAnteriores = (borrador.adjuntos || []).map((a: any) => ({ fileId: a.fileId, nombre: a.nombre }));
+          adjuntosAnteriores = (borrador.adjuntos || []).map((a: any) => ({
+            fileId: a.fileId,
+            nombre: a.nombre,
+            almacen: a.almacen,
+            clave: a.clave,
+          }));
           borrador.adjuntos = nuevosAdjuntos; // ← CAMBIO CLAVE: Reemplazar en lugar de concatenar
           logger.debug(`Adjuntos reemplazados: ${nuevosAdjuntos.length} nuevos adjuntos`);
         } else {
@@ -706,19 +710,16 @@ export class MensajeController {
           throw saveError;
         }
 
-        // PASO 3: Ya guardado, eliminar los adjuntos anteriores de GridFS (si falla, solo se registra)
+        // PASO 3: Ya guardado, eliminar los adjuntos anteriores (si falla, solo se registra)
         if (adjuntosAnteriores.length > 0) {
-          const bucket = gridfsManager.getBucket();
-          if (bucket) {
-            logger.debug(`Eliminando ${adjuntosAnteriores.length} adjuntos anteriores...`);
-            for (const adjuntoAnterior of adjuntosAnteriores) {
-              try {
-                await bucket.delete(adjuntoAnterior.fileId);
-                logger.debug(`Adjunto eliminado: ${adjuntoAnterior.nombre}`);
-              } catch (deleteError) {
-                console.warn(`No se pudo eliminar adjunto ${adjuntoAnterior.nombre}:`, deleteError);
-                // Continuar aunque falle la eliminación
-              }
+          logger.debug(`Eliminando ${adjuntosAnteriores.length} adjuntos anteriores...`);
+          for (const adjuntoAnterior of adjuntosAnteriores) {
+            try {
+              await eliminarArchivo(adjuntoAnterior, BUCKET_MENSAJES);
+              logger.debug(`Adjunto eliminado: ${adjuntoAnterior.nombre}`);
+            } catch (deleteError) {
+              console.warn(`No se pudo eliminar adjunto ${adjuntoAnterior.nombre}:`, deleteError);
+              // Continuar aunque falle la eliminación
             }
           }
         }
@@ -769,21 +770,15 @@ export class MensajeController {
             );
           }
 
-          const bucket = gridfsManager.getBucket();
-          if (!bucket) {
-            await Mensaje.deleteOne({ _id: borradorBasico._id });
-            throw new ApiError(500, 'Servicio de archivos no disponible');
-          }
-
           try {
-            // Sube a GridFS; si falla, no deja archivos huérfanos (los temporales los borra limpiarTemporales)
-            adjuntos.push(...(await subirAdjuntosGridFS(req.files as any[], bucket, String(req.user._id))));
+            // Sube por la capa (5.2); si falla, no deja archivos huérfanos (temporales: limpiarTemporales)
+            adjuntos.push(...(await subirAdjuntos(req.files as any[], BUCKET_MENSAJES, String(req.user._id))));
 
             borradorBasico.adjuntos = adjuntos;
             await borradorBasico.save();
           } catch (adjuntosError) {
             // Si lo que falló fue el save, los adjuntos ya subidos quedarían huérfanos (auditoría 3.O)
-            await eliminarArchivosGridFS(bucket, adjuntos.map((a) => a.fileId));
+            await eliminarAdjuntos(adjuntos, BUCKET_MENSAJES);
             await Mensaje.deleteOne({ _id: borradorBasico._id });
             throw adjuntosError;
           }
@@ -1074,15 +1069,12 @@ export class MensajeController {
 
       // Si el borrador tiene adjuntos, eliminarlos también
       if (borrador.adjuntos && borrador.adjuntos.length > 0) {
-        const bucket = gridfsManager.getBucket();
-        if (bucket) {
-          for (const adjunto of borrador.adjuntos) {
-            try {
-              await bucket.delete(adjunto.fileId);
-            } catch (err) {
-              console.error(`Error al eliminar adjunto con ID ${adjunto.fileId}:`, err);
-              // Continúa con el siguiente adjunto aunque falle este
-            }
+        for (const adjunto of borrador.adjuntos) {
+          try {
+            await eliminarArchivo(adjunto as any, BUCKET_MENSAJES);
+          } catch (err) {
+            console.error(`Error al eliminar adjunto con ID ${adjunto.fileId}:`, err);
+            // Continúa con el siguiente adjunto aunque falle este
           }
         }
       }
@@ -1964,13 +1956,8 @@ export class MensajeController {
           );
         }
 
-        const bucket = gridfsManager.getBucket();
-        if (!bucket) {
-          throw new ApiError(500, 'Servicio de archivos no disponible');
-        }
-
-        // Sube a GridFS; si falla, no deja archivos huérfanos (los temporales los borra limpiarTemporales)
-        adjuntos.push(...(await subirAdjuntosGridFS(req.files as any[], bucket, String(req.user._id))));
+        // Sube por la capa (5.2); si falla, no deja archivos huérfanos (temporales: limpiarTemporales)
+        adjuntos.push(...(await subirAdjuntos(req.files as any[], BUCKET_MENSAJES, String(req.user._id))));
       }
 
       // Verificar si es borrador
@@ -2042,7 +2029,7 @@ export class MensajeController {
       try {
         nuevoMensaje = await mensajeService.crearMensaje(datosMensaje, req.user);
       } catch (crearError) {
-        await revertirAdjuntosSinMensaje(adjuntos.map((a) => a.fileId));
+        await revertirAdjuntosSinMensaje(adjuntos);
         throw crearError;
       }
 
@@ -2820,16 +2807,8 @@ export class MensajeController {
         throw new ApiError(404, 'Adjunto no encontrado');
       }
 
-      // Obtener el bucket de GridFS
-      const bucket = gridfsManager.getBucket();
-      if (!bucket) {
-        throw new ApiError(500, 'Servicio de archivos no disponible');
-      }
-
-      // Buscar el archivo en GridFS
-      // Existencia en GridFS (cursor.count() está deprecado en el driver 6)
-      const [documento] = await bucket.find({ _id: new mongoose.Types.ObjectId(adjuntoId) }).limit(1).toArray();
-      if (!documento) {
+      // Existencia en su almacén (Fase 5.2: GridFS o S3 según la referencia)
+      if (!(await existeArchivo(adjunto as any, BUCKET_MENSAJES))) {
         throw new ApiError(404, 'Archivo no encontrado en el sistema');
       }
 
@@ -2839,11 +2818,11 @@ export class MensajeController {
         'Content-Disposition': contentDispositionAdjunto(adjunto.nombre),
       });
 
-      // Devolver el stream del archivo
-      const downloadStream = bucket.openDownloadStream(new mongoose.Types.ObjectId(adjuntoId));
-      // Sin handler, un error de GridFS con las cabeceras ya enviadas era un error de stream no manejado
+      // Devolver el stream del archivo (el backend autoriza y hace stream: no se redirige a una URL firmada)
+      const downloadStream = await abrirArchivo(adjunto as any, BUCKET_MENSAJES);
+      // Sin handler, un error del almacén con las cabeceras ya enviadas era un error de stream no manejado
       downloadStream.on('error', (error) => {
-        console.error('Error en stream de descarga GridFS:', error);
+        console.error('Error en stream de descarga:', error);
         if (!res.headersSent) {
           next(new ApiError(500, 'Error al descargar el archivo'));
         } else {
@@ -3178,13 +3157,8 @@ export class MensajeController {
           );
         }
 
-        const bucket = gridfsManager.getBucket();
-        if (!bucket) {
-          throw new ApiError(500, 'Servicio de archivos no disponible');
-        }
-
-        // Sube a GridFS; si falla, no deja archivos huérfanos (los temporales los borra limpiarTemporales)
-        adjuntos.push(...(await subirAdjuntosGridFS(req.files as any[], bucket, String(req.user._id))));
+        // Sube por la capa (5.2); si falla, no deja archivos huérfanos (temporales: limpiarTemporales)
+        adjuntos.push(...(await subirAdjuntos(req.files as any[], BUCKET_MENSAJES, String(req.user._id))));
       }
 
       // Parsear destinatariosCc
@@ -3220,7 +3194,7 @@ export class MensajeController {
       try {
         respuesta = await mensajeService.crearMensaje(datosRespuesta, req.user);
       } catch (crearError) {
-        await revertirAdjuntosSinMensaje(adjuntos.map((a) => a.fileId));
+        await revertirAdjuntosSinMensaje(adjuntos);
         throw crearError;
       }
       

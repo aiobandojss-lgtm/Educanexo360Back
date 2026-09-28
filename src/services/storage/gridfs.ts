@@ -34,10 +34,17 @@ export const crearAlmacenGridFS = (): ArchivoStorage => ({
       hash.update(trozo);
       tamaño += trozo.length;
     });
-    const subida = bucketDe(bucket).openUploadStreamWithId(id, meta.nombre, {
+    const b = bucketDe(bucket);
+    const subida = b.openUploadStreamWithId(id, meta.nombre, {
       metadata: { originalName: meta.nombre, contentType: meta.tipo, size: meta.tamaño, ...(meta.extra || {}) },
     });
-    await pipeline(origen, subida);
+    try {
+      await pipeline(origen, subida);
+    } catch (error) {
+      // Parcial: se borran sus chunks (auditoría 3.S; "File not found" es esperable si aún no había documento)
+      await b.delete(id).catch(() => undefined);
+      throw error;
+    }
     return { clave, tamaño, sha256: hash.digest('hex') };
   },
   async leer(clave: string): Promise<Readable> {
