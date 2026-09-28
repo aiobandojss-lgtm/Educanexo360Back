@@ -55,6 +55,8 @@ const storage = multer.diskStorage({
 });
 
 const upload = multer({
+  // Nombres de archivo en UTF-8: multer 2 (busboy 1) los decodifica como latin1 por defecto ("año" → "aÃ±o")
+  defParamCharset: 'utf8',
   storage,
   limits: {
     fileSize: 5 * 1024 * 1024, // 5MB por archivo
