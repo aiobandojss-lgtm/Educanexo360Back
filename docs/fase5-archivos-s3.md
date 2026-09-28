@@ -174,16 +174,20 @@ Con B2 real la latencia será mayor (red); todo va en stream, la memoria no crec
 
 1. `mongodump` de Atlas.
 2. Crear el bucket y la clave en B2 (ver arriba), con la regla de ciclo de vida "Keep only the last version".
-3. FTP de `dist/`, `package.json` y `package-lock.json`, y en el servidor (terminal de la app de cPanel, con la app
-   detenida): **`npm ci --omit=dev --ignore-scripts`** (cambian dependencias: multer 2, mongoose 8.24, nodemailer 10,
-   `@aws-sdk/client-s3`, `@smithy/node-http-handler`; `axios` ahora en `dependencies`).
-   - `npm ci` instala **exactamente** el `package-lock.json` (con el override) y falla si no coincide con
-     `package.json`; `npm install` puede resolver otras versiones.
-   - `--omit=dev`: sin TypeScript, Jest, ESLint (el `dist/` ya va compilado).
-   - `--ignore-scripts`: el `postinstall` del proyecto corre `npm run build` (tsc), que sin devDependencies
-     falla. Las dependencias de producción con scripts de instalación no los necesitan: `@firebase/util` (config
-     del SDK web, trae una por defecto), `@scarf/scarf` (telemetría) y `protobufjs` (aviso de versiones).
-   - `npm ci` borra `node_modules` antes de instalar: hacerlo con la app detenida y reiniciarla después. **Primero con `STORAGE_PROVIDER` sin definir** (gridfs):
+3. Instalar dependencias en cPanel (cambian: multer 2, mongoose 8.24, nodemailer 10, `@aws-sdk/client-s3`,
+   `@smithy/node-http-handler`; `axios` ahora en `dependencies`). Paso exacto:
+   1. Compilar en local (`npm run build`) y subir por FTP `dist/`, `package.json`, `package-lock.json` y `app.js`
+      (nunca `.env` ni `dist/scripts/seed-reviewers*`).
+   2. cPanel → *Setup Node.js App* → la app → **Stop App**.
+   3. Botón **Run NPM Install** (hace un `npm install` simple con el `package-lock.json` subido).
+   4. **Start App** (o *Restart*) y abrir `/educanexo360/api/health`: debe responder 200.
+   - El servidor NO compila: el proyecto ya no tiene `postinstall` (auditoría 5.C11; antes corría `tsc`, que falla
+     sin TypeScript o sin `src/`). Verificado en una carpeta limpia con solo `package.json`, `package-lock.json`,
+     `app.js` y `dist/`: `npm install --omit=dev` y `npm install` sin flags terminan bien y la app arranca.
+   - Con terminal disponible, la alternativa equivalente es `npm ci --omit=dev` (instala exactamente el lockfile y
+     borra `node_modules` antes: hacerlo con la app detenida).
+   - Quien clone el repo debe correr `npm run build` antes de `npm start` (ya no se compila al instalar).
+   **Primero con `STORAGE_PROVIDER` sin definir** (gridfs):
    reinicio y pruebas de humo (subir y bajar un adjunto de mensaje; un archivo .exe renombrado debe dar 400).
 4. Variables S3 en cPanel + `STORAGE_PROVIDER=s3`; reinicio. Subir un adjunto nuevo y descargarlo; bajar también un
    adjunto viejo (debe seguir saliendo de GridFS).
