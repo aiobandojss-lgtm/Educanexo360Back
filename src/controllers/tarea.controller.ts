@@ -7,6 +7,7 @@ import Usuario from '../models/usuario.model';
 import ApiError from '../utils/ApiError';
 import { subirAdjuntos, eliminarAdjuntos } from '../utils/adjuntos';
 import { abrirArchivo, eliminarArchivo } from '../services/storage';
+import { eliminarSiNoReferenciados } from '../utils/referenciasArchivos';
 import { escapeRegex } from '../utils/escapeRegex';
 import {
   esRolAdministrativo,
@@ -458,7 +459,13 @@ class TareaController {
         );
       }
 
+      const referencias = (tarea.archivosReferencia || []).map((a: any) => (a.toObject ? a.toObject() : a));
+      const deEntregas = (tarea.entregas || []).flatMap((e: any) => (e.archivos || []).map((a: any) => (a.toObject ? a.toObject() : a)));
       await tarea.deleteOne();
+
+      // Fase 5.5: sus archivos se borran (solo si ningún otro documento los referencia). Antes quedaban huérfanos.
+      await eliminarSiNoReferenciados(referencias, 'tareas_referencias');
+      await eliminarSiNoReferenciados(deEntregas, 'tareas_entregas');
 
       res.json({
         success: true,
@@ -620,9 +627,11 @@ class TareaController {
         throw new ApiError(404, 'Entrega no encontrada');
       }
 
+      // Fase 5.5: al reenviar, los archivos de la entrega anterior se reemplazan; se borran DESPUÉS de guardar
+      const archivosAnteriores = (entrega.archivos || []).map((a: any) => (a.toObject ? a.toObject() : a));
       entrega.fechaEntrega = new Date();
       entrega.estado = esAtrasada ? 'ATRASADA' : 'ENTREGADA';
-      entrega.archivos = archivosSubidos;
+      entrega.archivos = archivosSubidos as any;
       entrega.comentarioEstudiante = req.body.comentarioEstudiante || '';
       entrega.intentos += 1;
 
@@ -633,6 +642,7 @@ class TareaController {
         await eliminarAdjuntos(archivosSubidos, 'tareas_entregas');
         throw saveError;
       }
+      await eliminarSiNoReferenciados(archivosAnteriores, 'tareas_entregas');
 
       res.json({
         success: true,

@@ -5,6 +5,7 @@ import Usuario from '../models/usuario.model';
 import ApiError from '../utils/ApiError';
 import { subirAdjuntos, eliminarAdjuntos } from '../utils/adjuntos';
 import { abrirArchivo, eliminarArchivo } from '../services/storage';
+import { eliminarSiNoReferenciados } from '../utils/referenciasArchivos';
 
 // Bucket (GridFS) / prefijo de clave de los adjuntos de anuncios
 const BUCKET_ANUNCIOS = 'anuncios_adjuntos';
@@ -314,9 +315,12 @@ class AnuncioController {
         throw new ApiError(403, 'No tienes permiso para eliminar este anuncio');
       }
 
+      const adjuntos = (anuncio.archivosAdjuntos || []).map((a: any) => (a.toObject ? a.toObject() : a));
       await anuncio.deleteOne();
 
-      // TODO: Eliminar archivos adjuntos de GridFS si es necesario
+      // Fase 5.5: sus archivos se borran (solo si ningún otro documento los referencia, criterio 3.X). Antes quedaban
+      // huérfanos en GridFS para siempre.
+      await eliminarSiNoReferenciados(adjuntos, BUCKET_ANUNCIOS);
 
       res.json({
         success: true,
