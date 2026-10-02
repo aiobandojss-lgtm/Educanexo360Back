@@ -9,6 +9,13 @@ if (!MONGO_URI) {
   console.error('❌ ERROR: La variable MONGODB_URI no está definida en .env');
   process.exit(1);
 }
+// Este script BORRA colecciones completas (deleteMany({}) de usuarios, cursos, mensajes, …: TODOS los colegios).
+// Solo se permite contra una base LOCAL. Para producción existe seed-colegio-demo.js (acotado a su escuela).
+if (!/^mongodb:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//.test(MONGO_URI)) {
+  console.error('❌ seed-demo.js solo corre contra una base LOCAL (mongodb://localhost o 127.0.0.1): borra colecciones');
+  console.error('   completas de TODOS los colegios. Para el colegio de pruebas en producción use seed-colegio-demo.js.');
+  process.exit(1);
+}
 
 const ESC1_ID = new mongoose.Types.ObjectId('67cbd7457b538a736df6c31f'); // Centro Docente
 const ESC2_ID = new mongoose.Types.ObjectId('67ccaf317bb6eedc21de542c'); // Colegio San José
