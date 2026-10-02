@@ -3,7 +3,9 @@
 import compression from 'compression';
 import { Express, Request, Response, NextFunction, RequestHandler } from 'express';
 import NodeCache from 'node-cache';
+import jwt from 'jsonwebtoken';
 import { logger } from '../utils/logger';
+import { jwtConfig } from '../config/jwt.config';
 
 // Caché en memoria para consultas frecuentes
 const appCache = new NodeCache({ stdTTL: 300, checkperiod: 60 }); // 5 minutos de TTL por defecto
@@ -88,8 +90,27 @@ export const responseTimeMiddleware = (req: Request, res: Response, next: NextFu
   next();
 };
 
+/**
+ * H4: clave del límite en rutas autenticadas. Con un token válido (verificado con la misma clave que authenticate,
+ * sin consultar la base) el límite es POR USUARIO: antes era por IP y todos los usuarios detrás de la misma IP
+ * pública (WiFi del colegio, NAT del operador) compartían el cupo y recibían 429 ajenos. Sin token o con uno
+ * inválido, por IP (inventar tokens no sirve para esquivar el límite).
+ */
+export const clavePorUsuarioOIp = (req: Request): string => {
+  const cabecera = req.headers.authorization;
+  if (cabecera && cabecera.startsWith('Bearer ')) {
+    try {
+      const datos = jwt.verify(cabecera.slice(7), jwtConfig.secret) as jwt.JwtPayload;
+      if (datos && datos.sub) return `u:${datos.sub}`;
+    } catch {
+      // token inválido o vencido: cuenta por IP
+    }
+  }
+  return `ip:${req.ip || req.socket.remoteAddress || 'unknown'}`;
+};
+
 // Middleware para limitar tasa de peticiones
-// keyGenerator opcional: por defecto la llave es la IP (p. ej. login usa IP + email)
+// keyGenerator opcional: por defecto la llave es la IP (p. ej. login usa IP + email; rutas autenticadas: clavePorUsuarioOIp)
 export const rateLimiter = (
   windowMs: number = 60000,
   max: number = 100,
@@ -126,6 +147,13 @@ export const rateLimiter = (
 
     // Verificar si excede el límite
     if (validRequests.length > max) {
+      // H4: los 429 quedan en stderr (antes no se registraban). Una vez por clave y ventana para no inundar el log;
+      // solo el montaje de la ruta (las rutas públicas llevan códigos de invitación en la URL) y el tipo de límite,
+      // sin usuario, IP ni token
+      if (validRequests.length === max + 1) {
+        const tipo = !keyGenerator ? 'IP' : ip.startsWith('u:') ? 'usuario' : ip.startsWith('ip:') ? 'IP' : 'clave';
+        logger.warn(`[429] ${req.method} ${req.baseUrl || '/'} (límite ${max} en ${Math.round(windowMs / 1000)} s, por ${tipo})`);
+      }
       res.status(429).json({
         success: false,
         message: 'Demasiadas peticiones, intente más tarde',

@@ -25,6 +25,7 @@ import {
   setupCompression,
   responseTimeMiddleware,
   rateLimiter,
+  clavePorUsuarioOIp,
 } from './middleware/performance.middleware';
 import calendarioRoutes from './routes/calendario.routes';
 import anuncioRoutes from './routes/anuncio.routes';
@@ -129,9 +130,9 @@ apiRouter.get('/health', (req: Request, res: Response) => {
 
 // ===== RUTAS DE LA API en el router =====
 apiRouter.use('/auth', authRoutes); // límites propios por endpoint en auth.routes.ts (login por IP+email, refresh holgado)
-apiRouter.use('/mensajes', rateLimiter(60000, 60), mensajeRoutes);    // 60 req/min — tiene uploads
-apiRouter.use('/usuarios', rateLimiter(60000, 60), usuarioRoutes);    // 60 req/min — busquedas con regex
-apiRouter.use('/dashboard', rateLimiter(60000, 30), dashboardRoutes); // 30 req/min — queries de agregacion pesadas
+apiRouter.use('/mensajes', rateLimiter(60000, 60, clavePorUsuarioOIp), mensajeRoutes);    // 60 req/min — tiene uploads
+apiRouter.use('/usuarios', rateLimiter(60000, 60, clavePorUsuarioOIp), usuarioRoutes);    // 60 req/min — busquedas con regex
+apiRouter.use('/dashboard', rateLimiter(60000, 30, clavePorUsuarioOIp), dashboardRoutes); // 30 req/min — queries de agregacion pesadas
 apiRouter.use('/escuelas', escuelaRoutes);
 apiRouter.use('/cursos', cursoRoutes);
 apiRouter.use('/asignaturas', asignaturaRoutes);
@@ -148,14 +149,14 @@ apiRouter.use('/system', systemRoutes);
 apiRouter.use('/superadmin', superadminRoutes);
 
 // RUTAS PARA EL SISTEMA DE INVITACIONES Y REGISTRO
-apiRouter.use('/invitaciones', rateLimiter(60000, 20), invitacionRoutes); // 20 req/min — previene abuso de invitaciones
+apiRouter.use('/invitaciones', rateLimiter(60000, 20, clavePorUsuarioOIp), invitacionRoutes); // 20 req/min — previene abuso de invitaciones
 apiRouter.use('/registro', rateLimiter(60000, 10), registroRoutes);       // 10 req/min — previene spam de cuentas
 apiRouter.use('/public', rateLimiter(60000, 30), publicRoutes); // 30 req/min por IP — endpoints sin autenticación
 apiRouter.use('/estudiantes', estudianteRoutes);
 apiRouter.use('/cache', cacheRoutes);
 apiRouter.use('/perfiles-rol', perfilRolRoutes);
 
-app.use(`${basePath}/api/tareas`, rateLimiter(60000, 60), tareaRoutes); // 60 req/min — tiene uploads
+app.use(`${basePath}/api/tareas`, rateLimiter(60000, 60, clavePorUsuarioOIp), tareaRoutes); // 60 req/min — tiene uploads
 
 // ===== MONTAR EL ROUTER API =====
 // Si hay basePath, lo usamos; de lo contrario, montamos en /api
