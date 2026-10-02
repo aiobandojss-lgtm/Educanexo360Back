@@ -7,18 +7,22 @@ import { obtenerProveedor } from './email/proveedores';
 import { reservarCupo, liberarCupo } from './email/cupo';
 import { renderizarCorreo, DestinatarioCorreo } from './email/plantillas';
 
-// Dominio usado para correos ficticios de estudiantes sin email propio
-const DOMINIO_EMAIL_FICTICIO = '@estudiante.educanexo.com';
+// Dominios de correos ficticios que nunca deben recibir correo:
+// - estudiantes sin email propio (los genera el sistema);
+// - colegio demo (H6, seed-colegio-demo.js): @demo.educanexo.invalid.
+// Además cualquier dirección del TLD reservado .invalid (RFC 2606): no puede existir un buzón real ahí.
+const DOMINIOS_EMAIL_FICTICIO = ['@estudiante.educanexo.com', '@demo.educanexo.invalid'];
 
 // Destinatarios por trabajo de correo en la cola (Fase 4, ajuste del orquestador: lotes de ~50)
 export const DESTINATARIOS_POR_TRABAJO = 50;
 
 /**
- * Detecta si un email fue generado automáticamente por el sistema
- * (estudiantes sin correo real). Estos emails no deben recibir notificaciones.
+ * Detecta si un email es ficticio (estudiantes sin correo real, colegio demo, TLD .invalid).
+ * Estos emails no deben recibir notificaciones.
  */
 export function esEmailFicticio(email: string): boolean {
-  return String(email || '').toLowerCase().endsWith(DOMINIO_EMAIL_FICTICIO);
+  const e = String(email || '').trim().toLowerCase();
+  return DOMINIOS_EMAIL_FICTICIO.some((d) => e.endsWith(d)) || e.endsWith('.invalid');
 }
 
 /**
