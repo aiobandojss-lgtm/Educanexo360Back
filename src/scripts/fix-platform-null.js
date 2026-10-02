@@ -1,6 +1,7 @@
 // Migración: eliminar platform: null de usuarios existentes
 // Causa: el campo platform tiene enum ['ios', 'android'] pero se guardó null como default
 // Fix: $unset platform en todos los documentos donde platform === null
+require('./_entorno'); // H7: quita espacios sobrantes de las variables de entorno
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 

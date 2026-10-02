@@ -21,6 +21,7 @@
  *     node src/scripts/barrer-archivos-huerfanos.js --aplicar                        (mongodump antes)
  */
 'use strict';
+require('./_entorno'); // H7: quita espacios sobrantes de las variables de entorno
 const mongoose = require('mongoose');
 const { GridFSBucket } = require('mongodb');
 

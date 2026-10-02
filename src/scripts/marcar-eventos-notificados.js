@@ -12,6 +12,7 @@
  *   MONGODB_URI="mongodb+srv://..." node src/scripts/marcar-eventos-notificados.js --aplicar  (mongodump antes)
  */
 'use strict';
+require('./_entorno'); // H7: quita espacios sobrantes de las variables de entorno
 const mongoose = require('mongoose');
 
 const URI = process.env.MONGODB_URI;

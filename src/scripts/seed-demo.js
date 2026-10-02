@@ -2,6 +2,7 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 require('dotenv').config();
+require('./_entorno'); // H7: quita espacios sobrantes de las variables de entorno
 
 const MONGO_URI = process.env.MONGODB_URI;
 if (!MONGO_URI) {

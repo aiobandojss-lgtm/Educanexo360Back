@@ -1,3 +1,5 @@
+// H7: PRIMER import — carga el .env y quita espacios sobrantes de las variables antes de que otro módulo las lea
+import './config/entorno';
 import express, { Express, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';

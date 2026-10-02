@@ -1,4 +1,5 @@
 // src/scripts/addSuperAdmin.ts
+require('./_entorno'); // H7: quita espacios sobrantes de las variables de entorno
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';

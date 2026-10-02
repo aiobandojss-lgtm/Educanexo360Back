@@ -14,6 +14,7 @@
  *     MONGODB_URI="mongodb+srv://..." node src/scripts/sync-indexes.js --aplicar
  */
 'use strict';
+require('./_entorno'); // H7: quita espacios sobrantes de las variables de entorno
 const path = require('path');
 const mongoose = require('mongoose');
 

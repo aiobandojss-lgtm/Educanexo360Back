@@ -2,6 +2,7 @@
 // Problema: mensajes masivos creados antes del campo cursoIds quedan con cursoIds: []
 // Fix: para cada mensaje sin cursoIds, buscar el curso que contiene la mayoría de sus destinatarios
 
+require('./_entorno'); // H7: quita espacios sobrantes de las variables de entorno
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
 

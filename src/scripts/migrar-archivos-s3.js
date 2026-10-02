@@ -37,6 +37,7 @@
  *   copia nada. El servidor debe quedar con las MISMAS variables S3_* que la corrida.
  */
 'use strict';
+require('./_entorno'); // H7: quita espacios sobrantes de las variables de entorno
 const crypto = require('crypto');
 const mongoose = require('mongoose');
 const { GridFSBucket } = require('mongodb');

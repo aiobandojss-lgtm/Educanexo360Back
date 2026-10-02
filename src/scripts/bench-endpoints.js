@@ -12,6 +12,7 @@
  * ⚠️ Solo contra bases locales (MONGODB_URI localhost). No lee el .env.
  */
 'use strict';
+require('./_entorno'); // H7: quita espacios sobrantes de las variables de entorno
 const mongoose = require('mongoose');
 
 const BASE = process.env.BENCH_URL || 'http://localhost:3999/api';

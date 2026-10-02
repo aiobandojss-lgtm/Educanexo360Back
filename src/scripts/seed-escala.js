@@ -20,6 +20,7 @@
  * La base se BORRA completa antes de sembrar.
  */
 'use strict';
+require('./_entorno'); // H7: quita espacios sobrantes de las variables de entorno
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
