@@ -3,6 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+require("./config/entorno");
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const helmet_1 = __importDefault(require("helmet"));
@@ -39,6 +40,7 @@ const dashboard_routes_1 = __importDefault(require("./routes/dashboard.routes"))
 const tarea_routes_1 = __importDefault(require("./routes/tarea.routes"));
 const perfilRol_routes_1 = __importDefault(require("./routes/perfilRol.routes"));
 const sanitize_middleware_1 = require("./middleware/sanitize.middleware");
+const fechasCliente_middleware_1 = require("./middleware/fechasCliente.middleware");
 const outbox_1 = require("./queue/outbox");
 require("./queue/handlers");
 dotenv_1.default.config();
@@ -81,6 +83,7 @@ app.use((0, helmet_1.default)());
 app.use(express_1.default.json({ limit: '10mb' }));
 app.use(express_1.default.urlencoded({ extended: true, limit: '10mb' }));
 app.use(sanitize_middleware_1.sanitizeNoSQL);
+app.use(fechasCliente_middleware_1.normalizarFechasCliente);
 (0, performance_middleware_1.setupCompression)(app);
 app.use(performance_middleware_1.responseTimeMiddleware);
 const apiRouter = express_1.default.Router();
@@ -90,9 +93,9 @@ apiRouter.get('/health', (req, res) => {
     });
 });
 apiRouter.use('/auth', auth_routes_1.default);
-apiRouter.use('/mensajes', (0, performance_middleware_1.rateLimiter)(60000, 60), mensaje_routes_1.default);
-apiRouter.use('/usuarios', (0, performance_middleware_1.rateLimiter)(60000, 60), usuario_routes_1.default);
-apiRouter.use('/dashboard', (0, performance_middleware_1.rateLimiter)(60000, 30), dashboard_routes_1.default);
+apiRouter.use('/mensajes', (0, performance_middleware_1.rateLimiter)(60000, 60, performance_middleware_1.clavePorUsuarioOIp), mensaje_routes_1.default);
+apiRouter.use('/usuarios', (0, performance_middleware_1.rateLimiter)(60000, 60, performance_middleware_1.clavePorUsuarioOIp), usuario_routes_1.default);
+apiRouter.use('/dashboard', (0, performance_middleware_1.rateLimiter)(60000, 30, performance_middleware_1.clavePorUsuarioOIp), dashboard_routes_1.default);
 apiRouter.use('/escuelas', escuela_routes_1.default);
 apiRouter.use('/cursos', curso_routes_1.default);
 apiRouter.use('/asignaturas', asignatura_routes_1.default);
@@ -107,13 +110,13 @@ apiRouter.use('/asistencia', asistencia_routes_1.default);
 apiRouter.use('/asistencia/informes', asistenciaInformes_routes_1.default);
 apiRouter.use('/system', system_routes_1.default);
 apiRouter.use('/superadmin', superadmin_routes_1.default);
-apiRouter.use('/invitaciones', (0, performance_middleware_1.rateLimiter)(60000, 20), invitacion_routes_1.default);
+apiRouter.use('/invitaciones', (0, performance_middleware_1.rateLimiter)(60000, 20, performance_middleware_1.clavePorUsuarioOIp), invitacion_routes_1.default);
 apiRouter.use('/registro', (0, performance_middleware_1.rateLimiter)(60000, 10), registro_routes_1.default);
 apiRouter.use('/public', (0, performance_middleware_1.rateLimiter)(60000, 30), public_routes_1.default);
 apiRouter.use('/estudiantes', estudiante_routes_1.default);
 apiRouter.use('/cache', cache_routes_1.default);
 apiRouter.use('/perfiles-rol', perfilRol_routes_1.default);
-app.use(`${basePath}/api/tareas`, (0, performance_middleware_1.rateLimiter)(60000, 60), tarea_routes_1.default);
+app.use(`${basePath}/api/tareas`, (0, performance_middleware_1.rateLimiter)(60000, 60, performance_middleware_1.clavePorUsuarioOIp), tarea_routes_1.default);
 if (basePath) {
     app.use(`${basePath}/api`, apiRouter);
 }

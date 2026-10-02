@@ -7,12 +7,13 @@ const mongoose_1 = __importDefault(require("mongoose"));
 const perfilRol_model_1 = __importDefault(require("../models/perfilRol.model"));
 const usuario_model_1 = __importDefault(require("../models/usuario.model"));
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
+const escapeRegex_1 = require("../utils/escapeRegex");
 const permissions_1 = require("../constants/permissions");
 const perfilRolService = {
     async crear(dto) {
         const existente = await perfilRol_model_1.default.findOne({
             escuelaId: dto.escuelaId,
-            nombre: { $regex: new RegExp(`^${dto.nombre}$`, 'i') },
+            nombre: { $regex: new RegExp(`^${(0, escapeRegex_1.escapeRegex)(dto.nombre)}$`, 'i') },
         });
         if (existente) {
             throw new ApiError_1.default(409, `Ya existe un perfil de rol con el nombre "${dto.nombre}" en esta escuela`);
@@ -53,7 +54,7 @@ const perfilRolService = {
         if (dto.nombre) {
             const existente = await perfilRol_model_1.default.findOne({
                 escuelaId,
-                nombre: { $regex: new RegExp(`^${dto.nombre}$`, 'i') },
+                nombre: { $regex: new RegExp(`^${(0, escapeRegex_1.escapeRegex)(dto.nombre)}$`, 'i') },
                 _id: { $ne: perfilId },
             });
             if (existente) {

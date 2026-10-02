@@ -19,15 +19,16 @@ const mensaje_model_1 = __importDefault(require("../models/mensaje.model"));
 const email_service_1 = require("./email.service");
 const pushNotification_service_1 = __importDefault(require("./pushNotification.service"));
 const escapeHtml_1 = require("../utils/escapeHtml");
+const logger_1 = require("../utils/logger");
 const IAsistencia_1 = require("../interfaces/IAsistencia");
 const INotificacion_1 = require("../interfaces/INotificacion");
 const IMensaje_1 = require("../interfaces/IMensaje");
 const fechas_1 = require("../utils/fechas");
 function generarCuerpoMensaje(nivel, nombreEstudiante, nombreCurso, porcentajeAusencias) {
     const descripciones = {
-        ALERTA: 'ha alcanzado el 15% de ausencias',
-        CRITICO: 'ha superado el 25% de ausencias',
-        INMINENTE: 'está en riesgo de reprobación por inasistencia (más del 30%)',
+        ALERTA: 'ha alcanzado el 15% de inasistencia general en el periodo',
+        CRITICO: 'ha superado el 25% de inasistencia general en el periodo',
+        INMINENTE: 'está en riesgo de reprobación por inasistencia general en el periodo (más del 30%)',
     };
     const umbrales = {
         ALERTA: '15%',
@@ -38,7 +39,7 @@ function generarCuerpoMensaje(nivel, nombreEstudiante, nombreCurso, porcentajeAu
 <p>El estudiante <strong>${(0, escapeHtml_1.escapeHtml)(nombreEstudiante)}</strong> del curso <strong>${(0, escapeHtml_1.escapeHtml)(nombreCurso)}</strong> ${descripciones[nivel]}.</p>
 
 <p>
-  <strong>Porcentaje actual de ausencias:</strong> ${porcentajeAusencias.toFixed(1)}%<br>
+  <strong>Inasistencia general en el periodo (todas las asignaturas del curso):</strong> ${porcentajeAusencias.toFixed(1)}%<br>
   <strong>Umbral superado:</strong> ${umbrales[nivel]}
 </p>
 
@@ -77,7 +78,7 @@ async function obtenerPeriodoVigente(escuelaId, periodoId) {
         :
             periodos.find((p) => new Date(p.fecha_inicio) <= hoy && hoy <= (0, fechas_1.finDelDiaColombia)(new Date(p.fecha_fin)));
     if (!periodo)
-        return { id: periodoId || 'sin-periodo' };
+        return null;
     const inicio = new Date(periodo.fecha_inicio);
     const fin = new Date(periodo.fecha_fin);
     return {
@@ -94,7 +95,7 @@ async function enviarNotificacionesAlerta(params) {
         INMINENTE: 'Riesgo de inasistencia',
     };
     const titulo = etiquetas[nivel];
-    const mensaje = `${nombreEstudiante} en ${nombreCurso} presenta ${porcentajeAusencias.toFixed(1)}% de ausencias.`;
+    const mensaje = `${nombreEstudiante} en ${nombreCurso} presenta ${porcentajeAusencias.toFixed(1)}% de inasistencia general en el periodo.`;
     const destinatariosUnicos = Array.from(new Map(destinatarios.map((destinatario) => [destinatario._id.toString(), destinatario])).values());
     if (destinatariosUnicos.length === 0) {
         return;
@@ -193,17 +194,21 @@ async function conConcurrencia(items, limite, tarea) {
     await Promise.all(trabajadores);
 }
 async function procesarAlertasAsistenciaCurso(params) {
-    const { cursoId, escuelaId, docenteId } = params;
+    const { cursoId, escuelaId } = params;
     const estudianteIds = [...new Set(params.estudianteIds)].filter((id) => mongoose_1.default.isValidObjectId(id));
     if (estudianteIds.length === 0)
         return;
     const periodo = await obtenerPeriodoVigente(escuelaId, params.periodoId);
+    if (!periodo) {
+        logger_1.logger.warn(`[AlertaAsistencia] Sin periodo vigente (escuela ${escuelaId}, curso ${cursoId}): no se generan alertas`);
+        return;
+    }
     const match = {
         cursoId: new mongoose_1.default.Types.ObjectId(cursoId),
         escuelaId: new mongoose_1.default.Types.ObjectId(escuelaId),
+        finalizado: true,
+        fecha: { $gte: periodo.desde, $lt: periodo.hastaExclusivo },
     };
-    if (periodo.desde && periodo.hastaExclusivo)
-        match.fecha = { $gte: periodo.desde, $lt: periodo.hastaExclusivo };
     const conteos = await asistencia_model_1.default.aggregate([
         { $match: match },
         { $project: { estudiantes: { estudianteId: 1, estado: 1 } } },
@@ -240,20 +245,22 @@ async function procesarAlertasAsistenciaCurso(params) {
         .filter((c) => c.umbrales.length > 0);
     if (enRiesgo.length === 0)
         return;
-    const [administrativos, docente, curso, estudiantes] = await Promise.all([
+    const [administrativos, curso, estudiantes] = await Promise.all([
         usuario_model_1.default.find({ escuelaId, tipo: { $in: ['RECTOR', 'COORDINADOR'] }, estado: 'ACTIVO' })
             .select('_id email nombre apellidos')
             .lean(),
-        usuario_model_1.default.findOne({ _id: docenteId, escuelaId }).select('_id email nombre apellidos').lean(),
-        curso_model_1.default.findOne({ _id: cursoId, escuelaId }).select('nombre').lean(),
+        curso_model_1.default.findOne({ _id: cursoId, escuelaId }).select('nombre director_grupo').lean(),
         usuario_model_1.default.find({ _id: { $in: enRiesgo.map((e) => e.estudianteId) }, escuelaId }).select('nombre apellidos').lean(),
     ]);
-    const destinatarios = [
-        ...administrativos,
-        ...(docente ? [docente] : []),
-    ];
-    if (destinatarios.length === 0)
+    const idDirector = curso?.director_grupo;
+    const director = idDirector
+        ? await usuario_model_1.default.findOne({ _id: idDirector, escuelaId, estado: 'ACTIVO' }).select('_id email nombre apellidos').lean()
+        : null;
+    const destinatarios = Array.from(new Map([...(director ? [director] : []), ...administrativos].map((d) => [String(d._id), d])).values());
+    if (destinatarios.length === 0) {
+        logger_1.logger.warn(`[AlertaAsistencia] Sin destinatarios (escuela ${escuelaId}, curso ${cursoId}): asigne director de grupo, rector o coordinadores`);
         return;
+    }
     const nombres = new Map(estudiantes.map((e) => [String(e._id), `${e.nombre ?? ''} ${e.apellidos ?? ''}`.trim()]));
     const nombreCurso = curso?.nombre ?? '';
     await conConcurrencia(enRiesgo, 5, async ({ estudianteId, porcentaje, umbrales }) => {

@@ -8,7 +8,7 @@ const mongoose_1 = __importDefault(require("mongoose"));
 const mensaje_model_1 = __importDefault(require("../models/mensaje.model"));
 const usuario_model_1 = __importDefault(require("../models/usuario.model"));
 const mensaje_service_1 = __importDefault(require("../services/mensaje.service"));
-const escapeRegex_1 = require("../utils/escapeRegex");
+const regexBusqueda_1 = require("../utils/regexBusqueda");
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
 const IMensaje_1 = require("../interfaces/IMensaje");
 const paginacion_1 = require("../utils/paginacion");
@@ -64,7 +64,7 @@ class MensajeController {
                         estado: 'ACTIVO',
                     };
                     if (searchQuery) {
-                        const searchRegex = new RegExp((0, escapeRegex_1.escapeRegex)(searchQuery), 'i');
+                        const searchRegex = (0, regexBusqueda_1.regexBusqueda)(searchQuery);
                         filter.$or = [
                             { nombre: searchRegex },
                             { apellidos: searchRegex },
@@ -274,7 +274,7 @@ class MensajeController {
                                 estado: 'ACTIVO',
                             };
                             if (searchQuery) {
-                                const searchRegex = new RegExp((0, escapeRegex_1.escapeRegex)(searchQuery), 'i');
+                                const searchRegex = (0, regexBusqueda_1.regexBusqueda)(searchQuery);
                                 filter.$or = [
                                     { nombre: searchRegex },
                                     { apellidos: searchRegex },
@@ -1477,7 +1477,7 @@ class MensajeController {
                 pipeline.push({ $match: matchFecha });
             }
             if (typeof busqueda === 'string' && busqueda) {
-                const regex = new RegExp((0, escapeRegex_1.escapeRegex)(busqueda), 'i');
+                const regex = (0, regexBusqueda_1.regexBusqueda)(busqueda);
                 pipeline.push({
                     $match: {
                         $or: [{ asunto: regex }, { contenido: regex }],

@@ -11,7 +11,7 @@ const curso_model_1 = __importDefault(require("../models/curso.model"));
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
 const IMensaje_1 = require("../interfaces/IMensaje");
 const INotificacion_1 = require("../interfaces/INotificacion");
-const escapeRegex_1 = require("../utils/escapeRegex");
+const regexBusqueda_1 = require("../utils/regexBusqueda");
 const email_service_1 = require("./email.service");
 const preferencias_1 = require("../utils/preferencias");
 const pushNotification_service_1 = __importDefault(require("./pushNotification.service"));
@@ -93,9 +93,9 @@ class MensajeService {
                             ...(query &&
                                 query.trim() !== '' && {
                                 $or: [
-                                    { nombre: { $regex: (0, escapeRegex_1.escapeRegex)(query), $options: 'i' } },
-                                    { apellidos: { $regex: (0, escapeRegex_1.escapeRegex)(query), $options: 'i' } },
-                                    { email: { $regex: (0, escapeRegex_1.escapeRegex)(query), $options: 'i' } },
+                                    { nombre: { $regex: (0, regexBusqueda_1.patronBusqueda)(query), $options: 'i' } },
+                                    { apellidos: { $regex: (0, regexBusqueda_1.patronBusqueda)(query), $options: 'i' } },
+                                    { email: { $regex: (0, regexBusqueda_1.patronBusqueda)(query), $options: 'i' } },
                                 ],
                             }),
                         },

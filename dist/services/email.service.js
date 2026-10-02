@@ -8,10 +8,11 @@ const outbox_1 = require("../queue/outbox");
 const proveedores_1 = require("./email/proveedores");
 const cupo_1 = require("./email/cupo");
 const plantillas_1 = require("./email/plantillas");
-const DOMINIO_EMAIL_FICTICIO = '@estudiante.educanexo.com';
+const DOMINIOS_EMAIL_FICTICIO = ['@estudiante.educanexo.com', '@demo.educanexo.invalid'];
 exports.DESTINATARIOS_POR_TRABAJO = 50;
 function esEmailFicticio(email) {
-    return String(email || '').toLowerCase().endsWith(DOMINIO_EMAIL_FICTICIO);
+    const e = String(email || '').trim().toLowerCase();
+    return DOMINIOS_EMAIL_FICTICIO.some((d) => e.endsWith(d)) || e.endsWith('.invalid');
 }
 const encolarCorreo = async (opciones) => {
     const trabajos = (0, exports.construirTrabajosCorreo)(opciones);

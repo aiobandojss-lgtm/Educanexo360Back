@@ -7,7 +7,7 @@ const mongoose_1 = __importDefault(require("mongoose"));
 const usuario_model_1 = __importDefault(require("../models/usuario.model"));
 const curso_model_1 = __importDefault(require("../models/curso.model"));
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
-const escapeRegex_1 = require("../utils/escapeRegex");
+const regexBusqueda_1 = require("../utils/regexBusqueda");
 const paginacion_1 = require("../utils/paginacion");
 const notificacion_service_1 = __importDefault(require("../services/notificacion.service"));
 const INotificacion_1 = require("../interfaces/INotificacion");
@@ -41,9 +41,9 @@ class UsuarioController {
             }
             if (searchTerm) {
                 query.$or = [
-                    { nombre: new RegExp((0, escapeRegex_1.escapeRegex)(searchTerm), 'i') },
-                    { apellidos: new RegExp((0, escapeRegex_1.escapeRegex)(searchTerm), 'i') },
-                    { email: new RegExp((0, escapeRegex_1.escapeRegex)(searchTerm), 'i') },
+                    { nombre: (0, regexBusqueda_1.regexBusqueda)(searchTerm) },
+                    { apellidos: (0, regexBusqueda_1.regexBusqueda)(searchTerm) },
+                    { email: (0, regexBusqueda_1.regexBusqueda)(searchTerm) },
                 ];
             }
             const campos = '_id nombre apellidos email tipo estado escuelaId perfilRolId rolBase perfil info_academica createdAt';
@@ -261,9 +261,9 @@ class UsuarioController {
             const filter = {
                 escuelaId: req.user.escuelaId,
                 $or: [
-                    { nombre: new RegExp((0, escapeRegex_1.escapeRegex)(searchTerm), 'i') },
-                    { apellidos: new RegExp((0, escapeRegex_1.escapeRegex)(searchTerm), 'i') },
-                    { email: new RegExp((0, escapeRegex_1.escapeRegex)(searchTerm), 'i') },
+                    { nombre: (0, regexBusqueda_1.regexBusqueda)(searchTerm) },
+                    { apellidos: (0, regexBusqueda_1.regexBusqueda)(searchTerm) },
+                    { email: (0, regexBusqueda_1.regexBusqueda)(searchTerm) },
                 ],
             };
             const usuarios = await usuario_model_1.default.find(filter).select('-password').limit(10);

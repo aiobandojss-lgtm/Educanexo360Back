@@ -8,6 +8,7 @@ const calendario_model_1 = __importDefault(require("../models/calendario.model")
 const usuario_model_1 = __importDefault(require("../models/usuario.model"));
 const curso_model_1 = __importDefault(require("../models/curso.model"));
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
+const fechas_1 = require("../utils/fechas");
 const adjuntos_1 = require("../utils/adjuntos");
 const storage_1 = require("../services/storage");
 const BUCKET_CALENDARIO = 'uploads';
@@ -41,7 +42,7 @@ const tomarCamposEvento = (body) => {
 const archivoSubido = (req) => req.file || (Array.isArray(req.files) && req.files.length > 0 ? req.files[0] : undefined);
 const notificarEventoPublicado = (evento, escuelaId) => {
     const titulo = evento.titulo || 'Nuevo evento';
-    const fechaStr = evento.fechaInicio ? new Date(evento.fechaInicio).toLocaleDateString('es-CO') : '';
+    const fechaStr = evento.fechaInicio ? (0, fechas_1.fechaLegibleColombia)(evento.fechaInicio) : '';
     calendario_model_1.default.findOneAndUpdate({ _id: evento._id, escuelaId, notificadoEn: null }, { $set: { notificadoEn: new Date() } })
         .then((reclamado) => {
         if (!reclamado)

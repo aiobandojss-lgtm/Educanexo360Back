@@ -8,7 +8,7 @@ const mongoose_1 = require("mongoose");
 const usuario_model_1 = __importDefault(require("../models/usuario.model"));
 const curso_model_1 = __importDefault(require("../models/curso.model"));
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
-const escapeRegex_1 = require("../utils/escapeRegex");
+const regexBusqueda_1 = require("../utils/regexBusqueda");
 const logger_1 = require("../utils/logger");
 class EstudianteService {
     async buscarEstudiantesExistentes(options) {
@@ -16,7 +16,7 @@ class EstudianteService {
         const texto = (v) => typeof v === 'string' && v.trim() !== '' ? v.trim() : undefined;
         const prefijo = (v) => {
             const t = texto(v);
-            return t && t.length >= 3 ? new RegExp('^' + (0, escapeRegex_1.escapeRegex)(t), 'i') : undefined;
+            return t && t.length >= 3 ? (0, regexBusqueda_1.regexBusqueda)(t, { prefijo: true }) : undefined;
         };
         const criterios = {
             email: texto(options.email)?.toLowerCase(),

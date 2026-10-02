@@ -8,10 +8,11 @@ const tarea_model_1 = __importDefault(require("../models/tarea.model"));
 const curso_model_1 = __importDefault(require("../models/curso.model"));
 const usuario_model_1 = __importDefault(require("../models/usuario.model"));
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
+const fechas_1 = require("../utils/fechas");
 const adjuntos_1 = require("../utils/adjuntos");
 const storage_1 = require("../services/storage");
 const referenciasArchivos_1 = require("../utils/referenciasArchivos");
-const escapeRegex_1 = require("../utils/escapeRegex");
+const regexBusqueda_1 = require("../utils/regexBusqueda");
 const accesoAcademico_1 = require("../utils/accesoAcademico");
 const idDe = (valor) => String(valor?._id ?? valor);
 const sincronizarEstadosEntregas = async (tarea) => {
@@ -120,7 +121,7 @@ class TareaController {
             });
             if (estudiantesParaAsignar.length > 0) {
                 const fechaStr = nuevaTarea.fechaLimite
-                    ? new Date(nuevaTarea.fechaLimite).toLocaleDateString('es-CO')
+                    ? (0, fechas_1.fechaLegibleColombia)(nuevaTarea.fechaLimite)
                     : '';
                 pushNotification_service_1.default
                     .encolarPushFiltro({ _id: { $in: estudiantesParaAsignar } }, {
@@ -175,8 +176,8 @@ class TareaController {
             }
             if (busqueda) {
                 filters.$or = [
-                    { titulo: { $regex: (0, escapeRegex_1.escapeRegex)(busqueda), $options: 'i' } },
-                    { descripcion: { $regex: (0, escapeRegex_1.escapeRegex)(busqueda), $options: 'i' } },
+                    { titulo: { $regex: (0, regexBusqueda_1.patronBusqueda)(busqueda), $options: 'i' } },
+                    { descripcion: { $regex: (0, regexBusqueda_1.patronBusqueda)(busqueda), $options: 'i' } },
                 ];
             }
             const [tareas, total] = await Promise.all([

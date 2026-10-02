@@ -13,6 +13,7 @@ const ApiError_1 = __importDefault(require("../utils/ApiError"));
 const erroresSubida_1 = require("../utils/erroresSubida");
 const dashboardCacheInvalidation_middleware_1 = require("../middleware/dashboardCacheInvalidation.middleware");
 const sanitize_middleware_1 = require("../middleware/sanitize.middleware");
+const fechasCliente_middleware_1 = require("../middleware/fechasCliente.middleware");
 const validarArchivos_middleware_1 = require("../middleware/validarArchivos.middleware");
 const limpiarTemporales_middleware_1 = require("../middleware/limpiarTemporales.middleware");
 const router = express_1.default.Router();
@@ -31,10 +32,11 @@ const middlewaresActualizar = [
     subirAdjunto,
     validarArchivos_middleware_1.validarArchivos,
     sanitize_middleware_1.sanitizeNoSQL,
+    fechasCliente_middleware_1.normalizarFechasCliente,
     (0, validate_middleware_1.validate)(calendario_validation_1.actualizarEventoValidation),
     calendario_controller_1.default.actualizarEvento,
 ];
-router.post('/', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE'), dashboardCacheInvalidation_middleware_1.invalidateOnCalendario, limpiarTemporales_middleware_1.limpiarTemporales, subirAdjunto, validarArchivos_middleware_1.validarArchivos, sanitize_middleware_1.sanitizeNoSQL, (0, validate_middleware_1.validate)(calendario_validation_1.crearEventoValidation), calendario_controller_1.default.crearEvento);
+router.post('/', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE'), dashboardCacheInvalidation_middleware_1.invalidateOnCalendario, limpiarTemporales_middleware_1.limpiarTemporales, subirAdjunto, validarArchivos_middleware_1.validarArchivos, sanitize_middleware_1.sanitizeNoSQL, fechasCliente_middleware_1.normalizarFechasCliente, (0, validate_middleware_1.validate)(calendario_validation_1.crearEventoValidation), calendario_controller_1.default.crearEvento);
 router.get('/', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'ESTUDIANTE', 'PADRE', 'ACUDIENTE'), calendario_controller_1.default.obtenerEventos);
 router.get('/:id', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'ESTUDIANTE', 'PADRE', 'ACUDIENTE'), calendario_controller_1.default.obtenerEventoPorId);
 router.put('/:id', ...middlewaresActualizar);

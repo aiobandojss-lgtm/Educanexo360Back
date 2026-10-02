@@ -11,7 +11,7 @@ const storage_1 = require("../services/storage");
 const referenciasArchivos_1 = require("../utils/referenciasArchivos");
 const BUCKET_ANUNCIOS = 'anuncios_adjuntos';
 const soloPublicados = (tipo) => !((0, accesoAcademico_1.esRolAdministrativo)(tipo) || tipo === 'DOCENTE' || tipo === 'SUPER_ADMIN');
-const escapeRegex_1 = require("../utils/escapeRegex");
+const regexBusqueda_1 = require("../utils/regexBusqueda");
 const pushNotification_service_1 = __importDefault(require("../services/pushNotification.service"));
 const paginacion_1 = require("../utils/paginacion");
 const accesoAcademico_1 = require("../utils/accesoAcademico");
@@ -79,8 +79,8 @@ class AnuncioController {
             if (req.query.busqueda) {
                 const busqueda = req.query.busqueda;
                 filters.$or = [
-                    { titulo: { $regex: (0, escapeRegex_1.escapeRegex)(busqueda), $options: 'i' } },
-                    { contenido: { $regex: (0, escapeRegex_1.escapeRegex)(busqueda), $options: 'i' } },
+                    { titulo: { $regex: (0, regexBusqueda_1.patronBusqueda)(busqueda), $options: 'i' } },
+                    { contenido: { $regex: (0, regexBusqueda_1.patronBusqueda)(busqueda), $options: 'i' } },
                 ];
             }
             const [anuncios, total] = await Promise.all([
