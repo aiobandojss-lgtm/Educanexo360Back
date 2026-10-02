@@ -11,6 +11,7 @@ import Mensaje from '../models/mensaje.model';
 import { encolarCorreo } from './email.service';
 import pushNotificationService from './pushNotification.service';
 import { escapeHtml } from '../utils/escapeHtml';
+import { logger } from '../utils/logger';
 import { EstadoAsistencia } from '../interfaces/IAsistencia';
 import { NivelAlertaAsistencia } from '../interfaces/IAlertaAsistencia';
 import { EstadoNotificacion, TipoNotificacion } from '../interfaces/INotificacion';
@@ -31,9 +32,9 @@ function generarCuerpoMensaje(
   porcentajeAusencias: number,
 ): string {
   const descripciones: Record<NivelAlertaAsistencia, string> = {
-    ALERTA: 'ha alcanzado el 15% de ausencias',
-    CRITICO: 'ha superado el 25% de ausencias',
-    INMINENTE: 'está en riesgo de reprobación por inasistencia (más del 30%)',
+    ALERTA: 'ha alcanzado el 15% de inasistencia general en el periodo',
+    CRITICO: 'ha superado el 25% de inasistencia general en el periodo',
+    INMINENTE: 'está en riesgo de reprobación por inasistencia general en el periodo (más del 30%)',
   };
   const umbrales: Record<NivelAlertaAsistencia, string> = {
     ALERTA: '15%',
@@ -45,7 +46,7 @@ function generarCuerpoMensaje(
 <p>El estudiante <strong>${escapeHtml(nombreEstudiante)}</strong> del curso <strong>${escapeHtml(nombreCurso)}</strong> ${descripciones[nivel]}.</p>
 
 <p>
-  <strong>Porcentaje actual de ausencias:</strong> ${porcentajeAusencias.toFixed(1)}%<br>
+  <strong>Inasistencia general en el periodo (todas las asignaturas del curso):</strong> ${porcentajeAusencias.toFixed(1)}%<br>
   <strong>Umbral superado:</strong> ${umbrales[nivel]}
 </p>
 
@@ -91,7 +92,7 @@ async function obtenerOCrearUsuarioSistema(): Promise<{ _id: mongoose.Types.Obje
 async function obtenerPeriodoVigente(
   escuelaId: string,
   periodoId?: string,
-): Promise<{ id: string; desde?: Date; hastaExclusivo?: Date }> {
+): Promise<{ id: string; desde: Date; hastaExclusivo: Date } | null> {
   const escuela = (await Escuela.findById(escuelaId).select('periodos_academicos').lean()) as any;
   const periodos: any[] = escuela?.periodos_academicos || [];
   const hoy = new Date();
@@ -99,7 +100,8 @@ async function obtenerPeriodoVigente(
     ? periodos.find((p) => String(p._id) === String(periodoId))
     : // hasta el FIN del día de fecha_fin (hora Colombia): el último día del periodo no cae en 'sin-periodo'
       periodos.find((p) => new Date(p.fecha_inicio) <= hoy && hoy <= finDelDiaColombia(new Date(p.fecha_fin)));
-  if (!periodo) return { id: periodoId || 'sin-periodo' };
+  // H5: sin periodo no se evalúa (antes 'sin-periodo' sin filtro de fechas: todo el histórico)
+  if (!periodo) return null;
   // Las asistencias guardan la fecha como medianoche UTC, pero la web guarda los periodos en hora local
   // (new Date(año, 3, 1) = 05:00Z). Ambos límites se normalizan por FECHA CALENDARIO con las partes UTC,
   // así sirve si el periodo se guardó a 00:00Z o a 05:00Z (auditoría 3.V; antes el primer día de cada
@@ -146,7 +148,7 @@ async function enviarNotificacionesAlerta(params: {
   const titulo = etiquetas[nivel];
   const mensaje = `${nombreEstudiante} en ${nombreCurso} presenta ${porcentajeAusencias.toFixed(
     1,
-  )}% de ausencias.`;
+  )}% de inasistencia general en el periodo.`;
 
   const destinatariosUnicos = Array.from(
     new Map(destinatarios.map((destinatario) => [destinatario._id.toString(), destinatario])).values(),
@@ -268,6 +270,13 @@ async function conConcurrencia<T>(items: T[], limite: number, tarea: (item: T) =
 
 /**
  * Evalúa las alertas de inasistencia de los estudiantes de un curso al finalizar un registro.
+ *
+ * Reglas (H5, decisión de Aymer):
+ * - Porcentaje = INASISTENCIA GENERAL en el periodo vigente: ausencias sobre todas las clases registradas del curso,
+ *   de TODAS las asignaturas, contando solo registros FINALIZADOS (los borradores no cuentan).
+ * - Sin periodo vigente no se genera alerta (se registra un warn con escuela y curso).
+ * - Destinatarios: el DIRECTOR DE GRUPO del curso + rector(es) + coordinadores activos. Ya no el docente que finalizó
+ *   el registro (recibía alertas de inasistencia de otras materias). docenteId queda solo por compatibilidad.
  * Una sola agregación por curso filtrada por el periodo vigente (antes: una consulta por estudiante
  * sobre todo el histórico, bcrypt por alerta y todos los estudiantes en paralelo sin límite).
  */
@@ -278,17 +287,22 @@ export async function procesarAlertasAsistenciaCurso(params: {
   docenteId: string;
   periodoId?: string;
 }): Promise<void> {
-  const { cursoId, escuelaId, docenteId } = params;
+  const { cursoId, escuelaId } = params;
   const estudianteIds = [...new Set(params.estudianteIds)].filter((id) => mongoose.isValidObjectId(id));
   if (estudianteIds.length === 0) return;
 
   const periodo = await obtenerPeriodoVigente(escuelaId, params.periodoId);
+  if (!periodo) {
+    logger.warn(`[AlertaAsistencia] Sin periodo vigente (escuela ${escuelaId}, curso ${cursoId}): no se generan alertas`);
+    return;
+  }
 
   const match: any = {
     cursoId: new mongoose.Types.ObjectId(cursoId),
     escuelaId: new mongoose.Types.ObjectId(escuelaId),
+    finalizado: true, // H5: los borradores no cuentan
+    fecha: { $gte: periodo.desde, $lt: periodo.hastaExclusivo },
   };
-  if (periodo.desde && periodo.hastaExclusivo) match.fecha = { $gte: periodo.desde, $lt: periodo.hastaExclusivo };
 
   const conteos = await Asistencia.aggregate([
     { $match: match },
@@ -332,20 +346,29 @@ export async function procesarAlertasAsistenciaCurso(params: {
   if (enRiesgo.length === 0) return;
 
   // Datos comunes una sola vez para todo el curso
-  const [administrativos, docente, curso, estudiantes] = await Promise.all([
+  const [administrativos, curso, estudiantes] = await Promise.all([
     Usuario.find({ escuelaId, tipo: { $in: ['RECTOR', 'COORDINADOR'] }, estado: 'ACTIVO' })
       .select('_id email nombre apellidos')
       .lean(),
-    Usuario.findOne({ _id: docenteId, escuelaId }).select('_id email nombre apellidos').lean(),
-    Curso.findOne({ _id: cursoId, escuelaId }).select('nombre').lean(),
+    Curso.findOne({ _id: cursoId, escuelaId }).select('nombre director_grupo').lean(),
     Usuario.find({ _id: { $in: enRiesgo.map((e) => e.estudianteId) }, escuelaId }).select('nombre apellidos').lean(),
   ]);
+  const idDirector = (curso as any)?.director_grupo;
+  const director = idDirector
+    ? await Usuario.findOne({ _id: idDirector, escuelaId, estado: 'ACTIVO' }).select('_id email nombre apellidos').lean()
+    : null;
 
-  const destinatarios = [
-    ...(administrativos as unknown as DestinatarioAlerta[]),
-    ...(docente ? [docente as unknown as DestinatarioAlerta] : []),
-  ];
-  if (destinatarios.length === 0) return;
+  // Sin repetir (un coordinador puede ser también director de grupo)
+  const destinatarios = Array.from(
+    new Map(
+      [...(director ? [director] : []), ...(administrativos as any[])].map((d: any) => [String(d._id), d as DestinatarioAlerta]),
+    ).values(),
+  );
+  if (destinatarios.length === 0) {
+    // Curso sin director de grupo y escuela sin rector ni coordinadores activos: la alerta no tiene a quién llegar
+    logger.warn(`[AlertaAsistencia] Sin destinatarios (escuela ${escuelaId}, curso ${cursoId}): asigne director de grupo, rector o coordinadores`);
+    return;
+  }
 
   const nombres = new Map((estudiantes as any[]).map((e) => [String(e._id), `${e.nombre ?? ''} ${e.apellidos ?? ''}`.trim()]));
   const nombreCurso = (curso as any)?.nombre ?? '';
