@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import PerfilRol from '../models/perfilRol.model';
 import Usuario from '../models/usuario.model';
 import ApiError from '../utils/ApiError';
+import { escapeRegex } from '../utils/escapeRegex';
 import { IPerfilRolLean } from '../interfaces/IPerfilRol';
 import { Permission, ALL_PERMISSIONS, DEFAULT_PERMISSIONS_BY_ROLE } from '../constants/permissions';
 
@@ -34,7 +35,7 @@ const perfilRolService = {
   async crear(dto: CrearPerfilRolDto): Promise<IPerfilRolLean> {
     const existente = await PerfilRol.findOne({
       escuelaId: dto.escuelaId,
-      nombre: { $regex: new RegExp(`^${dto.nombre}$`, 'i') },
+      nombre: { $regex: new RegExp(`^${escapeRegex(dto.nombre)}$`, 'i') }, // escapado: el nombre es texto literal
     });
 
     if (existente) {
@@ -100,7 +101,7 @@ const perfilRolService = {
     if (dto.nombre) {
       const existente = await PerfilRol.findOne({
         escuelaId,
-        nombre: { $regex: new RegExp(`^${dto.nombre}$`, 'i') },
+        nombre: { $regex: new RegExp(`^${escapeRegex(dto.nombre)}$`, 'i') }, // escapado: el nombre es texto literal
         _id: { $ne: perfilId },
       });
 
