@@ -3,7 +3,7 @@ import { Types } from 'mongoose';
 import Usuario from '../models/usuario.model';
 import Curso from '../models/curso.model';
 import ApiError from '../utils/ApiError';
-import { escapeRegex } from '../utils/escapeRegex';
+import { regexBusqueda } from '../utils/regexBusqueda';
 import { logger } from '../utils/logger';
 
 export interface BusquedaEstudianteOptions {
@@ -50,7 +50,7 @@ class EstudianteService {
     // Nombre/apellidos: coincidencia por PREFIJO, mínimo 3 letras (evita enumerar el colegio)
     const prefijo = (v: unknown): RegExp | undefined => {
       const t = texto(v);
-      return t && t.length >= 3 ? new RegExp('^' + escapeRegex(t), 'i') : undefined;
+      return t && t.length >= 3 ? regexBusqueda(t, { prefijo: true }) : undefined;
     };
     const criterios = {
       email: texto(options.email)?.toLowerCase(),

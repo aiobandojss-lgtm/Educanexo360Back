@@ -7,7 +7,7 @@ import Usuario from '../models/usuario.model';
 import emailService from '../services/email.service';
 import notificacionService from '../services/notificacion.service';
 import mensajeService from '../services/mensaje.service'; // Importamos el nuevo servicio
-import { escapeRegex } from '../utils/escapeRegex';
+import { regexBusqueda } from '../utils/regexBusqueda';
 import config from '../config/config';
 import ApiError from '../utils/ApiError';
 import { TipoMensaje, EstadoMensaje, PrioridadMensaje } from '../interfaces/IMensaje';
@@ -122,7 +122,7 @@ export class MensajeController {
           };
 
           if (searchQuery) {
-            const searchRegex = new RegExp(escapeRegex(searchQuery), 'i');
+            const searchRegex = regexBusqueda(searchQuery);
             filter.$or = [
               { nombre: searchRegex },
               { apellidos: searchRegex },
@@ -417,7 +417,7 @@ export class MensajeController {
 
               // Aplicar filtro de búsqueda si existe
               if (searchQuery) {
-                const searchRegex = new RegExp(escapeRegex(searchQuery), 'i');
+                const searchRegex = regexBusqueda(searchQuery);
                 filter.$or = [
                   { nombre: searchRegex },
                   { apellidos: searchRegex },
@@ -2137,7 +2137,7 @@ export class MensajeController {
 
       // Filtro de búsqueda por asunto o contenido
       if (typeof busqueda === 'string' && busqueda) {
-        const regex = new RegExp(escapeRegex(busqueda), 'i');
+        const regex = regexBusqueda(busqueda);
         pipeline.push({
           $match: {
             $or: [{ asunto: regex }, { contenido: regex }],

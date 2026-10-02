@@ -8,7 +8,7 @@ import Asignatura from '../models/asignatura.model';
 import ApiError from '../utils/ApiError';
 import { TipoMensaje, EstadoMensaje, PrioridadMensaje } from '../interfaces/IMensaje';
 import { TipoNotificacion } from '../interfaces/INotificacion';
-import { escapeRegex } from '../utils/escapeRegex';
+import { patronBusqueda } from '../utils/regexBusqueda';
 import { construirTrabajosCorreo, esEmailFicticio } from './email.service';
 import { preferenciaEmail } from '../utils/preferencias';
 import pushNotificationService from './pushNotification.service';
@@ -129,9 +129,9 @@ class MensajeService {
               ...(query &&
                 query.trim() !== '' && {
                   $or: [
-                    { nombre: { $regex: escapeRegex(query), $options: 'i' } },
-                    { apellidos: { $regex: escapeRegex(query), $options: 'i' } },
-                    { email: { $regex: escapeRegex(query), $options: 'i' } },
+                    { nombre: { $regex: patronBusqueda(query), $options: 'i' } },
+                    { apellidos: { $regex: patronBusqueda(query), $options: 'i' } },
+                    { email: { $regex: patronBusqueda(query), $options: 'i' } },
                   ],
                 }),
             },

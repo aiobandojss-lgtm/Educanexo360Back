@@ -18,7 +18,7 @@ const BUCKET_ANUNCIOS = 'anuncios_adjuntos';
  * (paraEstudiantes/paraPadres/paraDocentes) no se filtra aquí (queda reportada).
  */
 const soloPublicados = (tipo: string): boolean => !(esRolAdministrativo(tipo) || tipo === 'DOCENTE' || tipo === 'SUPER_ADMIN');
-import { escapeRegex } from '../utils/escapeRegex';
+import { patronBusqueda } from '../utils/regexBusqueda';
 import pushNotificationService from '../services/pushNotification.service';
 import { numeroPagina, numeroLimite } from '../utils/paginacion';
 import { esRolAdministrativo } from '../utils/accesoAcademico';
@@ -125,8 +125,8 @@ class AnuncioController {
       if (req.query.busqueda) {
         const busqueda = req.query.busqueda as string;
         filters.$or = [
-          { titulo: { $regex: escapeRegex(busqueda), $options: 'i' } },
-          { contenido: { $regex: escapeRegex(busqueda), $options: 'i' } },
+          { titulo: { $regex: patronBusqueda(busqueda), $options: 'i' } },
+          { contenido: { $regex: patronBusqueda(busqueda), $options: 'i' } },
         ];
       }
 

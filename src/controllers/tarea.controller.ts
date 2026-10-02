@@ -8,7 +8,7 @@ import ApiError from '../utils/ApiError';
 import { subirAdjuntos, eliminarAdjuntos } from '../utils/adjuntos';
 import { abrirArchivo, eliminarArchivo } from '../services/storage';
 import { eliminarSiNoReferenciados } from '../utils/referenciasArchivos';
-import { escapeRegex } from '../utils/escapeRegex';
+import { patronBusqueda } from '../utils/regexBusqueda';
 import {
   esRolAdministrativo,
   docenteTieneCurso,
@@ -278,8 +278,8 @@ class TareaController {
       // Búsqueda por texto
       if (busqueda) {
         filters.$or = [
-          { titulo: { $regex: escapeRegex(busqueda), $options: 'i' } },
-          { descripcion: { $regex: escapeRegex(busqueda), $options: 'i' } },
+          { titulo: { $regex: patronBusqueda(busqueda), $options: 'i' } },
+          { descripcion: { $regex: patronBusqueda(busqueda), $options: 'i' } },
         ];
       }
 

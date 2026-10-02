@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 import Usuario from '../models/usuario.model';
 import Curso from '../models/curso.model';
 import ApiError from '../utils/ApiError';
-import { escapeRegex } from '../utils/escapeRegex';
+import { regexBusqueda } from '../utils/regexBusqueda';
 import { numeroPagina, numeroLimite } from '../utils/paginacion';
 import notificacionService from '../services/notificacion.service';
 import { TipoNotificacion } from '../interfaces/INotificacion';
@@ -66,9 +66,9 @@ class UsuarioController {
       // Agregar búsqueda si hay término de búsqueda
       if (searchTerm) {
         query.$or = [
-          { nombre: new RegExp(escapeRegex(searchTerm), 'i') },
-          { apellidos: new RegExp(escapeRegex(searchTerm), 'i') },
-          { email: new RegExp(escapeRegex(searchTerm), 'i') },
+          { nombre: regexBusqueda(searchTerm) },
+          { apellidos: regexBusqueda(searchTerm) },
+          { email: regexBusqueda(searchTerm) },
         ];
       }
 
@@ -378,9 +378,9 @@ class UsuarioController {
       const filter = {
         escuelaId: req.user.escuelaId,
         $or: [
-          { nombre: new RegExp(escapeRegex(searchTerm), 'i') },
-          { apellidos: new RegExp(escapeRegex(searchTerm), 'i') },
-          { email: new RegExp(escapeRegex(searchTerm), 'i') },
+          { nombre: regexBusqueda(searchTerm) },
+          { apellidos: regexBusqueda(searchTerm) },
+          { email: regexBusqueda(searchTerm) },
         ],
       };
 
