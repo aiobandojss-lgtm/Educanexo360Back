@@ -6,6 +6,7 @@ import EventoCalendario from '../models/calendario.model';
 import Usuario from '../models/usuario.model';
 import Curso from '../models/curso.model';
 import ApiError from '../utils/ApiError';
+import { fechaLegibleColombia } from '../utils/fechas';
 import { subirAdjuntos, eliminarAdjuntos } from '../utils/adjuntos';
 import { abrirArchivo, existeArchivo, eliminarArchivo } from '../services/storage';
 
@@ -71,7 +72,7 @@ const notificarEventoPublicado = (
   escuelaId: string,
 ): void => {
   const titulo = evento.titulo || 'Nuevo evento';
-  const fechaStr = evento.fechaInicio ? new Date(evento.fechaInicio).toLocaleDateString('es-CO') : '';
+  const fechaStr = evento.fechaInicio ? fechaLegibleColombia(evento.fechaInicio) : '';
   EventoCalendario.findOneAndUpdate(
     { _id: evento._id, escuelaId, notificadoEn: null }, // null también coincide con el campo ausente
     { $set: { notificadoEn: new Date() } },

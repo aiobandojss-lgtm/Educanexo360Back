@@ -39,6 +39,38 @@ export const inicioDiaColombia = (ahora: Date = new Date()): Date => {
   );
 };
 
+/**
+ * Auditoría H3: fecha y hora SIN zona horaria ("2026-10-20T00:00:00.000", lo que enviaba el APK 1.0.0 con
+ * toIso8601String() de una fecha local). Sin zona, `new Date(str)` la interpreta con la zona del SERVIDOR (UTC en
+ * producción) y quedaba corrida 5 h. Convención (docs/convencion-fechas.md): sin zona = hora de Colombia.
+ * Solo fecha ("2026-10-20") NO entra aquí: sigue siendo medianoche UTC, como se guardan las asistencias.
+ */
+const ISO_SIN_ZONA = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?$/;
+
+/** Convierte lo que manda un cliente en Date: sin zona → hora de Colombia; con Z/offset o solo fecha → igual que siempre. */
+export const parsearFechaCliente = (valor: unknown): Date => {
+  if (valor instanceof Date) return valor;
+  const texto = String(valor ?? '').trim();
+  const m = texto.match(ISO_SIN_ZONA);
+  if (m) {
+    const [, dia, hh, mm, ss = '00', fraccion = ''] = m;
+    // Dart puede mandar microsegundos (6 dígitos): se dejan milisegundos
+    return new Date(`${dia}T${hh}:${mm}:${ss}.${(fraccion + '000').slice(0, 3)}-05:00`);
+  }
+  return new Date(texto);
+};
+
+/** Si el texto es fecha y hora sin zona, lo devuelve como ISO UTC ("…Z") en hora de Colombia; si no, igual. */
+export const normalizarFechaCliente = (texto: string): string => {
+  if (!ISO_SIN_ZONA.test(texto.trim())) return texto;
+  const fecha = parsearFechaCliente(texto);
+  return Number.isNaN(fecha.getTime()) ? texto : fecha.toISOString();
+};
+
+/** Fecha legible para notificaciones, siempre en hora de Colombia (no en la zona del servidor). */
+export const fechaLegibleColombia = (fecha: Date | string): string =>
+  new Date(fecha).toLocaleDateString('es-CO', { timeZone: 'America/Bogota' });
+
 /** Último instante del día calendario de `fecha` en hora de Colombia (23:59:59.999 COT). */
 export const finDelDiaColombia = (fecha: Date): Date => {
   const f = new Date(fecha);

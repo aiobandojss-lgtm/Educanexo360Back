@@ -14,6 +14,7 @@ import ApiError from '../utils/ApiError';
 import { LIMITES_SUBIDA, subidaConLimites } from '../utils/erroresSubida';
 import { invalidateOnCalendario } from '../middleware/dashboardCacheInvalidation.middleware';
 import { sanitizeNoSQL } from '../middleware/sanitize.middleware';
+import { normalizarFechasCliente } from '../middleware/fechasCliente.middleware';
 import { validarArchivos } from '../middleware/validarArchivos.middleware';
 import { limpiarTemporales } from '../middleware/limpiarTemporales.middleware';
 
@@ -42,6 +43,7 @@ const middlewaresActualizar = [
   subirAdjunto,
   validarArchivos, // tipos permitidos por extensión y contenido (5.4)
   sanitizeNoSQL, // multer arma objetos anidados con campo[$ne]
+  normalizarFechasCliente, // H3: el body multipart llega después del middleware global
   validate(actualizarEventoValidation),
   calendarioController.actualizarEvento as express.RequestHandler,
 ];
@@ -56,6 +58,7 @@ router.post(
   subirAdjunto,
   validarArchivos, // tipos permitidos por extensión y contenido (5.4)
   sanitizeNoSQL, // multer arma objetos anidados con campo[$ne]
+  normalizarFechasCliente, // H3: el body multipart llega después del middleware global
   validate(crearEventoValidation),
   calendarioController.crearEvento as unknown as express.RequestHandler,
 );

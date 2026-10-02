@@ -43,6 +43,7 @@ import dashboardRoutes from './routes/dashboard.routes';
 import tareaRoutes from './routes/tarea.routes';
 import perfilRolRoutes from './routes/perfilRol.routes';
 import { sanitizeNoSQL } from './middleware/sanitize.middleware';
+import { normalizarFechasCliente } from './middleware/fechasCliente.middleware';
 import { iniciarWorker, detenerWorker } from './queue/outbox';
 import './queue/handlers'; // registra los handlers de la cola (Fase 4)
 
@@ -109,6 +110,8 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Sanitización NoSQL: elimina claves con $ o . en body/query/params (p. ej. estado[$ne]=x)
 app.use(sanitizeNoSQL);
+// H3: fechas y horas sin zona horaria → hora de Colombia (no la zona del servidor)
+app.use(normalizarFechasCliente);
 setupCompression(app);
 app.use(responseTimeMiddleware);
 

@@ -5,6 +5,7 @@ import Tarea from '../models/tarea.model';
 import Curso from '../models/curso.model';
 import Usuario from '../models/usuario.model';
 import ApiError from '../utils/ApiError';
+import { fechaLegibleColombia } from '../utils/fechas';
 import { subirAdjuntos, eliminarAdjuntos } from '../utils/adjuntos';
 import { abrirArchivo, eliminarArchivo } from '../services/storage';
 import { eliminarSiNoReferenciados } from '../utils/referenciasArchivos';
@@ -206,7 +207,7 @@ class TareaController {
       if (estudiantesParaAsignar.length > 0) {
         // Por la cola (Fase 4.3): lotes de ~50 estudiantes, todos sus dispositivos
         const fechaStr = nuevaTarea.fechaLimite
-          ? new Date(nuevaTarea.fechaLimite).toLocaleDateString('es-CO')
+          ? fechaLegibleColombia(nuevaTarea.fechaLimite)
           : '';
         pushNotificationService
           .encolarPushFiltro(
