@@ -52,6 +52,24 @@ export const cacheMiddleware = (duration: number = 300): RequestHandler => {
   };
 };
 
+/**
+ * Ruta SIN datos personales para los logs (H1/H4): el patrón de Express si hubo ruta ("/educanexo360/api/mensajes/:id");
+ * si no, la URL sin query con los IDs (ObjectId, números, UUID) reemplazados por ":id".
+ */
+const SEGMENTO_ID = /^(?:[0-9a-f]{24}|\d+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+const segmentos = (p: string): string[] => p.split('/').filter(Boolean);
+const sinIds = (segs: string[]): string[] => segs.map((s) => (SEGMENTO_ID.test(s) ? ':id' : s));
+export const rutaNormalizada = (req: Request): string => {
+  const url = segmentos(String(req.originalUrl || req.url || '').split('?')[0]);
+  if (req.route && typeof req.route.path === 'string') {
+    // req.route.path es relativo al router ('/:id') y req.baseUrl ya no sirve si la respuesta salió por un error
+    // (Express lo restaura al propagarlo): prefijo = los montajes tomados de la URL real, sin IDs
+    const ruta = segmentos(req.route.path);
+    return '/' + [...sinIds(url.slice(0, Math.max(0, url.length - ruta.length))), ...ruta].join('/');
+  }
+  return '/' + sinIds(url).join('/');
+};
+
 // Middleware para medir tiempos de respuesta
 export const responseTimeMiddleware = (req: Request, res: Response, next: NextFunction): void => {
   const start = Date.now();
@@ -59,7 +77,12 @@ export const responseTimeMiddleware = (req: Request, res: Response, next: NextFu
   res.on('finish', () => {
     const duration = Date.now() - start;
     logger.debug(`${req.method} ${req.originalUrl} - ${duration}ms`);
-    // Podríamos almacenar estas métricas para análisis
+    // H1: peticiones lentas a stderr (stderr.log en cPanel) con nivel warn, visible con el nivel por defecto de
+    // producción. Sin usuario, IP ni query. Umbral: LOG_LENTAS_MS (2000 por defecto).
+    const umbral = Number(process.env.LOG_LENTAS_MS) || 2000;
+    if (duration > umbral) {
+      logger.warn(`[Lenta] ${req.method} ${rutaNormalizada(req)} → ${res.statusCode} en ${duration} ms`);
+    }
   });
 
   next();
