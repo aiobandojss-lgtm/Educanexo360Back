@@ -10,6 +10,7 @@ import { fechaColombiaISO, horaColombia } from '../utils/fechas';
 import config from '../config/config';
 import { logger } from '../utils/logger';
 import { claveDeLote } from '../utils/claveLote';
+import { esEscuelaSinCorreo } from '../constants/escuelasDemo';
 
 /**
  * Resumen diario de mensajes por correo (Fase 4.5).
@@ -118,7 +119,8 @@ export const procesarResumenDiario = async (
   // 3. Un correo por usuario con al menos un mensaje sin leer (nunca vacío)
   const porEscuela = new Map<string, any[]>();
   for (const u of usuarios as any[]) {
-    if (!u.email || esEmailFicticio(u.email) || preferenciaEmail(u) === 'ninguno') continue;
+    // K6: la escuela de revisores no recibe correo (igual que un correo ficticio)
+    if (!u.email || esEmailFicticio(u.email) || esEscuelaSinCorreo(u.escuelaId) || preferenciaEmail(u) === 'ninguno') continue;
     const pendientes = (itemsPorUsuario.get(String(u._id)) || [])
       .filter((i: any) => asuntos.has(String(i.mensajeId)) && !leidos.has(`${i.mensajeId}:${u._id}`))
       .map((i: any) => ({

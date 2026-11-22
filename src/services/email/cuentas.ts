@@ -10,6 +10,7 @@ import { inicioDiaSiguienteColombia } from '../../utils/fechas';
 import { enmascararEmail } from '../../utils/enmascarar';
 import { esEmailFicticio } from '../email.service';
 import { logger } from '../../utils/logger';
+import { esEscuelaSinCorreo } from '../../constants/escuelasDemo';
 
 /**
  * Correos de CUENTA con prioridad 'critica' (auditoría 4.E): recuperar contraseña, definir contraseña al aprobar
@@ -116,6 +117,18 @@ const enviar = async (dia: string, para: { email: string; nombre?: string }, pla
 export const procesarCorreoCuenta = async (payload: any, ctx?: Pick<ContextoTrabajo, 'comprobarCancelacion'>): Promise<void> => {
   // Auditoría 4.S: antes de cada envío se revisa si el trabajo fue cancelado por tiempo agotado
   const comprobar = () => ctx?.comprobarCancelacion();
+  // K6: escuela sin correo (revisores de Google Play, dominio real): el trabajo termina sin enviar ni generar
+  // enlace. Se revisa el escuelaId del trabajo y, por si faltara, el del usuario cargado en cada caso. El trabajo
+  // sí se encola: la app responde igual que en cualquier colegio (el revisor no ve un error distinto).
+  if (esEscuelaSinCorreo(payload.escuelaId)) {
+    logger.info(`[CorreoCuenta] ${payload.tipo}: omitido, escuela sin correo`);
+    return;
+  }
+  const omitirPorEscuela = (u: any): boolean => {
+    if (!esEscuelaSinCorreo(u?.escuelaId)) return false;
+    logger.info(`[CorreoCuenta] ${payload.tipo}: omitido, usuario de una escuela sin correo`);
+    return true;
+  };
   const caducaEn = new Date(payload.caducaEn || Date.now() + 60 * 60 * 1000);
   if (Date.now() > caducaEn.getTime()) {
     throw new FalloDefinitivo('La solicitud venció antes de poder enviar el correo');
@@ -123,9 +136,10 @@ export const procesarCorreoCuenta = async (payload: any, ctx?: Pick<ContextoTrab
 
   if (payload.tipo === 'reset') {
     const usuario: any = await Usuario.findOne({ _id: payload.usuarioId, estado: 'ACTIVO' })
-      .select('_id email nombre')
+      .select('_id email nombre escuelaId')
       .lean();
     if (!usuario?.email) throw new FalloDefinitivo('Usuario inexistente o inactivo');
+    if (omitirPorEscuela(usuario)) return;
     comprobar();
     const dia = await reservarCritico(caducaEn);
     // Auditoría 4.V: el hash nuevo se guarda DESPUÉS de entregar el correo; si el envío falla, el enlace vigente
@@ -137,8 +151,9 @@ export const procesarCorreoCuenta = async (payload: any, ctx?: Pick<ContextoTrab
   }
 
   if (payload.tipo === 'bienvenida') {
-    const acudiente: any = await Usuario.findById(payload.acudienteId).select('_id email nombre apellidos').lean();
+    const acudiente: any = await Usuario.findById(payload.acudienteId).select('_id email nombre apellidos escuelaId').lean();
     if (!acudiente?.email) throw new FalloDefinitivo('Acudiente inexistente');
+    if (omitirPorEscuela(acudiente)) return;
     comprobar();
     const dia = await reservarCritico(caducaEn);
     // Auditoría 4.AL (criterio de 4.V): los enlaces se generan en memoria y sus hashes se guardan DESPUÉS de
@@ -174,9 +189,10 @@ export const procesarCorreoCuenta = async (payload: any, ctx?: Pick<ContextoTrab
     // sirviendo). Un rechazo permanente de un destinatario se registra y se sigue con los demás; solo falla si no
     // se llegó a nadie. Si un envío falla de forma temporal, el reintento genera otro token y reenvía a todos.
     const usuario: any = await Usuario.findOne({ _id: payload.usuarioId, estado: 'ACTIVO' })
-      .select('_id email nombre apellidos')
+      .select('_id email nombre apellidos escuelaId')
       .lean();
     if (!usuario) throw new FalloDefinitivo('Usuario inexistente o inactivo');
+    if (omitirPorEscuela(usuario)) return;
     const ids = (Array.isArray(payload.enviarA) ? payload.enviarA : []).filter((id: any) => mongoose.isValidObjectId(id));
     const destinatarios: any[] = await Usuario.find({ _id: { $in: ids }, estado: 'ACTIVO' })
       .select('_id email nombre apellidos')

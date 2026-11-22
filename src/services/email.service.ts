@@ -6,6 +6,7 @@ import { encolar, NuevoTrabajo } from '../queue/outbox';
 import { obtenerProveedor } from './email/proveedores';
 import { reservarCupo, liberarCupo } from './email/cupo';
 import { renderizarCorreo, DestinatarioCorreo } from './email/plantillas';
+import { esEscuelaSinCorreo } from '../constants/escuelasDemo';
 
 // Dominios de correos ficticios que nunca deben recibir correo:
 // - estudiantes sin email propio (los genera el sistema);
@@ -51,6 +52,9 @@ export const encolarCorreo = async (opciones: OpcionesCorreo): Promise<number> =
  * en UN solo insertMany (Fase 4.2).
  */
 export const construirTrabajosCorreo = (opciones: OpcionesCorreo): NuevoTrabajo[] => {
+  // K6: la escuela de los revisores de Google Play usa el dominio real: sin correo POR ESCUELA (no por dominio).
+  // Los trabajos de push y las notificaciones (campanita) no pasan por aquí y siguen saliendo.
+  if (esEscuelaSinCorreo(opciones.escuelaId)) return [];
   const vistos = new Set<string>();
   const validos = opciones.destinatarios.filter((d) => {
     const email = String(d?.email || '').trim().toLowerCase();

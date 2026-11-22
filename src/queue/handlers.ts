@@ -16,6 +16,7 @@ import Mensaje from '../models/mensaje.model';
 import { logger } from '../utils/logger';
 import { enmascararEmail, enmascararEmailsEnTexto } from '../utils/enmascarar';
 import { procesarCorreoCuenta } from '../services/email/cuentas';
+import { esEscuelaSinCorreo } from '../constants/escuelasDemo';
 
 // Auditoría 4.AG: detector de fallos sistémicos del correo (episodios con aviso por campanita + push)
 registrarObservadorEnvios((resultado) => registrarEnvioProveedor(resultado));
@@ -44,6 +45,12 @@ const marcarConReintentos = async (ctx: { marcarEnviados: (ids: string[]) => Pro
  *   reintentar SOLO los que no salieron (backoff; FALLIDO al agotar intentos).
  */
 registrarHandler('email', async (trabajo, ctx) => {
+  // K6: escuela sin correo (revisores de Google Play): el trabajo termina sin enviar. Cubre los trabajos
+  // encolados antes del despliegue y cualquier llamador que no pase por construirTrabajosCorreo.
+  if (esEscuelaSinCorreo(trabajo.escuelaId)) {
+    logger.debug(`[Email] Trabajo ${trabajo._id} omitido: escuela sin correo`);
+    return;
+  }
   const { destinatarios = [], plantilla, datos } = trabajo.payload || {};
   const prioridad = trabajo.prioridad;
   const errores: string[] = [];
