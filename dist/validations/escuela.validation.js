@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.actualizarPeriodosValidation = exports.actualizarConfiguracionValidation = exports.actualizarEscuelaValidation = exports.crearEscuelaValidation = void 0;
+exports.actualizarPeriodosValidation = exports.validacionIncluirDemo = exports.actualizarConfiguracionValidation = exports.actualizarEscuelaValidation = exports.crearEscuelaValidation = void 0;
 const express_validator_1 = require("express-validator");
 exports.crearEscuelaValidation = [
     (0, express_validator_1.body)('nombre').notEmpty().withMessage('El nombre es requerido').trim(),
@@ -66,6 +66,9 @@ exports.actualizarConfiguracionValidation = [
         .isInt({ min: 1 })
         .withMessage('El número de logros debe ser al menos 1'),
 ];
+exports.validacionIncluirDemo = [
+    (0, express_validator_1.query)('incluirDemo').optional().isIn(['true', 'false']).withMessage("incluirDemo debe ser 'true' o 'false'"),
+];
 exports.actualizarPeriodosValidation = [
     (0, express_validator_1.body)('periodos_academicos')
         .isArray()
@@ -80,10 +83,11 @@ exports.actualizarPeriodosValidation = [
     (0, express_validator_1.body)('periodos_academicos.*.fecha_fin')
         .isISO8601()
         .withMessage('Fecha de fin inválida')
-        .custom((value, { req }) => {
-        const fechaInicio = new Date(req.body.fecha_inicio);
+        .custom((value, { req, path }) => {
+        const indice = Number(/\[(\d+)\]/.exec(path)?.[1]);
+        const fechaInicio = new Date(req.body?.periodos_academicos?.[indice]?.fecha_inicio);
         const fechaFin = new Date(value);
-        if (fechaFin <= fechaInicio) {
+        if (!isNaN(fechaInicio.getTime()) && fechaFin <= fechaInicio) {
             throw new Error('La fecha de fin debe ser posterior a la fecha de inicio');
         }
         return true;

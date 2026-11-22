@@ -14,7 +14,7 @@ const obtenerEscuelaPorId = (req, res, next) => {
 };
 router.use(auth_middleware_1.authenticate);
 router.post('/', (0, auth_middleware_1.authorize)('SUPER_ADMIN'), (0, validate_middleware_1.validate)(escuela_validation_1.crearEscuelaValidation), escuela_controller_1.default.crear);
-router.get('/', (0, auth_middleware_1.authorize)('ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO', 'SUPER_ADMIN'), escuela_controller_1.default.obtener);
+router.get('/', (0, auth_middleware_1.authorize)('ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO', 'SUPER_ADMIN'), (0, validate_middleware_1.validate)(escuela_validation_1.validacionIncluirDemo), escuela_controller_1.default.obtener);
 router.get('/:id', (0, auth_middleware_1.authorize)('ADMIN', 'DOCENTE', 'ESTUDIANTE', 'PADRE', 'ACUDIENTE', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO', 'SUPER_ADMIN'), obtenerEscuelaPorId);
 router.put('/:id', (0, auth_middleware_1.authorize)('ADMIN', 'RECTOR', 'SUPER_ADMIN'), (0, validate_middleware_1.validate)(escuela_validation_1.actualizarEscuelaValidation), escuela_controller_1.default.actualizar);
 router.delete('/:id', (0, auth_middleware_1.authorize)('SUPER_ADMIN'), escuela_controller_1.default.eliminar);

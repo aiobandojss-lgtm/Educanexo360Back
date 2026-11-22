@@ -16,6 +16,7 @@ const fechas_1 = require("../utils/fechas");
 const config_1 = __importDefault(require("../config/config"));
 const logger_1 = require("../utils/logger");
 const claveLote_1 = require("../utils/claveLote");
+const escuelasDemo_1 = require("../constants/escuelasDemo");
 const MAX_ITEMS_POR_CORREO = 30;
 const VENTANA_MARCAS_MS = 48 * 60 * 60 * 1000;
 const horaResumen = () => {
@@ -86,7 +87,7 @@ const procesarResumenDiario = async (dia, ahora = new Date(), ctx) => {
     const atendidas = [];
     const porEscuela = new Map();
     for (const u of usuarios) {
-        if (!u.email || (0, email_service_1.esEmailFicticio)(u.email) || (0, preferencias_1.preferenciaEmail)(u) === 'ninguno')
+        if (!u.email || (0, email_service_1.esEmailFicticio)(u.email) || (0, escuelasDemo_1.esEscuelaSinCorreo)(u.escuelaId) || (0, preferencias_1.preferenciaEmail)(u) === 'ninguno')
             continue;
         const pendientes = (itemsPorUsuario.get(String(u._id)) || [])
             .filter((i) => asuntos.has(String(i.mensajeId)) && !leidos.has(`${i.mensajeId}:${u._id}`))

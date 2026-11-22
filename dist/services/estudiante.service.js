@@ -3,20 +3,29 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.estudianteService = void 0;
+exports.estudianteService = exports.contarLetras = exports.MAX_CARACTERES_BUSQUEDA = exports.MIN_LETRAS_PREFIJO = void 0;
 const mongoose_1 = require("mongoose");
 const usuario_model_1 = __importDefault(require("../models/usuario.model"));
 const curso_model_1 = __importDefault(require("../models/curso.model"));
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
 const regexBusqueda_1 = require("../utils/regexBusqueda");
 const logger_1 = require("../utils/logger");
+exports.MIN_LETRAS_PREFIJO = 3;
+exports.MAX_CARACTERES_BUSQUEDA = 100;
+const contarLetras = (texto) => (texto.normalize('NFD').replace(/\p{M}/gu, '').match(/\p{L}/gu) || []).length;
+exports.contarLetras = contarLetras;
 class EstudianteService {
     async buscarEstudiantesExistentes(options) {
         const { escuelaId } = options;
-        const texto = (v) => typeof v === 'string' && v.trim() !== '' ? v.trim() : undefined;
+        const texto = (v) => {
+            if (typeof v !== 'string')
+                return undefined;
+            const t = v.trim();
+            return t !== '' && t.length <= exports.MAX_CARACTERES_BUSQUEDA ? t : undefined;
+        };
         const prefijo = (v) => {
             const t = texto(v);
-            return t && t.length >= 3 ? (0, regexBusqueda_1.regexBusqueda)(t, { prefijo: true }) : undefined;
+            return t && (0, exports.contarLetras)(t) >= exports.MIN_LETRAS_PREFIJO ? (0, regexBusqueda_1.regexBusqueda)(t, { prefijo: true }) : undefined;
         };
         const criterios = {
             email: texto(options.email)?.toLowerCase(),

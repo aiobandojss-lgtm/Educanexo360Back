@@ -83,6 +83,7 @@ const clavePorUsuarioOIp = (req) => {
 exports.clavePorUsuarioOIp = clavePorUsuarioOIp;
 const rateLimiter = (windowMs = 60000, max = 100, keyGenerator) => {
     const requests = new Map();
+    const avisos429 = new Map();
     setInterval(() => {
         const now = Date.now();
         requests.forEach((timestamps, ip) => {
@@ -94,16 +95,23 @@ const rateLimiter = (windowMs = 60000, max = 100, keyGenerator) => {
                 requests.set(ip, vigentes);
             }
         });
+        avisos429.forEach((momento, clave) => {
+            if (now - momento >= windowMs)
+                avisos429.delete(clave);
+        });
     }, 5 * 60 * 1000).unref();
     const middleware = (req, res, next) => {
         const ip = keyGenerator ? keyGenerator(req) : req.ip || req.socket.remoteAddress || 'unknown';
         const now = Date.now();
-        const userRequests = requests.get(ip) || [];
-        const validRequests = userRequests.filter((timestamp) => now - timestamp < windowMs);
-        validRequests.push(now);
-        requests.set(ip, validRequests);
-        if (validRequests.length > max) {
-            if (validRequests.length === max + 1) {
+        const validRequests = (requests.get(ip) || []).filter((timestamp) => now - timestamp < windowMs);
+        if (validRequests.length >= max) {
+            if (validRequests.length > 0)
+                requests.set(ip, validRequests);
+            else
+                requests.delete(ip);
+            const ultimoAviso = avisos429.get(ip);
+            if (ultimoAviso === undefined || now - ultimoAviso >= windowMs) {
+                avisos429.set(ip, now);
                 const tipo = !keyGenerator ? 'IP' : ip.startsWith('u:') ? 'usuario' : ip.startsWith('ip:') ? 'IP' : 'clave';
                 logger_1.logger.warn(`[429] ${req.method} ${req.baseUrl || '/'} (límite ${max} en ${Math.round(windowMs / 1000)} s, por ${tipo})`);
             }
@@ -113,6 +121,8 @@ const rateLimiter = (windowMs = 60000, max = 100, keyGenerator) => {
             });
             return;
         }
+        validRequests.push(now);
+        requests.set(ip, validRequests);
         next();
     };
     return middleware;

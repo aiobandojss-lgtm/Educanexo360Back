@@ -409,6 +409,7 @@ const finalizarAsistencia = async (req, res, next) => {
                 escuelaId,
                 docenteId,
                 periodoId,
+                fechaRegistro: asistencia.fecha,
             }).catch((err) => console.error('[AlertaAsistencia]', err));
         });
         return res.status(200).json({

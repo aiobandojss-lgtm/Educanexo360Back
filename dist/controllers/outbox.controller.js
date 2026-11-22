@@ -10,6 +10,12 @@ const ApiError_1 = __importDefault(require("../utils/ApiError"));
 const outbox_1 = require("../queue/outbox");
 const monitorEnvios_1 = require("../queue/monitorEnvios");
 const proveedores_1 = require("../services/email/proveedores");
+const escuela_model_1 = __importDefault(require("../models/escuela.model"));
+const escuelasDemo_1 = require("../constants/escuelasDemo");
+const idsEscuelasDemo = async () => {
+    const demo = await escuela_model_1.default.findOne({ codigo: escuelasDemo_1.CODIGO_ESCUELA_DEMO }).select('_id').lean();
+    return [new mongoose_1.default.Types.ObjectId(escuelasDemo_1.ID_ESCUELA_REVISORES), ...(demo ? [demo._id] : [])];
+};
 const obtenerEstadoOutbox = async (req, res, next) => {
     try {
         if (!req.user)
@@ -19,6 +25,8 @@ const obtenerEstadoOutbox = async (req, res, next) => {
             const escuelaId = typeof req.query.escuelaId === 'string' ? req.query.escuelaId : undefined;
             if (escuelaId)
                 filtro = { escuelaId: new mongoose_1.default.Types.ObjectId(escuelaId) };
+            else if (!(0, escuelasDemo_1.incluirDemo)(req.query))
+                filtro = { escuelaId: { $nin: await idsEscuelasDemo() } };
         }
         else if (req.user.tipo === 'ADMIN') {
             if (!mongoose_1.default.isValidObjectId(req.user.escuelaId)) {

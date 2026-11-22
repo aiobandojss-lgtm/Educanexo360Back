@@ -16,6 +16,7 @@ const fechas_1 = require("../../utils/fechas");
 const enmascarar_1 = require("../../utils/enmascarar");
 const email_service_1 = require("../email.service");
 const logger_1 = require("../../utils/logger");
+const escuelasDemo_1 = require("../../constants/escuelasDemo");
 exports.HORAS_ENLACE_RESET = 1;
 exports.HORAS_ENLACE_DEFINIR = 72;
 const nuevoEnlace = () => {
@@ -81,16 +82,28 @@ const enviar = async (dia, para, plantilla, datos) => {
 };
 const procesarCorreoCuenta = async (payload, ctx) => {
     const comprobar = () => ctx?.comprobarCancelacion();
+    if ((0, escuelasDemo_1.esEscuelaSinCorreo)(payload.escuelaId)) {
+        logger_1.logger.info(`[CorreoCuenta] ${payload.tipo}: omitido, escuela sin correo`);
+        return;
+    }
+    const omitirPorEscuela = (u) => {
+        if (!(0, escuelasDemo_1.esEscuelaSinCorreo)(u?.escuelaId))
+            return false;
+        logger_1.logger.info(`[CorreoCuenta] ${payload.tipo}: omitido, usuario de una escuela sin correo`);
+        return true;
+    };
     const caducaEn = new Date(payload.caducaEn || Date.now() + 60 * 60 * 1000);
     if (Date.now() > caducaEn.getTime()) {
         throw new outbox_1.FalloDefinitivo('La solicitud venció antes de poder enviar el correo');
     }
     if (payload.tipo === 'reset') {
         const usuario = await usuario_model_1.default.findOne({ _id: payload.usuarioId, estado: 'ACTIVO' })
-            .select('_id email nombre')
+            .select('_id email nombre escuelaId')
             .lean();
         if (!usuario?.email)
             throw new outbox_1.FalloDefinitivo('Usuario inexistente o inactivo');
+        if (omitirPorEscuela(usuario))
+            return;
         comprobar();
         const dia = await reservarCritico(caducaEn);
         const enlace = nuevoEnlace();
@@ -99,9 +112,11 @@ const procesarCorreoCuenta = async (payload, ctx) => {
         return;
     }
     if (payload.tipo === 'bienvenida') {
-        const acudiente = await usuario_model_1.default.findById(payload.acudienteId).select('_id email nombre apellidos').lean();
+        const acudiente = await usuario_model_1.default.findById(payload.acudienteId).select('_id email nombre apellidos escuelaId').lean();
         if (!acudiente?.email)
             throw new outbox_1.FalloDefinitivo('Acudiente inexistente');
+        if (omitirPorEscuela(acudiente))
+            return;
         comprobar();
         const dia = await reservarCritico(caducaEn);
         const enlaceAcudiente = nuevoEnlace();
@@ -132,10 +147,12 @@ const procesarCorreoCuenta = async (payload, ctx) => {
     }
     if (payload.tipo === 'definir') {
         const usuario = await usuario_model_1.default.findOne({ _id: payload.usuarioId, estado: 'ACTIVO' })
-            .select('_id email nombre apellidos')
+            .select('_id email nombre apellidos escuelaId')
             .lean();
         if (!usuario)
             throw new outbox_1.FalloDefinitivo('Usuario inexistente o inactivo');
+        if (omitirPorEscuela(usuario))
+            return;
         const ids = (Array.isArray(payload.enviarA) ? payload.enviarA : []).filter((id) => mongoose_1.default.isValidObjectId(id));
         const destinatarios = await usuario_model_1.default.find({ _id: { $in: ids }, estado: 'ACTIVO' })
             .select('_id email nombre apellidos')

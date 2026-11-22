@@ -5,6 +5,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const escuela_model_1 = __importDefault(require("../models/escuela.model"));
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
+const periodosAcademicos_1 = require("../utils/periodosAcademicos");
+const escuelasDemo_1 = require("../constants/escuelasDemo");
 const verificarAccesoEscuela = (req, escuelaId) => {
     const currentUser = req.user;
     if (!currentUser) {
@@ -38,7 +40,7 @@ class EscuelaController {
             }
             let escuelas = [];
             if (currentUser.tipo === 'SUPER_ADMIN') {
-                escuelas = await escuela_model_1.default.find();
+                escuelas = await escuela_model_1.default.find((0, escuelasDemo_1.incluirDemo)(req.query) ? {} : (0, escuelasDemo_1.filtroEscuelasSinDemo)());
             }
             else if (currentUser.escuelaId) {
                 escuelas = await escuela_model_1.default.find({ _id: currentUser.escuelaId });
@@ -161,7 +163,12 @@ class EscuelaController {
     async actualizarPeriodosAcademicos(req, res, next) {
         try {
             verificarAccesoEscuela(req, req.params.id);
-            const escuela = await escuela_model_1.default.findByIdAndUpdate(req.params.id, { periodos_academicos: req.body.periodos_academicos }, { new: true, runValidators: true });
+            const actual = (await escuela_model_1.default.findById(req.params.id).select('periodos_academicos').lean());
+            if (!actual) {
+                throw new ApiError_1.default(404, 'Escuela no encontrada');
+            }
+            const periodos = (0, periodosAcademicos_1.conservarIdsPeriodos)(actual.periodos_academicos || [], req.body.periodos_academicos);
+            const escuela = await escuela_model_1.default.findByIdAndUpdate(req.params.id, { periodos_academicos: periodos }, { new: true, runValidators: true });
             if (!escuela) {
                 throw new ApiError_1.default(404, 'Escuela no encontrada');
             }

@@ -8,6 +8,7 @@ const outbox_1 = require("../queue/outbox");
 const proveedores_1 = require("./email/proveedores");
 const cupo_1 = require("./email/cupo");
 const plantillas_1 = require("./email/plantillas");
+const escuelasDemo_1 = require("../constants/escuelasDemo");
 const DOMINIOS_EMAIL_FICTICIO = ['@estudiante.educanexo.com', '@demo.educanexo.invalid'];
 exports.DESTINATARIOS_POR_TRABAJO = 50;
 function esEmailFicticio(email) {
@@ -20,6 +21,8 @@ const encolarCorreo = async (opciones) => {
 };
 exports.encolarCorreo = encolarCorreo;
 const construirTrabajosCorreo = (opciones) => {
+    if ((0, escuelasDemo_1.esEscuelaSinCorreo)(opciones.escuelaId))
+        return [];
     const vistos = new Set();
     const validos = opciones.destinatarios.filter((d) => {
         const email = String(d?.email || '').trim().toLowerCase();

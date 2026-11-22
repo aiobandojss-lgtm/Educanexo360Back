@@ -7,6 +7,9 @@ const express_1 = __importDefault(require("express"));
 const auth_middleware_1 = require("../middleware/auth.middleware");
 const escuela_model_1 = __importDefault(require("../models/escuela.model"));
 const usuario_model_1 = __importDefault(require("../models/usuario.model"));
+const validate_middleware_1 = require("../middleware/validate.middleware");
+const escuelasDemo_1 = require("../constants/escuelasDemo");
+const escuela_validation_1 = require("../validations/escuela.validation");
 const router = express_1.default.Router();
 const esSuperAdmin = (req, res, next) => {
     if (req.user && req.user.tipo === 'SUPER_ADMIN') {
@@ -30,9 +33,9 @@ router.get('/status', (req, res) => {
         res.status(500).json({ success: false, message: error.message });
     }
 });
-router.get('/escuelas', async (req, res) => {
+router.get('/escuelas', (0, validate_middleware_1.validate)(escuela_validation_1.validacionIncluirDemo), async (req, res) => {
     try {
-        const escuelas = await escuela_model_1.default.find();
+        const escuelas = await escuela_model_1.default.find((0, escuelasDemo_1.incluirDemo)(req.query) ? {} : (0, escuelasDemo_1.filtroEscuelasSinDemo)());
         res.json({ success: true, data: escuelas });
     }
     catch (error) {

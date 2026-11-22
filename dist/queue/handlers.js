@@ -50,6 +50,7 @@ const mensaje_model_1 = __importDefault(require("../models/mensaje.model"));
 const logger_1 = require("../utils/logger");
 const enmascarar_1 = require("../utils/enmascarar");
 const cuentas_1 = require("../services/email/cuentas");
+const escuelasDemo_1 = require("../constants/escuelasDemo");
 (0, proveedores_1.registrarObservadorEnvios)((resultado) => (0, monitorEnvios_1.registrarEnvioProveedor)(resultado));
 (0, outbox_1.registrarObservadorFallido)((trabajo) => (0, monitorEnvios_1.registrarFallido)(trabajo));
 (0, outbox_1.registrarTareaPeriodica)('monitor-envios', async () => (0, monitorEnvios_1.revisarCierre)());
@@ -67,6 +68,10 @@ const marcarConReintentos = async (ctx, id) => {
     }
 };
 (0, outbox_1.registrarHandler)('email', async (trabajo, ctx) => {
+    if ((0, escuelasDemo_1.esEscuelaSinCorreo)(trabajo.escuelaId)) {
+        logger_1.logger.debug(`[Email] Trabajo ${trabajo._id} omitido: escuela sin correo`);
+        return;
+    }
     const { destinatarios = [], plantilla, datos } = trabajo.payload || {};
     const prioridad = trabajo.prioridad;
     const errores = [];

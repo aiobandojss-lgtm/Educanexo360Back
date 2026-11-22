@@ -4,6 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MIN_CLASES_ALERTA = void 0;
+exports.obtenerPeriodoVigente = obtenerPeriodoVigente;
 exports.procesarAlertasAsistenciaCurso = procesarAlertasAsistenciaCurso;
 exports.triggerAlertasAsistencia = triggerAlertasAsistencia;
 const mongoose_1 = __importDefault(require("mongoose"));
@@ -69,23 +70,36 @@ async function obtenerOCrearUsuarioSistema() {
     usuarioSistemaCache = sistema;
     return sistema;
 }
-async function obtenerPeriodoVigente(escuelaId, periodoId) {
-    const escuela = (await escuela_model_1.default.findById(escuelaId).select('periodos_academicos').lean());
-    const periodos = escuela?.periodos_academicos || [];
-    const hoy = new Date();
-    const periodo = periodoId
-        ? periodos.find((p) => String(p._id) === String(periodoId))
-        :
-            periodos.find((p) => new Date(p.fecha_inicio) <= hoy && hoy <= (0, fechas_1.finDelDiaColombia)(new Date(p.fecha_fin)));
-    if (!periodo)
-        return null;
+const rangoPeriodo = (periodo) => {
     const inicio = new Date(periodo.fecha_inicio);
     const fin = new Date(periodo.fecha_fin);
     return {
-        id: String(periodo._id),
         desde: new Date(Date.UTC(inicio.getUTCFullYear(), inicio.getUTCMonth(), inicio.getUTCDate())),
         hastaExclusivo: new Date(Date.UTC(fin.getUTCFullYear(), fin.getUTCMonth(), fin.getUTCDate() + 1)),
     };
+};
+async function obtenerPeriodoVigente(escuelaId, periodoId, fechaRegistro) {
+    const escuela = (await escuela_model_1.default.findById(escuelaId).select('periodos_academicos').lean());
+    const periodos = escuela?.periodos_academicos || [];
+    let periodo = periodoId ? periodos.find((p) => String(p._id) === String(periodoId)) : undefined;
+    if (periodoId && !periodo) {
+        logger_1.logger.warn(`[AlertaAsistencia] El periodo ${periodoId} ya no existe en la escuela ${escuelaId}: se ubica por fecha`);
+    }
+    const fecha = fechaRegistro ? new Date(fechaRegistro) : null;
+    if (!periodo && fecha && !isNaN(fecha.getTime())) {
+        const dia = new Date(Date.UTC(fecha.getUTCFullYear(), fecha.getUTCMonth(), fecha.getUTCDate()));
+        periodo = periodos.find((p) => {
+            const { desde, hastaExclusivo } = rangoPeriodo(p);
+            return desde <= dia && dia < hastaExclusivo;
+        });
+    }
+    if (!periodo) {
+        const hoy = new Date();
+        periodo = periodos.find((p) => new Date(p.fecha_inicio) <= hoy && hoy <= (0, fechas_1.finDelDiaColombia)(new Date(p.fecha_fin)));
+    }
+    if (!periodo)
+        return null;
+    return { id: String(periodo._id), ...rangoPeriodo(periodo) };
 }
 async function enviarNotificacionesAlerta(params) {
     const { nivel, nombreEstudiante, nombreCurso, porcentajeAusencias, destinatarios, escuelaId, estudianteId, cursoId, periodoId, } = params;
@@ -198,7 +212,7 @@ async function procesarAlertasAsistenciaCurso(params) {
     const estudianteIds = [...new Set(params.estudianteIds)].filter((id) => mongoose_1.default.isValidObjectId(id));
     if (estudianteIds.length === 0)
         return;
-    const periodo = await obtenerPeriodoVigente(escuelaId, params.periodoId);
+    const periodo = await obtenerPeriodoVigente(escuelaId, params.periodoId, params.fechaRegistro);
     if (!periodo) {
         logger_1.logger.warn(`[AlertaAsistencia] Sin periodo vigente (escuela ${escuelaId}, curso ${cursoId}): no se generan alertas`);
         return;

@@ -3,6 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.puedeBorrarAnuncio = exports.ROLES_BORRAN_CUALQUIER_ANUNCIO = void 0;
 const mongoose_1 = __importDefault(require("mongoose"));
 const anuncio_model_1 = __importDefault(require("../models/anuncio.model"));
 const ApiError_1 = __importDefault(require("../utils/ApiError"));
@@ -16,6 +17,10 @@ const pushNotification_service_1 = __importDefault(require("../services/pushNoti
 const paginacion_1 = require("../utils/paginacion");
 const accesoAcademico_1 = require("../utils/accesoAcademico");
 const enviarArchivo_1 = require("../utils/enviarArchivo");
+exports.ROLES_BORRAN_CUALQUIER_ANUNCIO = ['ADMIN', 'RECTOR', 'COORDINADOR'];
+const puedeBorrarAnuncio = (usuario, anuncio) => exports.ROLES_BORRAN_CUALQUIER_ANUNCIO.includes(usuario.tipo) ||
+    (anuncio.creador != null && String(anuncio.creador) === String(usuario._id));
+exports.puedeBorrarAnuncio = puedeBorrarAnuncio;
 class AnuncioController {
     async crear(req, res, next) {
         try {
@@ -238,7 +243,7 @@ class AnuncioController {
             if (!anuncio) {
                 throw new ApiError_1.default(404, 'Anuncio no encontrado');
             }
-            if (anuncio.creador.toString() !== req.user._id.toString() && req.user.tipo !== 'ADMIN') {
+            if (!(0, exports.puedeBorrarAnuncio)(req.user, anuncio)) {
                 throw new ApiError_1.default(403, 'No tienes permiso para eliminar este anuncio');
             }
             const adjuntos = (anuncio.archivosAdjuntos || []).map((a) => (a.toObject ? a.toObject() : a));
@@ -336,7 +341,7 @@ class AnuncioController {
             if (!anuncio) {
                 throw new ApiError_1.default(404, 'Anuncio no encontrado');
             }
-            if (anuncio.creador.toString() !== req.user._id.toString() && req.user.tipo !== 'ADMIN') {
+            if (!(0, exports.puedeBorrarAnuncio)(req.user, anuncio)) {
                 throw new ApiError_1.default(403, 'No tienes permiso para modificar este anuncio');
             }
             const archivoIndex = anuncio.archivosAdjuntos.findIndex((adj) => adj.fileId.toString() === archivoId);
