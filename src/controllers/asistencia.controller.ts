@@ -37,6 +37,89 @@ const docentePuedeVerRegistro = async (user: any, asistencia: any): Promise<bool
 const puedeModificarRegistro = (user: any, asistencia: any): boolean =>
   esRolAdministrativo(user.tipo) || idDe(asistencia.docenteId) === String(user._id);
 
+// Fecha de calendario del registro (se guarda como medianoche UTC) en dd/mm/aaaa, sin correrla de día
+const fechaRegistroLegible = (fecha: unknown): string | null => {
+  const f = new Date(fecha as any);
+  if (fecha == null || Number.isNaN(f.getTime())) return null;
+  const [anio, mes, dia] = f.toISOString().slice(0, 10).split('-');
+  return `${dia}/${mes}/${anio}`;
+};
+
+// Nombre de la asignatura del registro. El registro trae solo el id (antes se leía .nombre de un id
+// sin poblar y el aviso siempre decía "clase"). Si no se puede leer, el aviso sale sin asignatura.
+const nombreAsignatura = async (asignaturaId: unknown, escuelaId: unknown): Promise<string | null> => {
+  if (!asignaturaId) return null;
+  try {
+    const asignatura: any = await mongoose
+      .model('Asignatura')
+      .findOne({ _id: idDe(asignaturaId), escuelaId })
+      .select('nombre')
+      .lean();
+    return asignatura?.nombre || null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Push "Ausencia registrada" a los acudientes (con app instalada) de los estudiantes dados.
+ * Fire-and-forget: no bloquea la respuesta y un fallo solo se registra en el log.
+ * Por la cola (Fase 4.3): 2 consultas en total (estudiantes y acudientes con dispositivo) y un
+ * trabajo de push por estudiante ausente para sus acudientes.
+ * Se llama al CREAR el registro (antes solo se avisaba al editarlo, y las apps crean el registro de una
+ * sola vez, así que el acudiente nunca recibía el aviso) y al EDITARLO, solo con las ausencias nuevas.
+ */
+const notificarAusenciasAcudientes = (
+  asistencia: { escuelaId: any; asignaturaId?: any; fecha?: any },
+  ausentesIds: string[],
+): void => {
+  if (ausentesIds.length === 0) return;
+
+  (async () => {
+    try {
+      const [estudiantesAusentes, acudienteIds] = await Promise.all([
+        Usuario.find({ _id: { $in: ausentesIds }, escuelaId: asistencia.escuelaId })
+          .select('nombre apellidos')
+          .lean(),
+        pushNotificationService.idsConDispositivo({
+          escuelaId: asistencia.escuelaId,
+          tipo: 'ACUDIENTE',
+          'info_academica.estudiantes_asociados': { $in: ausentesIds },
+        }),
+      ]);
+      if (acudienteIds.length === 0) return;
+
+      const [acudientes, asignatura] = await Promise.all([
+        Usuario.find({ _id: { $in: acudienteIds } })
+          .select('info_academica.estudiantes_asociados')
+          .lean(),
+        nombreAsignatura(asistencia.asignaturaId, asistencia.escuelaId),
+      ]);
+      const fecha = fechaRegistroLegible(asistencia.fecha);
+      const detalle = `${asignatura ? ` en ${asignatura}` : ''}${fecha ? ` el ${fecha}` : ''}`;
+
+      for (const estudiante of estudiantesAusentes as any[]) {
+        const idEst = String(estudiante._id);
+        const suyos = (acudientes as any[])
+          .filter((a) => (a.info_academica?.estudiantes_asociados || []).some((e: any) => String(e) === idEst))
+          .map((a) => String(a._id));
+        if (suyos.length === 0) continue;
+        await pushNotificationService.encolarPush({
+          usuarioIds: suyos,
+          contenido: {
+            titulo: 'Ausencia registrada',
+            mensaje: `Se registró la ausencia de ${estudiante.nombre} ${estudiante.apellidos}${detalle}.`,
+            data: { tipo: 'ausencia', estudianteId: idEst },
+          },
+          escuelaId: String(asistencia.escuelaId),
+        });
+      }
+    } catch (err) {
+      console.error('[Asistencia] No se pudo encolar el push de ausencias:', err);
+    }
+  })();
+};
+
 // Definir la interfaz para Request con el usuario autenticado
 interface RequestWithUser extends Request {
   user?: {
@@ -175,6 +258,14 @@ export const crearAsistencia = async (req: RequestWithUser, res: Response, next:
       escuelaId: req.user.escuelaId,
       finalizado: false,
     });
+
+    // Avisar a los acudientes de los ausentes (antes solo se avisaba al editar el registro)
+    notificarAusenciasAcudientes(
+      nuevaAsistencia,
+      estudiantesRegistro
+        .filter((est: any) => est.estado === EstadoAsistencia.AUSENTE)
+        .map((est: any) => String(est.estudianteId)),
+    );
 
     return res.status(201).json({
       success: true,
@@ -376,6 +467,11 @@ export const actualizarAsistencia = async (
       return next(new ApiError(403, 'No tiene autorización para modificar este registro'));
     }
 
+    // Estado previo de cada estudiante (antes del merge), para avisar solo de las ausencias NUEVAS
+    const estadoAnterior = new Map<string, string>(
+      (asistencia.estudiantes || []).map((e: any): [string, string] => [idDe(e.estudianteId), e.estado]),
+    );
+
     // Actualizar solo los campos permitidos
     if (Array.isArray(estudiantes)) {
       // Permitidos: los que YA están en el registro (conserva la historia de estudiantes trasladados)
@@ -441,52 +537,19 @@ export const actualizarAsistencia = async (
     // Guardar los cambios
     await asistencia.save();
 
-    // Notificar acudientes de ausentes (fire-and-forget, antes del return para que ejecute)
-    if (estudiantes && Array.isArray(estudiantes)) {
-      const ausentes = estudiantes.filter((est: any) => est.estado === 'AUSENTE');
-      if (ausentes.length > 0) {
-        const ausentesIds = ausentes.map((est: any) => est.estudianteId);
-        const asignaturaNombre = (asistencia.asignaturaId as any)?.nombre || 'clase';
-
-        // Por la cola (Fase 4.3): 2 consultas en total (estudiantes y acudientes con dispositivo) y un
-        // trabajo de push por estudiante ausente para sus acudientes (antes: 2 consultas + 1 envío por cada uno)
-        (async () => {
-          try {
-            const [estudiantesAusentes, acudienteIds] = await Promise.all([
-              Usuario.find({ _id: { $in: ausentesIds }, escuelaId: asistencia.escuelaId })
-                .select('nombre apellidos')
-                .lean(),
-              pushNotificationService.idsConDispositivo({
-                escuelaId: asistencia.escuelaId,
-                tipo: 'ACUDIENTE',
-                'info_academica.estudiantes_asociados': { $in: ausentesIds },
-              }),
-            ]);
-            if (acudienteIds.length === 0) return;
-            const acudientes = await Usuario.find({ _id: { $in: acudienteIds } })
-              .select('info_academica.estudiantes_asociados')
-              .lean();
-            for (const estudiante of estudiantesAusentes as any[]) {
-              const idEst = String(estudiante._id);
-              const suyos = (acudientes as any[])
-                .filter((a) => (a.info_academica?.estudiantes_asociados || []).some((e: any) => String(e) === idEst))
-                .map((a) => String(a._id));
-              if (suyos.length === 0) continue;
-              await pushNotificationService.encolarPush({
-                usuarioIds: suyos,
-                contenido: {
-                  titulo: 'Ausencia registrada',
-                  mensaje: `${estudiante.nombre} ${estudiante.apellidos} fue marcado ausente en ${asignaturaNombre}`,
-                  data: { tipo: 'ausencia', estudianteId: idEst },
-                },
-                escuelaId: String(asistencia.escuelaId),
-              });
-            }
-          } catch (err) {
-            console.error('[Asistencia] No se pudo encolar el push de ausencias:', err);
-          }
-        })();
-      }
+    // Avisar a los acudientes solo de las ausencias NUEVAS (fire-and-forget): un estudiante que ya estaba
+    // AUSENTE no se vuelve a notificar cada vez que el docente corrige el registro
+    if (Array.isArray(estudiantes)) {
+      notificarAusenciasAcudientes(
+        asistencia,
+        estudiantes
+          .filter(
+            (est: any) =>
+              est.estado === EstadoAsistencia.AUSENTE &&
+              estadoAnterior.get(est.estudianteId) !== EstadoAsistencia.AUSENTE,
+          )
+          .map((est: any) => String(est.estudianteId)),
+      );
     }
 
     return res.status(200).json({
