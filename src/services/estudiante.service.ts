@@ -35,6 +35,18 @@ export interface EstudianteEncontrado {
   }>;
 }
 
+export const MIN_LETRAS_PREFIJO = 3;
+export const MAX_CARACTERES_BUSQUEDA = 100;
+
+/**
+ * K1: letras reales del texto, contadas DESPUÉS de normalizar. Antes se usaba length: "a" + dos acentos
+ * combinados (NFD) medía 3 y pasaba el mínimo, pero regexBusqueda quita los acentos y buscaba solo "^a".
+ * Se descomponen los caracteres (NFD), se quitan TODAS las marcas combinantes (\p{M}) y se cuentan solo letras
+ * (\p{L}): espacios, signos y caracteres invisibles no cuentan.
+ */
+export const contarLetras = (texto: string): number =>
+  (texto.normalize('NFD').replace(/\p{M}/gu, '').match(/\p{L}/gu) || []).length;
+
 class EstudianteService {
   /**
    * Busca estudiantes existentes por diferentes criterios
@@ -44,13 +56,18 @@ class EstudianteService {
   ): Promise<EstudianteEncontrado[]> {
     const { escuelaId } = options;
 
-    // Solo strings (evita operadores NoSQL como email[$ne]=x) y sin espacios sobrantes
-    const texto = (v: unknown): string | undefined =>
-      typeof v === 'string' && v.trim() !== '' ? v.trim() : undefined;
-    // Nombre/apellidos: coincidencia por PREFIJO, mínimo 3 letras (evita enumerar el colegio)
+    // Solo strings (evita operadores NoSQL como email[$ne]=x) y sin espacios sobrantes. K1: más de
+    // MAX_CARACTERES_BUSQUEDA se ignora sin error, igual que un texto corto (regexBusqueda convierte cada letra en
+    // una clase de caracteres: un texto enorme arma una regex enorme)
+    const texto = (v: unknown): string | undefined => {
+      if (typeof v !== 'string') return undefined;
+      const t = v.trim();
+      return t !== '' && t.length <= MAX_CARACTERES_BUSQUEDA ? t : undefined;
+    };
+    // Nombre/apellidos: coincidencia por PREFIJO, mínimo 3 LETRAS (evita enumerar el colegio)
     const prefijo = (v: unknown): RegExp | undefined => {
       const t = texto(v);
-      return t && t.length >= 3 ? regexBusqueda(t, { prefijo: true }) : undefined;
+      return t && contarLetras(t) >= MIN_LETRAS_PREFIJO ? regexBusqueda(t, { prefijo: true }) : undefined;
     };
     const criterios = {
       email: texto(options.email)?.toLowerCase(),
