@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import Escuela from '../models/escuela.model';
 import ApiError from '../utils/ApiError';
 import mongoose from 'mongoose';
+import { conservarIdsPeriodos } from '../utils/periodosAcademicos';
 
 interface RequestWithUser extends Request {
   user?: {
@@ -223,9 +224,17 @@ class EscuelaController {
     try {
       verificarAccesoEscuela(req, req.params.id);
 
+      // K3: conservar el _id de los periodos que ya existen (por _id o por número); si no, los periodoId de
+      // asistencias y alertas quedan apuntando a periodos inexistentes
+      const actual = (await Escuela.findById(req.params.id).select('periodos_academicos').lean()) as any;
+      if (!actual) {
+        throw new ApiError(404, 'Escuela no encontrada');
+      }
+      const periodos = conservarIdsPeriodos(actual.periodos_academicos || [], req.body.periodos_academicos);
+
       const escuela = await Escuela.findByIdAndUpdate(
         req.params.id,
-        { periodos_academicos: req.body.periodos_academicos },
+        { periodos_academicos: periodos },
         { new: true, runValidators: true },
       );
 

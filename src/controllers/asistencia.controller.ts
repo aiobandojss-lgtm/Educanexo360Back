@@ -612,6 +612,7 @@ export const finalizarAsistencia = async (
         escuelaId,
         docenteId,
         periodoId,
+        fechaRegistro: asistencia.fecha, // K3: ubica el periodo si el periodoId ya no existe
       }).catch((err: any) => console.error('[AlertaAsistencia]', err));
     });
 

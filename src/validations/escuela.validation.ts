@@ -98,10 +98,15 @@ export const actualizarPeriodosValidation = [
   body('periodos_academicos.*.fecha_fin')
     .isISO8601()
     .withMessage('Fecha de fin inválida')
-    .custom((value, { req }) => {
-      const fechaInicio = new Date(req.body.fecha_inicio);
+    .custom((value, { req, path }) => {
+      // K3: se compara con la fecha_inicio del MISMO periodo. Antes se leía req.body.fecha_inicio, que no existe
+      // (los periodos van en un arreglo): la comparación con una fecha inválida siempre daba false y aceptaba
+      // periodos que terminan antes de empezar.
+      const indice = Number(/\[(\d+)\]/.exec(path)?.[1]);
+      const fechaInicio = new Date(req.body?.periodos_academicos?.[indice]?.fecha_inicio);
       const fechaFin = new Date(value);
-      if (fechaFin <= fechaInicio) {
+      // Sin fecha de inicio válida no se compara: ese error lo reporta la validación de fecha_inicio
+      if (!isNaN(fechaInicio.getTime()) && fechaFin <= fechaInicio) {
         throw new Error('La fecha de fin debe ser posterior a la fecha de inicio');
       }
       return true;

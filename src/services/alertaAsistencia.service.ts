@@ -88,32 +88,59 @@ async function obtenerOCrearUsuarioSistema(): Promise<{ _id: mongoose.Types.Obje
   return sistema as any;
 }
 
-// Periodo vigente (o el indicado) con su rango de fechas, para calcular el porcentaje SOLO de ese periodo
-async function obtenerPeriodoVigente(
-  escuelaId: string,
-  periodoId?: string,
-): Promise<{ id: string; desde: Date; hastaExclusivo: Date } | null> {
-  const escuela = (await Escuela.findById(escuelaId).select('periodos_academicos').lean()) as any;
-  const periodos: any[] = escuela?.periodos_academicos || [];
-  const hoy = new Date();
-  const periodo = periodoId
-    ? periodos.find((p) => String(p._id) === String(periodoId))
-    : // hasta el FIN del día de fecha_fin (hora Colombia): el último día del periodo no cae en 'sin-periodo'
-      periodos.find((p) => new Date(p.fecha_inicio) <= hoy && hoy <= finDelDiaColombia(new Date(p.fecha_fin)));
-  // H5: sin periodo no se evalúa (antes 'sin-periodo' sin filtro de fechas: todo el histórico)
-  if (!periodo) return null;
-  // Las asistencias guardan la fecha como medianoche UTC, pero la web guarda los periodos en hora local
-  // (new Date(año, 3, 1) = 05:00Z). Ambos límites se normalizan por FECHA CALENDARIO con las partes UTC,
-  // así sirve si el periodo se guardó a 00:00Z o a 05:00Z (auditoría 3.V; antes el primer día de cada
-  // periodo no caía en ninguno). El rango termina (exclusivo) en la medianoche UTC del día siguiente a
-  // fecha_fin (3.N); finDelDiaColombia solo decide arriba si "hoy" cae en el periodo.
+// Las asistencias guardan la fecha como medianoche UTC, pero la web guarda los periodos en hora local
+// (new Date(año, 3, 1) = 05:00Z). Ambos límites se normalizan por FECHA CALENDARIO con las partes UTC,
+// así sirve si el periodo se guardó a 00:00Z o a 05:00Z (auditoría 3.V; antes el primer día de cada
+// periodo no caía en ninguno). El rango termina (exclusivo) en la medianoche UTC del día siguiente a
+// fecha_fin (3.N).
+const rangoPeriodo = (periodo: any): { desde: Date; hastaExclusivo: Date } => {
   const inicio = new Date(periodo.fecha_inicio);
   const fin = new Date(periodo.fecha_fin);
   return {
-    id: String(periodo._id),
     desde: new Date(Date.UTC(inicio.getUTCFullYear(), inicio.getUTCMonth(), inicio.getUTCDate())),
     hastaExclusivo: new Date(Date.UTC(fin.getUTCFullYear(), fin.getUTCMonth(), fin.getUTCDate() + 1)),
   };
+};
+
+/**
+ * Periodo con su rango de fechas, para calcular el porcentaje SOLO de ese periodo. Orden (K3, aprobado 22-nov):
+ *  1. el periodoId del registro, si todavía existe en la escuela;
+ *  2. el periodo que contiene la FECHA DEL REGISTRO (un registro del periodo 1 finalizado tarde cuenta en el
+ *     periodo 1). Cubre el periodoId que ya no existe (antes: sin alerta) y el registro sin periodoId;
+ *  3. el periodo vigente HOY.
+ */
+export async function obtenerPeriodoVigente(
+  escuelaId: string,
+  periodoId?: string,
+  fechaRegistro?: Date | string,
+): Promise<{ id: string; desde: Date; hastaExclusivo: Date } | null> {
+  const escuela = (await Escuela.findById(escuelaId).select('periodos_academicos').lean()) as any;
+  const periodos: any[] = escuela?.periodos_academicos || [];
+
+  let periodo = periodoId ? periodos.find((p) => String(p._id) === String(periodoId)) : undefined;
+  if (periodoId && !periodo) {
+    logger.warn(`[AlertaAsistencia] El periodo ${periodoId} ya no existe en la escuela ${escuelaId}: se ubica por fecha`);
+  }
+
+  const fecha = fechaRegistro ? new Date(fechaRegistro) : null;
+  if (!periodo && fecha && !isNaN(fecha.getTime())) {
+    // Por fecha calendario (partes UTC), igual que los límites del rango
+    const dia = new Date(Date.UTC(fecha.getUTCFullYear(), fecha.getUTCMonth(), fecha.getUTCDate()));
+    periodo = periodos.find((p) => {
+      const { desde, hastaExclusivo } = rangoPeriodo(p);
+      return desde <= dia && dia < hastaExclusivo;
+    });
+  }
+
+  if (!periodo) {
+    const hoy = new Date();
+    // hasta el FIN del día de fecha_fin (hora Colombia): el último día del periodo no cae en 'sin-periodo'
+    periodo = periodos.find((p) => new Date(p.fecha_inicio) <= hoy && hoy <= finDelDiaColombia(new Date(p.fecha_fin)));
+  }
+
+  // H5: sin periodo no se evalúa (antes 'sin-periodo' sin filtro de fechas: todo el histórico)
+  if (!periodo) return null;
+  return { id: String(periodo._id), ...rangoPeriodo(periodo) };
 }
 
 async function enviarNotificacionesAlerta(params: {
@@ -286,12 +313,14 @@ export async function procesarAlertasAsistenciaCurso(params: {
   escuelaId: string;
   docenteId: string;
   periodoId?: string;
+  /** K3: fecha del registro; ubica el periodo si el periodoId falta o ya no existe en la escuela */
+  fechaRegistro?: Date | string;
 }): Promise<void> {
   const { cursoId, escuelaId } = params;
   const estudianteIds = [...new Set(params.estudianteIds)].filter((id) => mongoose.isValidObjectId(id));
   if (estudianteIds.length === 0) return;
 
-  const periodo = await obtenerPeriodoVigente(escuelaId, params.periodoId);
+  const periodo = await obtenerPeriodoVigente(escuelaId, params.periodoId, params.fechaRegistro);
   if (!periodo) {
     logger.warn(`[AlertaAsistencia] Sin periodo vigente (escuela ${escuelaId}, curso ${cursoId}): no se generan alertas`);
     return;
