@@ -3,6 +3,7 @@ import Escuela from '../models/escuela.model';
 import ApiError from '../utils/ApiError';
 import mongoose from 'mongoose';
 import { conservarIdsPeriodos } from '../utils/periodosAcademicos';
+import { filtroEscuelasSinDemo, incluirDemo } from '../constants/escuelasDemo';
 
 interface RequestWithUser extends Request {
   user?: {
@@ -66,10 +67,12 @@ class EscuelaController {
         throw new ApiError(401, 'No autorizado');
       }
 
-      // SUPER_ADMIN ve todas; los demás solo su propia escuela (se mantiene la forma de lista)
+      // SUPER_ADMIN ve todas; los demás solo su propia escuela (se mantiene la forma de lista).
+      // K6: SUPER_ADMIN no ve las escuelas demo (pruebas y revisores) salvo ?incluirDemo=true: la web calcula
+      // "Total Escuelas" y "Activas" con esta lista
       let escuelas: unknown[] = [];
       if (currentUser.tipo === 'SUPER_ADMIN') {
-        escuelas = await Escuela.find();
+        escuelas = await Escuela.find(incluirDemo(req.query) ? {} : filtroEscuelasSinDemo());
       } else if (currentUser.escuelaId) {
         escuelas = await Escuela.find({ _id: currentUser.escuelaId });
       }

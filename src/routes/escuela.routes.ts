@@ -7,6 +7,7 @@ import {
   actualizarEscuelaValidation,
   actualizarConfiguracionValidation,
   actualizarPeriodosValidation,
+  validacionIncluirDemo,
 } from '../validations/escuela.validation';
 import { RequestHandler } from 'express-serve-static-core';
 
@@ -24,10 +25,33 @@ router.use(authenticate);
 // Crear escuelas: solo SUPER_ADMIN
 router.post('/', authorize('SUPER_ADMIN'), validate(crearEscuelaValidation), escuelaController.crear);
 
+/**
+ * @swagger
+ * /escuelas:
+ *   get:
+ *     summary: Lista las escuelas
+ *     description: >
+ *       SUPER_ADMIN ve todas menos las escuelas demo (DEMO-EDUCANEXO y la de revisores de Google Play), salvo
+ *       ?incluirDemo=true (K6). Los roles administrativos reciben solo la suya (incluirDemo no aplica).
+ *     tags: [Escuelas]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: incluirDemo
+ *         schema: { type: string, enum: ['true', 'false'] }
+ *         description: Solo SUPER_ADMIN. 'true' incluye las escuelas demo.
+ *     responses:
+ *       200:
+ *         description: '{ success, data: Escuela[] }'
+ *       400:
+ *         description: incluirDemo inválido
+ */
 // Listar escuelas: SUPER_ADMIN ve todas; los roles administrativos solo reciben la suya
 router.get(
   '/',
   authorize('ADMIN', 'RECTOR', 'COORDINADOR', 'ADMINISTRATIVO', 'SUPER_ADMIN'),
+  validate(validacionIncluirDemo),
   escuelaController.obtener,
 );
 

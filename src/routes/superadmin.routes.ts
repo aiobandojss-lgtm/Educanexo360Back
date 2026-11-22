@@ -3,6 +3,9 @@ import express, { Request, Response, NextFunction } from 'express';
 import { authenticate } from '../middleware/auth.middleware';
 import Escuela from '../models/escuela.model';
 import Usuario from '../models/usuario.model';
+import { validate } from '../middleware/validate.middleware';
+import { filtroEscuelasSinDemo, incluirDemo } from '../constants/escuelasDemo';
+import { validacionIncluirDemo } from '../validations/escuela.validation';
 
 // Extender la interfaz Request para incluir el campo user
 interface RequestWithUser extends Request {
@@ -47,10 +50,31 @@ router.get('/status', (req: RequestWithUser, res: Response) => {
   }
 });
 
-// Ruta para obtener todas las escuelas
-router.get('/escuelas', async (req: Request, res: Response) => {
+/**
+ * @swagger
+ * /superadmin/escuelas:
+ *   get:
+ *     summary: Lista las escuelas (SUPER_ADMIN), sin las escuelas demo salvo ?incluirDemo=true
+ *     tags: [SuperAdmin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: incluirDemo
+ *         schema: { type: string, enum: ['true', 'false'] }
+ *         description: 'true incluye las escuelas demo (DEMO-EDUCANEXO y la de revisores de Google Play)'
+ *     responses:
+ *       200:
+ *         description: '{ success, data: Escuela[] }'
+ *       400:
+ *         description: incluirDemo inválido
+ *       403:
+ *         description: Solo SUPER_ADMIN
+ */
+router.get('/escuelas', validate(validacionIncluirDemo), async (req: Request, res: Response) => {
   try {
-    const escuelas = await Escuela.find();
+    // K6: sin las escuelas demo (pruebas y revisores) salvo ?incluirDemo=true
+    const escuelas = await Escuela.find(incluirDemo(req.query) ? {} : filtroEscuelasSinDemo());
     res.json({ success: true, data: escuelas });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });

@@ -1,4 +1,4 @@
-import { body } from 'express-validator';
+import { body, query } from 'express-validator';
 
 export const crearEscuelaValidation = [
   body('nombre').notEmpty().withMessage('El nombre es requerido').trim(),
@@ -78,6 +78,11 @@ export const actualizarConfiguracionValidation = [
     .optional()
     .isInt({ min: 1 })
     .withMessage('El número de logros debe ser al menos 1'),
+];
+
+// K6: ?incluirDemo=true en los listados globales de SUPER_ADMIN
+export const validacionIncluirDemo = [
+  query('incluirDemo').optional().isIn(['true', 'false']).withMessage("incluirDemo debe ser 'true' o 'false'"),
 ];
 
 export const actualizarPeriodosValidation = [

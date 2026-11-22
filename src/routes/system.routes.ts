@@ -35,6 +35,12 @@ router.post('/initialize', validate(systemInitializeValidation), initializeSyste
  *         schema:
  *           type: string
  *         description: Solo SUPER_ADMIN. Filtra por colegio.
+ *       - in: query
+ *         name: incluirDemo
+ *         schema: { type: string, enum: ['true', 'false'] }
+ *         description: >
+ *           Solo SUPER_ADMIN sin escuelaId. Por defecto la vista global excluye los trabajos de las escuelas demo
+ *           (DEMO-EDUCANEXO y revisores de Google Play); 'true' los incluye (K6).
  *     responses:
  *       200:
  *         description: Estado del worker y conteos por estado
@@ -44,7 +50,10 @@ router.post('/initialize', validate(systemInitializeValidation), initializeSyste
 router.get(
   '/outbox',
   authenticate,
-  validate([query('escuelaId').optional().isMongoId().withMessage('ID de escuela inválido')]),
+  validate([
+    query('escuelaId').optional().isMongoId().withMessage('ID de escuela inválido'),
+    query('incluirDemo').optional().isIn(['true', 'false']).withMessage("incluirDemo debe ser 'true' o 'false'"),
+  ]),
   obtenerEstadoOutbox,
 );
 

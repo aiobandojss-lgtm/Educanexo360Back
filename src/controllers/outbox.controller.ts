@@ -5,6 +5,14 @@ import ApiError from '../utils/ApiError';
 import { estadoWorker, configuracionWorker, TIPOS_CORREO } from '../queue/outbox';
 import { estadoMonitor } from '../queue/monitorEnvios';
 import { estadoCortocircuito } from '../services/email/proveedores';
+import Escuela from '../models/escuela.model';
+import { CODIGO_ESCUELA_DEMO, ID_ESCUELA_REVISORES, incluirDemo } from '../constants/escuelasDemo';
+
+/** K6: _id de las escuelas demo (la de revisores es fija; DEMO-EDUCANEXO se busca por código, si existe). */
+const idsEscuelasDemo = async (): Promise<mongoose.Types.ObjectId[]> => {
+  const demo = await Escuela.findOne({ codigo: CODIGO_ESCUELA_DEMO }).select('_id').lean();
+  return [new mongoose.Types.ObjectId(ID_ESCUELA_REVISORES), ...(demo ? [demo._id as mongoose.Types.ObjectId] : [])];
+};
 
 interface RequestWithUser extends Request {
   user?: {
@@ -32,6 +40,9 @@ export const obtenerEstadoOutbox = async (req: RequestWithUser, res: Response, n
     if (req.user.tipo === 'SUPER_ADMIN') {
       const escuelaId = typeof req.query.escuelaId === 'string' ? req.query.escuelaId : undefined;
       if (escuelaId) filtro = { escuelaId: new mongoose.Types.ObjectId(escuelaId) };
+      // K6: la vista GLOBAL excluye los trabajos de las escuelas demo (salvo ?incluirDemo=true). $nin deja los
+      // trabajos sin escuelaId (del sistema). Con ?escuelaId explícito se muestra esa escuela, sea demo o no.
+      else if (!incluirDemo(req.query)) filtro = { escuelaId: { $nin: await idsEscuelasDemo() } };
     } else if (req.user.tipo === 'ADMIN') {
       if (!mongoose.isValidObjectId(req.user.escuelaId)) {
         throw new ApiError(403, 'El usuario no tiene un colegio asociado');
