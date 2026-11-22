@@ -117,6 +117,8 @@ export const rateLimiter = (
   keyGenerator?: (req: Request) => string,
 ): RequestHandler => {
   const requests = new Map<string, number[]>();
+  // K2: momento del último aviso [429] por clave (el log sale una vez por clave y ventana)
+  const avisos429 = new Map<string, number>();
 
   // Limpieza periódica: eliminar IPs sin peticiones dentro de la ventana (evita que el Map crezca sin límite)
   setInterval(() => {
@@ -129,28 +131,30 @@ export const rateLimiter = (
         requests.set(ip, vigentes);
       }
     });
+    avisos429.forEach((momento, clave) => {
+      if (now - momento >= windowMs) avisos429.delete(clave);
+    });
   }, 5 * 60 * 1000).unref();
 
   const middleware: RequestHandler = (req: Request, res: Response, next: NextFunction): void => {
     const ip = keyGenerator ? keyGenerator(req) : req.ip || req.socket.remoteAddress || 'unknown';
     const now = Date.now();
 
-    // Inicializar array si no existe
-    const userRequests = requests.get(ip) || [];
+    // Solicitudes de la clave que siguen dentro de la ventana de tiempo
+    const validRequests = (requests.get(ip) || []).filter((timestamp: number) => now - timestamp < windowMs);
 
-    // Filtrar solicitudes que están dentro de la ventana de tiempo
-    const validRequests = userRequests.filter((timestamp: number) => now - timestamp < windowMs);
-
-    // Actualizar peticiones válidas
-    validRequests.push(now);
-    requests.set(ip, validRequests);
-
-    // Verificar si excede el límite
-    if (validRequests.length > max) {
+    // K2: se compara ANTES de registrar. Una petición rechazada (429) no se guarda ni cuenta: antes se guardaba
+    // primero, así que un cliente que reintentaba sin parar renovaba su propio bloqueo indefinidamente y el
+    // arreglo de la clave crecía con cada 429.
+    if (validRequests.length >= max) {
+      if (validRequests.length > 0) requests.set(ip, validRequests);
+      else requests.delete(ip); // max = 0: no se guarda nada
       // H4: los 429 quedan en stderr (antes no se registraban). Una vez por clave y ventana para no inundar el log;
       // solo el montaje de la ruta (las rutas públicas llevan códigos de invitación en la URL) y el tipo de límite,
       // sin usuario, IP ni token
-      if (validRequests.length === max + 1) {
+      const ultimoAviso = avisos429.get(ip);
+      if (ultimoAviso === undefined || now - ultimoAviso >= windowMs) {
+        avisos429.set(ip, now);
         const tipo = !keyGenerator ? 'IP' : ip.startsWith('u:') ? 'usuario' : ip.startsWith('ip:') ? 'IP' : 'clave';
         logger.warn(`[429] ${req.method} ${req.baseUrl || '/'} (límite ${max} en ${Math.round(windowMs / 1000)} s, por ${tipo})`);
       }
@@ -160,6 +164,10 @@ export const rateLimiter = (
       });
       return;
     }
+
+    // Petición aceptada: se registra
+    validRequests.push(now);
+    requests.set(ip, validRequests);
 
     next();
   };
