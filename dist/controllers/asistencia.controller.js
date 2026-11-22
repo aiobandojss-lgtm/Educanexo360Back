@@ -21,6 +21,76 @@ const idDe = (valor) => String(valor?._id ?? valor);
 const docentePuedeVerRegistro = async (user, asistencia) => idDe(asistencia.docenteId) === String(user._id) ||
     (await (0, accesoAcademico_1.docenteTieneCurso)(user, idDe(asistencia.cursoId)));
 const puedeModificarRegistro = (user, asistencia) => (0, accesoAcademico_1.esRolAdministrativo)(user.tipo) || idDe(asistencia.docenteId) === String(user._id);
+const fechaRegistroLegible = (fecha) => {
+    const f = new Date(fecha);
+    if (fecha == null || Number.isNaN(f.getTime()))
+        return null;
+    const [anio, mes, dia] = f.toISOString().slice(0, 10).split('-');
+    return `${dia}/${mes}/${anio}`;
+};
+const nombreAsignatura = async (asignaturaId, escuelaId) => {
+    if (!asignaturaId)
+        return null;
+    try {
+        const asignatura = await mongoose_1.default
+            .model('Asignatura')
+            .findOne({ _id: idDe(asignaturaId), escuelaId })
+            .select('nombre')
+            .lean();
+        return asignatura?.nombre || null;
+    }
+    catch {
+        return null;
+    }
+};
+const notificarAusenciasAcudientes = (asistencia, ausentesIds) => {
+    if (ausentesIds.length === 0)
+        return;
+    (async () => {
+        try {
+            const [estudiantesAusentes, acudienteIds] = await Promise.all([
+                usuario_model_1.default.find({ _id: { $in: ausentesIds }, escuelaId: asistencia.escuelaId })
+                    .select('nombre apellidos')
+                    .lean(),
+                pushNotification_service_1.default.idsConDispositivo({
+                    escuelaId: asistencia.escuelaId,
+                    tipo: 'ACUDIENTE',
+                    'info_academica.estudiantes_asociados': { $in: ausentesIds },
+                }),
+            ]);
+            if (acudienteIds.length === 0)
+                return;
+            const [acudientes, asignatura] = await Promise.all([
+                usuario_model_1.default.find({ _id: { $in: acudienteIds } })
+                    .select('info_academica.estudiantes_asociados')
+                    .lean(),
+                nombreAsignatura(asistencia.asignaturaId, asistencia.escuelaId),
+            ]);
+            const fecha = fechaRegistroLegible(asistencia.fecha);
+            const detalle = `${asignatura ? ` en ${asignatura}` : ''}${fecha ? ` el ${fecha}` : ''}`;
+            for (const estudiante of estudiantesAusentes) {
+                const idEst = String(estudiante._id);
+                const suyos = acudientes
+                    .filter((a) => (a.info_academica?.estudiantes_asociados || []).some((e) => String(e) === idEst))
+                    .map((a) => String(a._id));
+                if (suyos.length === 0)
+                    continue;
+                await pushNotification_service_1.default.encolarPush({
+                    usuarioIds: suyos,
+                    contenido: {
+                        titulo: 'Ausencia registrada',
+                        mensaje: `Se registró la ausencia de ${estudiante.nombre} ${estudiante.apellidos}${detalle}.`,
+                        data: { tipo: 'ausencia', estudianteId: idEst },
+                    },
+                    escuelaId: String(asistencia.escuelaId),
+                });
+            }
+        }
+        catch (err) {
+            console.error('[Asistencia] No se pudo encolar el push de ausencias:', err);
+        }
+    })();
+};
 const crearAsistencia = async (req, res, next) => {
     try {
         if (!req.user) {
@@ -98,6 +168,9 @@ const crearAsistencia = async (req, res, next) => {
             escuelaId: req.user.escuelaId,
             finalizado: false,
         });
+        notificarAusenciasAcudientes(nuevaAsistencia, estudiantesRegistro
+            .filter((est) => est.estado === IAsistencia_1.EstadoAsistencia.AUSENTE)
+            .map((est) => String(est.estudianteId)));
         return res.status(201).json({
             success: true,
             data: nuevaAsistencia,
@@ -241,6 +314,7 @@ const actualizarAsistencia = async (req, res, next) => {
         if (!puedeModificarRegistro(req.user, asistencia)) {
             return next(new ApiError_1.default(403, 'No tiene autorización para modificar este registro'));
         }
+        const estadoAnterior = new Map((asistencia.estudiantes || []).map((e) => [idDe(e.estudianteId), e.estado]));
         if (Array.isArray(estudiantes)) {
             const curso = await curso_model_1.default.findOne({ _id: asistencia.cursoId, escuelaId: req.user.escuelaId })
                 .select('estudiantes')
@@ -289,51 +363,11 @@ const actualizarAsistencia = async (req, res, next) => {
             asistencia.horaFin = horaFin;
         }
         await asistencia.save();
-        if (estudiantes && Array.isArray(estudiantes)) {
-            const ausentes = estudiantes.filter((est) => est.estado === 'AUSENTE');
-            if (ausentes.length > 0) {
-                const ausentesIds = ausentes.map((est) => est.estudianteId);
-                const asignaturaNombre = asistencia.asignaturaId?.nombre || 'clase';
-                (async () => {
-                    try {
-                        const [estudiantesAusentes, acudienteIds] = await Promise.all([
-                            usuario_model_1.default.find({ _id: { $in: ausentesIds }, escuelaId: asistencia.escuelaId })
-                                .select('nombre apellidos')
-                                .lean(),
-                            pushNotification_service_1.default.idsConDispositivo({
-                                escuelaId: asistencia.escuelaId,
-                                tipo: 'ACUDIENTE',
-                                'info_academica.estudiantes_asociados': { $in: ausentesIds },
-                            }),
-                        ]);
-                        if (acudienteIds.length === 0)
-                            return;
-                        const acudientes = await usuario_model_1.default.find({ _id: { $in: acudienteIds } })
-                            .select('info_academica.estudiantes_asociados')
-                            .lean();
-                        for (const estudiante of estudiantesAusentes) {
-                            const idEst = String(estudiante._id);
-                            const suyos = acudientes
-                                .filter((a) => (a.info_academica?.estudiantes_asociados || []).some((e) => String(e) === idEst))
-                                .map((a) => String(a._id));
-                            if (suyos.length === 0)
-                                continue;
-                            await pushNotification_service_1.default.encolarPush({
-                                usuarioIds: suyos,
-                                contenido: {
-                                    titulo: 'Ausencia registrada',
-                                    mensaje: `${estudiante.nombre} ${estudiante.apellidos} fue marcado ausente en ${asignaturaNombre}`,
-                                    data: { tipo: 'ausencia', estudianteId: idEst },
-                                },
-                                escuelaId: String(asistencia.escuelaId),
-                            });
-                        }
-                    }
-                    catch (err) {
-                        console.error('[Asistencia] No se pudo encolar el push de ausencias:', err);
-                    }
-                })();
-            }
+        if (Array.isArray(estudiantes)) {
+            notificarAusenciasAcudientes(asistencia, estudiantes
+                .filter((est) => est.estado === IAsistencia_1.EstadoAsistencia.AUSENTE &&
+                estadoAnterior.get(est.estudianteId) !== IAsistencia_1.EstadoAsistencia.AUSENTE)
+                .map((est) => String(est.estudianteId)));
         }
         return res.status(200).json({
             success: true,
