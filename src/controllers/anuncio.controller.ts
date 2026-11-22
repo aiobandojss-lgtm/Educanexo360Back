@@ -38,6 +38,16 @@ interface RequestWithUser extends Request {
   };
 }
 
+/**
+ * K5 (aprobado por Aymer el 2-oct): BORRAR un anuncio o sus adjuntos. ADMIN, RECTOR y COORDINADOR borran
+ * cualquier anuncio de su colegio (el colegio ya lo garantiza el filtro escuelaId de la consulta); DOCENTE y
+ * ADMINISTRATIVO solo los suyos. Editar, publicar y agregar adjuntos siguen como antes: creador o ADMIN.
+ */
+export const ROLES_BORRAN_CUALQUIER_ANUNCIO = ['ADMIN', 'RECTOR', 'COORDINADOR'];
+export const puedeBorrarAnuncio = (usuario: { _id: unknown; tipo: string }, anuncio: { creador?: unknown }): boolean =>
+  ROLES_BORRAN_CUALQUIER_ANUNCIO.includes(usuario.tipo) ||
+  (anuncio.creador != null && String(anuncio.creador) === String(usuario._id));
+
 class AnuncioController {
   async crear(req: RequestWithUser, res: Response, next: NextFunction) {
     try {
@@ -322,8 +332,8 @@ class AnuncioController {
         throw new ApiError(404, 'Anuncio no encontrado');
       }
 
-      // Verificar permisos: solo el creador o un admin puede eliminar
-      if (anuncio.creador.toString() !== req.user._id.toString() && req.user.tipo !== 'ADMIN') {
+      // K5: ADMIN, RECTOR y COORDINADOR borran cualquiera del colegio; DOCENTE y ADMINISTRATIVO solo los suyos
+      if (!puedeBorrarAnuncio(req.user, anuncio)) {
         throw new ApiError(403, 'No tienes permiso para eliminar este anuncio');
       }
 
@@ -465,8 +475,8 @@ class AnuncioController {
         throw new ApiError(404, 'Anuncio no encontrado');
       }
 
-      // Verificar permisos: solo el creador o un admin puede eliminar archivos
-      if (anuncio.creador.toString() !== req.user._id.toString() && req.user.tipo !== 'ADMIN') {
+      // K5: mismo criterio que borrar el anuncio (agregar adjuntos sigue siendo solo del creador o ADMIN)
+      if (!puedeBorrarAnuncio(req.user, anuncio)) {
         throw new ApiError(403, 'No tienes permiso para modificar este anuncio');
       }
 
